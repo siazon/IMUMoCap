@@ -1,0 +1,194 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "D:\\OpenData\\IMUMocap\\IMUMoCap\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\mainwindow.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\mainwindow.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\mainwindow.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\mainwindow.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\siazon\\AppData\\Local\\Temp\\.vsdbgsrc\\adf130156d78a22d59c5a5ab2a0282c6cd9b9bebb7602cc8674d943aafb5cb40\\Dispatcher.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\imumocap.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\imumocap.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\device\\dapperutil.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\device\\dapperutil.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\device\\myxda.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\device\\myxda.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\device\\myeventargs.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\device\\myeventargs.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\model\\devicemodel.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\model\\devicemodel.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\ahrs\\anglecalculater.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\ahrs\\anglecalculater.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\ahrs\\quaternionutil.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\ahrs\\quaternionutil.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|d:\\opendata\\imumocap\\imumocap\\imumocap\\ahrs\\cvsuntil.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{BF063622-E35D-4769-A0B3-12B8CA385E2A}|IMUMoCap\\IMUMoCap.csproj|solutionrelative:imumocap\\ahrs\\cvsuntil.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 1,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedHeight": 200,
+          "SelectedChildIndex": 7,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "Dispatcher.cs",
+              "DocumentMoniker": "C:\\Users\\siazon\\AppData\\Local\\Temp\\.vsdbgsrc\\adf130156d78a22d59c5a5ab2a0282c6cd9b9bebb7602cc8674d943aafb5cb40\\Dispatcher.cs",
+              "ToolTip": "C:\\Users\\siazon\\AppData\\Local\\Temp\\.vsdbgsrc\\adf130156d78a22d59c5a5ab2a0282c6cd9b9bebb7602cc8674d943aafb5cb40\\Dispatcher.cs [\u53EA\u8BFB]",
+              "ViewState": "AgIAAGgBAAAAAAAAAAAMwIEBAAADAAAAAQAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-10-01T11:35:24.945Z",
+              "EditorCaption": " [\u53EA\u8BFB]"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "IMUMoCap.csproj",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\IMUMoCap.csproj",
+              "RelativeDocumentMoniker": "IMUMoCap\\IMUMoCap.csproj",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\IMUMoCap.csproj",
+              "RelativeToolTip": "IMUMoCap\\IMUMoCap.csproj",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA4AAAAzAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2025-09-26T11:49:00.988Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "MainWindow.xaml",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\MainWindow.xaml",
+              "RelativeDocumentMoniker": "IMUMoCap\\MainWindow.xaml",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\MainWindow.xaml",
+              "RelativeToolTip": "IMUMoCap\\MainWindow.xaml",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
+              "WhenOpened": "2025-09-24T11:29:15.983Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "DapperUtil.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Device\\DapperUtil.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\Device\\DapperUtil.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Device\\DapperUtil.cs",
+              "RelativeToolTip": "IMUMoCap\\Device\\DapperUtil.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABIAAAAJAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T13:51:01.624Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "MyEventArgs.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Device\\MyEventArgs.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\Device\\MyEventArgs.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Device\\MyEventArgs.cs",
+              "RelativeToolTip": "IMUMoCap\\Device\\MyEventArgs.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T11:56:10.301Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "MyXda.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Device\\MyXda.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\Device\\MyXda.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Device\\MyXda.cs",
+              "RelativeToolTip": "IMUMoCap\\Device\\MyXda.cs",
+              "ViewState": "AgIAABkBAAAAAAAAAADwv5YBAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T11:56:01.786Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "DeviceModel.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Model\\DeviceModel.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\Model\\DeviceModel.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\Model\\DeviceModel.cs",
+              "RelativeToolTip": "IMUMoCap\\Model\\DeviceModel.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAcAAAASAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T11:47:45.093Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "MainWindow.xaml.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\MainWindow.xaml.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\MainWindow.xaml.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\MainWindow.xaml.cs",
+              "RelativeToolTip": "IMUMoCap\\MainWindow.xaml.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAD8AAAAIAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T11:39:55.59Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 10,
+              "Title": "CvsUntil.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\AHRS\\CvsUntil.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\AHRS\\CvsUntil.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\AHRS\\CvsUntil.cs",
+              "RelativeToolTip": "IMUMoCap\\AHRS\\CvsUntil.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABYAAAAYAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T11:29:32.463Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "AngleCalculater.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\AHRS\\AngleCalculater.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\AHRS\\AngleCalculater.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\AHRS\\AngleCalculater.cs",
+              "RelativeToolTip": "IMUMoCap\\AHRS\\AngleCalculater.cs",
+              "ViewState": "AgIAADgAAAAAAAAAAAAQwEcAAAAlAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T11:30:29.146Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 9,
+              "Title": "QuaternionUtil.cs",
+              "DocumentMoniker": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\AHRS\\QuaternionUtil.cs",
+              "RelativeDocumentMoniker": "IMUMoCap\\AHRS\\QuaternionUtil.cs",
+              "ToolTip": "D:\\OpenData\\IMUMocap\\IMUMoCap\\IMUMoCap\\AHRS\\QuaternionUtil.cs",
+              "RelativeToolTip": "IMUMoCap\\AHRS\\QuaternionUtil.cs",
+              "ViewState": "AgIAADEAAAAAAAAAAAAAwBoAAAAaAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2025-09-24T11:29:46.905Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
