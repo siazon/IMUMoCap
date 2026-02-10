@@ -3,10 +3,9 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-    xmlns:h="http://helix-toolkit.org/wpf"
     xmlns:local="clr-namespace:IMUMoCap"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    Title="MainWindow"
+    Title="IMUMoCap"
     Width="800"
     Height="450"
     Style="{StaticResource MaterialDesignWindow}"
@@ -15,56 +14,152 @@
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="8*" />
+            <ColumnDefinition Width="8*" />
             <ColumnDefinition Width="Auto" />
-            <ColumnDefinition Width="2*" />
+            <ColumnDefinition Width="4*" />
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition />
+            <RowDefinition />
         </Grid.RowDefinitions>
         <StackPanel Orientation="Horizontal">
             <Button Click="Button_Click">Connect</Button>
+            <Button Click="Button_Click_1">Test</Button>
             <TextBlock Text="{Binding DeviceState}" />
         </StackPanel>
         <GridSplitter
             Grid.RowSpan="5"
-            Grid.Column="1"
+            Grid.Column="2"
             Width="3"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"
             ShowsPreview="True" />
-        <CheckBox Grid.Column="2" IsChecked="{Binding IsScollerToEnd}">Scroll To End</CheckBox>
+        <StackPanel Grid.Column="3"  Orientation="Horizontal">
+            <CheckBox Grid.Column="2" IsChecked="{Binding IsScollerToEnd}">Scroll To End</CheckBox>
+            <Button Grid.Column="2"  Click="btnClear" Margin="20">Clear</Button>
+        </StackPanel>
+  
         <TextBox
             x:Name="LogBox"
             Grid.Row="1"
-            Grid.Column="2"
+            Grid.RowSpan="10"
+            Grid.Column="3"
             AcceptsReturn="True"
             IsReadOnly="True"
             Text="{Binding LogList}"
             TextWrapping="Wrap" />
+
+        <Grid Grid.Row="1" Grid.ColumnSpan="2">
+            <Viewport3D   Grid.Column="1">
+
+                <!-- Camera -->
+                <Viewport3D.Camera>
+                    <PerspectiveCamera  
+                                   Position="2,1.2,2"
+                                   LookDirection="-2,-1.2,-2"
+                                   UpDirection="0,1,0"
+                                   FieldOfView="45"/>
+                </Viewport3D.Camera>
+
+                <!-- Light -->
+                <ModelVisual3D>
+                    <ModelVisual3D.Content>
+                        <Model3DGroup>
+                            <AmbientLight Color="#666666"/>
+                            <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
+                            <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
+                        </Model3DGroup>
+                    </ModelVisual3D.Content>
+                </ModelVisual3D>
+
+                <!-- World axes (simple lines) -->
+                <ModelVisual3D x:Name="AxesVisual"/>
+
+                <!-- IMU model -->
+                <ModelVisual3D x:Name="ImuVisual"/>
+
+            </Viewport3D>
+
+            <!-- Debug -->
+            <!--<Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+                Background="#AA000000" Padding="10" CornerRadius="8">
+                <TextBlock x:Name="TxtQuat" Foreground="White" FontFamily="Consolas" FontSize="14"/>
+            </Border>-->
+        </Grid>
         <Grid Grid.Row="2">
-            <h:HelixViewport3D
-                x:Name="viewport"
-                ShowCoordinateSystem="True"
-                ShowFrameRate="True">
-                <h:DefaultLights />
-                <!--  一个表示设备的盒子（BoxVisual3D）  -->
-                <h:BoxVisual3D
-                    x:Name="deviceBox"
-                    Width="1"
-                    Height="0.2"
-                    Center="0,0,0"
-                    Fill="LightBlue"
-                    Length="0.5"
-                    Transform="{Binding Transform3D}" />
-                <!--  一个代表前方向的箭头便于观察  -->
-                <!--<h:ArrowVisual3D
-                    x:Name="forwardArrow"
-                    Diameter="0.05"
-                    Point1="0,0,0"
-                    Point2="0,0.8,0"
-                    Transform="{Binding Transform3D}" />-->
-            </h:HelixViewport3D>
+            <Viewport3D   Grid.Column="1">
+
+                <!-- Camera -->
+                <Viewport3D.Camera>
+                    <PerspectiveCamera  
+                                   Position="2,1.2,2"
+                                   LookDirection="-2,-1.2,-2"
+                                   UpDirection="0,1,0"
+                                   FieldOfView="45"/>
+                </Viewport3D.Camera>
+
+                <!-- Light -->
+                <ModelVisual3D>
+                    <ModelVisual3D.Content>
+                        <Model3DGroup>
+                            <AmbientLight Color="#666666"/>
+                            <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
+                            <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
+                        </Model3DGroup>
+                    </ModelVisual3D.Content>
+                </ModelVisual3D>
+
+                <!-- World axes (simple lines) -->
+                <ModelVisual3D x:Name="AxesVisual1"/>
+
+                <!-- IMU model -->
+                <ModelVisual3D x:Name="ImuVisual1"/>
+
+            </Viewport3D>
+
+            <!-- Debug -->
+            <!--<Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+                Background="#AA000000" Padding="10" CornerRadius="8">
+                <TextBlock x:Name="TxtQuat" Foreground="White" FontFamily="Consolas" FontSize="14"/>
+            </Border>-->
+        </Grid>
+        <Grid Grid.Row="2" Grid.Column="1">
+            <Viewport3D   Grid.Column="1">
+
+                <!-- Camera -->
+                <Viewport3D.Camera>
+                    <PerspectiveCamera  
+                            Position="2,1.2,2"
+                            LookDirection="-2,-1.2,-2"
+                            UpDirection="0,1,0"
+                            FieldOfView="45"/>
+                </Viewport3D.Camera>
+
+                <!-- Light -->
+                <ModelVisual3D>
+                    <ModelVisual3D.Content>
+                        <Model3DGroup>
+                            <AmbientLight Color="#666666"/>
+                            <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
+                            <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
+                        </Model3DGroup>
+                    </ModelVisual3D.Content>
+                </ModelVisual3D>
+
+                <!-- World axes (simple lines) -->
+                <ModelVisual3D x:Name="AxesVisual12"/>
+
+                <!-- IMU model -->
+                <ModelVisual3D x:Name="ImuVisual12"/>
+
+            </Viewport3D>
+
+            <!-- Debug -->
+            <!--<Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+         Background="#AA000000" Padding="10" CornerRadius="8">
+                <TextBlock x:Name="TxtQuat1" Foreground="White" FontFamily="Consolas" FontSize="14"/>
+            </Border>-->
         </Grid>
 
     </Grid>

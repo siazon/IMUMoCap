@@ -1,4 +1,6 @@
 ﻿using IMUMoCap.AHRS;
+using IMUMoCap.Methods;
+using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Numerics;
 using System.Text;
@@ -16,6 +18,8 @@ using System.Windows.Threading;
 using XDA;
 using static System.Net.Mime.MediaTypeNames;
 using Application = System.Windows.Application;
+using MeshGeometry3D = System.Windows.Media.Media3D.MeshGeometry3D;
+using Quaternion = System.Windows.Media.Media3D.Quaternion;
 
 namespace IMUMoCap
 {
@@ -32,12 +36,27 @@ namespace IMUMoCap
         private Dictionary<XsDevice, MyMtwCallback>.Enumerator _nextBatteryRequest;
         private Dictionary<uint, ConnectedMTwData> _connectedMtwData;
 
-        Queue<double[]> actionQueue = new Queue<double[]>();
-        Queue<RecoredData> ImuDataQueue = new Queue<RecoredData>();
+        ConcurrentQueue<double[]> actionQueue = new ConcurrentQueue<double[]>();
+        BlockingCollection<RecoredData> ImuDataQueue = new BlockingCollection<RecoredData>(new ConcurrentQueue<RecoredData>(), 2000);
         public MainWindow()
         {
             InitializeComponent();
             this.DataContext = _content;
+
+            _imuRotTf = new RotateTransform3D(_imuRot);
+
+            BuildAxes(AxesVisual);
+            BuildImuBox(ImuVisual);
+
+            BuildAxes(AxesVisual1);
+            BuildImuBox(ImuVisual1);
+
+
+            BuildAxes(AxesVisual12);
+            BuildImuBox(ImuVisual12);
+            //Imus.Add(new ImuViewModel("1") { IMUDodel=ImuVisual});
+            Imus.Add(new ImuViewModel("2") { IMUDodel = ImuVisual1 });
+            Imus.Add(new ImuViewModel("3") { IMUDodel = ImuVisual12 });
 
             _measuringMtws = new Dictionary<XsDevice, MyMtwCallback>();
             _connectedMtwData = new Dictionary<uint, ConnectedMTwData>();
@@ -60,14 +79,20 @@ namespace IMUMoCap
             m_myWirelessMasterCallback.ProgressUpdate += new EventHandler<ProgressUpdateArgs>(_callbackHandler_ProgressUpdate);
             InitDevice();
         }
+        protected override void OnClosed(EventArgs e)
+        {
+            _imuLoopCts?.Cancel();
+            ImuDataQueue?.CompleteAdding();
+            base.OnClosed(e);
+        }
 
-        
-
+        QuaternionHelper quaternionHelper = new QuaternionHelper();
+        private CancellationTokenSource? _imuLoopCts;
         private void InitDevice()
         {
             Task.Run(() =>
             {
-                if (_content.DeviceState != States.MEASURING || _content.DeviceState != States.AWAIT_MEASUREMENT_START || _content.DeviceState != States.RECORDING || _content.DeviceState != States.FLUSHING)
+                if (_content.DeviceState != States.MEASURING && _content.DeviceState != States.AWAIT_MEASUREMENT_START && _content.DeviceState != States.RECORDING && _content.DeviceState != States.FLUSHING)
                 {
                     _myxda.scanPorts();
                 }
@@ -84,23 +109,28 @@ namespace IMUMoCap
                 Thread.Sleep(1000);
             });
             int idx = 0;
+
+            _imuLoopCts = new CancellationTokenSource();
+            var token = _imuLoopCts.Token;
+
             Task.Run(() =>
             {
-                while (true)
+                try
                 {
-                    RecoredData? info = ImuDataQueue.Count > 0 ? ImuDataQueue.Dequeue() : null;
-                    if (info != null)
+                    while (true)
                     {
+                        var info = ImuDataQueue.Take(token);
+
                         double[] qua = new double[] { info.Querternion.x, info.Querternion.y, info.Querternion.z, info.Querternion.w };
                         double[] anu = new double[] { info.Orientation.X, info.Orientation.Y, info.Orientation.Z };
-                        QuaternionHelper quaternionHelper = new QuaternionHelper();
+
                         var angle1 = quaternionHelper.GetYawAngle(qua, anu);
                         var angle2 = quaternionHelper.GetPitchAngle(qua, anu);
                         var angle3 = quaternionHelper.GetRollAngle(qua, anu);
                         idx++;
-                        if (idx % 100 == 0)
+                        if (idx % 10 == 0)
                         {
-                            log($"data:{info.PackageId},{info.Orientation}");
+                            log($"data:{info.PackageId},{info.Orientation.X},{info.Orientation.Y},{info.Orientation.Z}");
 
                             var q = new System.Windows.Media.Media3D.Quaternion(info.Querternion.x, info.Querternion.y, info.Querternion.z, info.Querternion.w);
                             var rot = new QuaternionRotation3D(q);
@@ -113,9 +143,12 @@ namespace IMUMoCap
                             //});
                         }
                     }
-                    Thread.Sleep(10);
                 }
-            });
+                catch (OperationCanceledException)
+                {
+                    // Expected on shutdown.
+                }
+            }, token);
         }
 
         #region MyXda
@@ -258,12 +291,12 @@ namespace IMUMoCap
                 log(string.Format("MTw Disconnected. ID: {0}", mtwIdStr));
 
                 Int32 index = _content.ConnectedMtws.IndexOf(mtwIdStr);
-                if (index < 0)
+                if (index >= 0)
                 {
                     // Found --> delete
                     _content.ConnectedMtws.Remove(mtwIdStr);
                     _connectedMtwData.Remove(e.DeviceId.legacyDeviceId());
-
+                    _content.SelectedMtw = _content.ConnectedMtws.Count - 1;
                     log(string.Format("Connected MTw list ({0}):", _content.ConnectedMtws.Count));
                     //btnMeasure.Enabled =_content.DeviceState == States.ENABLED && connectedMtwList.Items.Count > 0;
                 }
@@ -410,7 +443,20 @@ namespace IMUMoCap
             });
         }
         int qty = 0;
-        bool docalibrate = false;
+        //e.Packet.calibratedData：当前时刻的瞬时测量值
+        //SdiData：在上一个采样间隔内已经积分好的增量
+        //calibratedAcceleration，calibratedGyroscopeData，calibratedMagneticField 分开取的数据
+        //correctedMagneticField通过了ICC(In-Run Compass Calibration)/representative motion的数据。
+        /* ICC方法
+         1. gotoConfig()
+         2. setDeviceOptionFlags(XDOF_EnableInrunCompassCalibration, XDOF_None)
+         3. 配置输出：至少包含 XDI_MagneticFieldCorrected（你也可以同时要 Acc/Gyro）
+         4. gotoMeasurement()
+         5. 用户开始做一段“代表性运动”前：startRepresentativeMotion()
+         6. 做完后：result = stopRepresentativeMotion()
+         7. 如果希望设备记住这次校正：storeIccResults()
+         8. 之后在实时 XsDataPacket 里读 correctedMagneticField()（或 COM 对应的 XsDataPacket_correctedMagneticField）
+         */
         void _callbackHandler_DataAvailable(object? sender, DataAvailableArgs e)
         {
             this.Dispatcher.BeginInvoke(() =>
@@ -423,62 +469,47 @@ namespace IMUMoCap
                     log(string.Format("Obsolete data received of an MTw {0} that's no longer in the list.", mtwIdStr));
                     return;
                 }
-                if (docalibrate)
-                {
-                    if (e.Packet.containsCalibratedData())
-                    {
-                        var res = e.Packet.calibratedData();
-                        var accres = res.m_acc.value(0);
-                        res.m_acc = new XsVector3(0, 0, 0);
-                        res.m_mag = new XsVector3(0, 0, 0);
-                        res.m_gyr = new XsVector3(0, 0, 0);
-                        e.Packet.setCalibratedData(res);
-
-                        accres = res.m_acc.value(0);
-                        docalibrate = false;
-                    }
-
-                }
 
                 if (!e.Packet.containsSdiData())
                 {
                     log(string.Format("Packet received of an MTw {0} not containing data.", mtwIdStr));
                     return;
                 }
-
+                if (e.Packet.containsCalibratedAcceleration())
+                {
+                    var acc = e.Packet.calibratedAcceleration;
+                }
+                if (e.Packet.containsCalibratedGyroscopeData())
+                {
+                    var gyro = e.Packet.calibratedGyroscopeData;
+                }
+                if (e.Packet.containsCalibratedMagneticField())
+                {
+                    var mag = e.Packet.calibratedMagneticField;
+                }
+                if (e.Packet.containsCorrectedMagneticField())
+                {
+                    var mag = e.Packet.correctedMagneticField;
+                }
                 // Getting SDI data.
                 XsSdiData sdiData = e.Packet.sdiData();
                 uint deviceId = e.Device.deviceId().legacyDeviceId();
                 _connectedMtwData[deviceId].XsQuaternion = sdiData.orientationIncrement(); //xsQuaternion;
 
                 _connectedMtwData[deviceId]._rssi = e.Packet.rssi();
+              
 
-                if (e.Packet.containsUtcTime())
-                {
-                    var time = e.Packet.utcTime();
-                    _connectedMtwData[deviceId].XsTime = time;
-                }
-                else
-                {
-                    XsTimeInfo timeInfo = new XsTimeInfo();
-                    DateTime now = DateTime.UtcNow;
-                    timeInfo.m_hour = (byte)now.Hour;
-                    timeInfo.m_minute = (byte)now.Minute;
-                    timeInfo.m_second = (byte)now.Second;
-                    timeInfo.m_nano = (uint)now.Nanosecond;
-                    e.Packet.setUtcTime(timeInfo);
-                }
                 if (e.Packet.containsOrientation())
                 {
+                    var quat = e.Packet.orientationQuaternion();
+
+                    var imuVM= GetOrAssignSlot(deviceId);
+
+                    OnNewImuQuaternion(new Quaternion(quat.x(), quat.y(), quat.z(), quat.w()), imuVM.IMUDodel);
                     //Getting Euler angles.
                     XsEuler oriEuler = e.Packet.orientationEuler();
 
-                    // Just for fun: pitch to select.
-                    // (you only want to select this in the GUI after the XKF-3w filters stabilized though)
-                    //if (checkBoxPitchToSelect.Checked == true && Math.Abs(oriEuler.y()) > 30)
-                    //{
-                    //ConnectedMtw[SelectedMtw] = mtwIdStr;
-                    //}
+
                     _connectedMtwData[deviceId]._orientation = oriEuler;
 
                 }
@@ -499,7 +530,8 @@ namespace IMUMoCap
 
                 _connectedMtwData[deviceId]._frameSkipsList.Add(frameSkips);
                 _connectedMtwData[deviceId]._sumFrameSkips = _connectedMtwData[deviceId]._sumFrameSkips + (uint)frameSkips;
-                _connectedMtwData[deviceId]._effectiveUpdateRate = (int)(100 * (1 - (float)_connectedMtwData[deviceId]._sumFrameSkips / (float)(_connectedMtwData[deviceId]._frameSkipsList.Count() + _connectedMtwData[deviceId]._sumFrameSkips)));
+                _connectedMtwData[deviceId]._effectiveUpdateRate = (int)(100 * (1 - (float)_connectedMtwData[deviceId]._sumFrameSkips / (float)(_connectedMtwData[deviceId]._frameSkipsList.Count() +
+                _connectedMtwData[deviceId]._sumFrameSkips)));
 
                 while (_connectedMtwData[deviceId]._frameSkipsList.Count() + _connectedMtwData[deviceId]._sumFrameSkips > 99 && _connectedMtwData[deviceId]._frameSkipsList.Count() > 0)
                 {
@@ -508,111 +540,9 @@ namespace IMUMoCap
                 }
 
                 ConnectedMTwData mtwData = _connectedMtwData[deviceId];
-                var ax = 0d;
-                var ay = 0d;
-                var az = 0d;
-
-                //var temo = e.Packet.accelerationHR();
-
-                var ac = e.Packet.freeAcceleration();
-
-                var temo = e.Packet.calibratedAcceleration();
-                var aa = temo.size();
-                ax = temo.value(0);
-                ay = temo.value(1);
-                az = temo.value(2);
-
-                var X = mtwData._orientation.x();
-                var Y = mtwData._orientation.y();
-                var Z = mtwData._orientation.z();
-
-                _content.DeviceModels[index].XsTime = mtwData.XsTime?.ToString().PadRight(12, '0');
-                _content.DeviceModels[index].X = X.RoundTwo();
-                _content.DeviceModels[index].Y = Y.RoundTwo();
-                _content.DeviceModels[index].Z = Z.RoundTwo();
-                _content.DeviceModels[index].packetId = e.Packet.packetId().ToString();
-
-                RecoredData recoredData = new RecoredData()
-                {
-                    PackageId = e.Packet.packetId().ToString(),
-                    Querternion = new Querternion()
-                    {
-                        x = mtwData.XsQuaternion.x(),
-                        y = mtwData.XsQuaternion.y(),
-                        z = mtwData.XsQuaternion.z(),
-                        w = mtwData.XsQuaternion.w(),
-                    },
-                    Accelerate = new Vector3()
-                    {
-                        X = (float)ax,
-                        Y = (float)ay,
-                        Z = (float)az
-                    },
-                    Orientation = new Vector3()
-                    {
-                        X = (float)X,
-                        Y = (float)Y,
-                        Z = (float)Z
-                    }
-
-                };
-                qty++;
-                if (qty % 10 == 0)
-                    Application.Current.Dispatcher.BeginInvoke(() =>
-                    {
-                        var q = new System.Windows.Media.Media3D.Quaternion(recoredData.Querternion.x, recoredData.Querternion.y, recoredData.Querternion.z, recoredData.Querternion.w);
-                        var rot = new QuaternionRotation3D(q);
-                        _content.Transform3D = new RotateTransform3D(rot);
-                    });
-                double[] qua = new double[] { recoredData.Querternion.x, recoredData.Querternion.y, recoredData.Querternion.z, recoredData.Querternion.w };
-                double[] anu = new double[] { recoredData.Orientation.X, recoredData.Orientation.Y, recoredData.Orientation.Z };
-                QuaternionHelper quaternionHelper = new QuaternionHelper();
-                _content.DeviceModels[index].Angle = quaternionHelper.GetYawAngle(qua, anu);
-                _content.DeviceModels[index].AngleXZ = quaternionHelper.GetPitchAngle(qua, anu);
-                _content.DeviceModels[index].AngleYZ = quaternionHelper.GetRollAngle(qua, anu);
-
-                //var item = recoredData;
-                //var madgwick = new MadgwickAHRS(0.01f);
-                //madgwick.Update(item.Orientation.X, item.Orientation.Y, item.Orientation.Z, item.Accelerate.X, item.Accelerate.Y, item.Accelerate.Z);
-                //var quaternion = new Quaternion( madgwick.Quaternion[1], madgwick.Quaternion[2], madgwick.Quaternion[3], madgwick.Quaternion[0]);
-                //var mad = new AngleCalculater().QuaternionToEuler(quaternion);
-                //_content.DeviceModels[index].Angle = mad.X.ConvertRadiansToDegrees();
-                //_content.DeviceModels[index].AngleXZ = mad.Y.ConvertRadiansToDegrees();
-                //_content.DeviceModels[index].AngleYZ = mad.Z.ConvertRadiansToDegrees();
 
 
-                switch (mtwIdStr)
-                {
-                    case "00B43CC0":
-                        _content.DataReceived(recoredData, 0);
-                        break;
-                    case "00B43CBF":
-                        _content.DataReceived(recoredData, 1);
-                        break;
-                    case "00B43D12":
-                        _content.DataReceived(recoredData, 2);
-                        break;
-                    case "00B43CAB":
-                        _content.DataReceived(recoredData, 3);
-                        break;
-                    case "00B43D0B":
-                        _content.DataReceived(recoredData, 4);
-                        break;
-                    case "00B43B3F":
-                        _content.DataReceived(recoredData, 5);
-                        break;
-                    case "10B41904":
-                        _content.DataReceived(recoredData, 6);
-                        break;
-                    case "10B41913":
-                        _content.DataReceived(recoredData, 7);
-                        break;
-                    default:
-                        break;
-                }
-
-                ImuDataQueue.Enqueue(recoredData);
-                if (_content.ConnectedMtws[_content.SelectedMtw] == mtwIdStr)
+                if (_content.SelectedMtw >= 0 && _content.SelectedMtw < _content.ConnectedMtws.Count && _content.ConnectedMtws[_content.SelectedMtw] == mtwIdStr)
                 {
                     _content.XsTime = $"{mtwIdStr}.{mtwData.XsTime?.ToString().PadRight(12, '0')}{Environment.NewLine}{mtwData._orientation.x().RoundTwo()},{mtwData._orientation.y().RoundTwo()},{mtwData._orientation.z().RoundTwo()}";
 
@@ -627,6 +557,29 @@ namespace IMUMoCap
                 }
             });
         }
+
+        public ImuViewModel GetOrAssignSlot(uint deviceId)
+        {
+            if (imuDevicesMap.TryGetValue(deviceId, out var vm))
+                return vm;
+
+            // 找一个还没绑定 deviceId 的槽位
+            var free = Imus.FirstOrDefault(x => x.DeviceId==0);
+            if (free == null)
+            {
+                // 超过 3 个设备：你可以选择忽略、或复用最久未更新的那个
+                // 这里先简单忽略：抛异常或返回 null
+                throw new InvalidOperationException("More than 3 IMUs detected.");
+            }
+
+            free.BindDevice(deviceId);
+            imuDevicesMap[deviceId] = free;
+            return free;
+        }
+
+        List<ImuViewModel> Imus = new List<ImuViewModel>();
+        Dictionary<uint, ImuViewModel> imuDevicesMap = new Dictionary<uint, ImuViewModel>();
+
         void _callbackHandler_BatteryLevelChanged(object? sender, BatteryLevelChangedArgs e)
         {
             this.Dispatcher.BeginInvoke(() =>
@@ -644,8 +597,218 @@ namespace IMUMoCap
             });
         }
         #endregion
+        private readonly QuaternionRotation3D _imuRot = new QuaternionRotation3D(System.Windows.Media.Media3D.Quaternion.Identity);
+        private readonly RotateTransform3D _imuRotTf;
+
+        #region 3D Rendering
+        /// <summary>
+        /// 你在 IMU 回调里，把最新的 orientationQuats 传进来调用这个方法即可
+        /// </summary>
+        public void OnNewImuQuaternion(Quaternion qImu, ModelVisual3D Imu3D)
+        {
+            // 重要：WPF Quaternion 构造/存储顺序是 (X,Y,Z,W)
+            // 如果你的 orientationQuats 是 (w,x,y,z)，你要自己调换成：
+            // qImu = new Quaternion(x, y, z, w);
+
+            qImu.Normalize();
+
+            // 如果你发现方向整体反了/像镜像，常用修正是取共轭（相当于 inverse）
+            // qImu = qImu.Conjugate();
+
+            // UI线程更新
+            Dispatcher.BeginInvoke(() =>
+            {
+
+                Imu3D.Transform = new IMUUIUpdater().CreateTransform(qImu, applyConjugate: true); // 你之前验证 Conjugate 会更接近正确，所以先保持 true
+
+                //TxtQuat.Text = $"x={qWpf.X:F4} y={qWpf.Y:F4} z={qWpf.Z:F4} w={qWpf.W:F4}";
+            });
+        }
+
+
+
+        private void BuildImuBox(ModelVisual3D IMUmodelVisual3D)
+        {
+            // 盒子尺寸（随便设个比例：X前、Y上、Z侧）
+            double lx = 0.30;
+            double ly = 0.08;
+            double lz = 0.18;
+
+            var mesh = CreateBoxMesh(lx, ly, lz);
+
+            var mat = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(210, 210, 210)));
+            var backMat = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(190, 190, 190)));
+
+            var model = new GeometryModel3D
+            {
+                Geometry = mesh,
+                Material = mat,
+                BackMaterial = backMat
+            };
+
+            // 给盒子加一个“前向标记”（小三角/小杆），方便你判断X轴朝向
+            var forward = new GeometryModel3D
+            {
+                Geometry = CreateArrowMesh(), // 一个小箭头
+                Material = new DiffuseMaterial(Brushes.Orange),
+                BackMaterial = new DiffuseMaterial(Brushes.Orange)
+            };
+
+            var group = new Model3DGroup();
+            group.Children.Add(model);
+            group.Children.Add(forward);
+
+            var mv = new ModelVisual3D
+            {
+                Content = group,
+                Transform = _imuRotTf
+            };
+
+            IMUmodelVisual3D.Children.Add(mv);
+        }
+
+        private void BuildAxes(ModelVisual3D modelVisual3D)
+        {
+            double len = 1.0;        // 轴长度
+            double t = 0.0035;       // 轴粗细（改这个！越小越细）
+
+            var gx = new GeometryModel3D
+            {
+                Geometry = CreateBoxMesh(len, t, t, new Point3D(len / 2, 0, 0)),
+                Material = new DiffuseMaterial(Brushes.Red),
+                BackMaterial = new DiffuseMaterial(Brushes.Red)
+            };
+
+            var gy = new GeometryModel3D
+            {
+                Geometry = CreateBoxMesh(t, len, t, new Point3D(0, len / 2, 0)),
+                Material = new DiffuseMaterial(Brushes.LimeGreen),
+                BackMaterial = new DiffuseMaterial(Brushes.LimeGreen)
+            };
+
+            var gz = new GeometryModel3D
+            {
+                Geometry = CreateBoxMesh(t, t, len, new Point3D(0, 0, len / 2)),
+                Material = new DiffuseMaterial(Brushes.DodgerBlue),
+                BackMaterial = new DiffuseMaterial(Brushes.DodgerBlue)
+            };
+
+            var group = new Model3DGroup();
+            group.Children.Add(gx);
+            group.Children.Add(gy);
+            group.Children.Add(gz);
+
+            modelVisual3D.Children.Add(new ModelVisual3D { Content = group });
+        }
+
+        // ------------------------------
+        // Mesh helpers
+        // ------------------------------
+
+        private System.Windows.Media.Media3D.MeshGeometry3D CreateBoxMesh(double lx, double ly, double lz, Point3D? center = null)
+        {
+            var c = center ?? new Point3D(0, 0, 0);
+            double x0 = c.X - lx / 2, x1 = c.X + lx / 2;
+            double y0 = c.Y - ly / 2, y1 = c.Y + ly / 2;
+            double z0 = c.Z - lz / 2, z1 = c.Z + lz / 2;
+
+            var mesh = new MeshGeometry3D();
+
+            // 8 vertices
+            var p000 = new Point3D(x0, y0, z0);
+            var p001 = new Point3D(x0, y0, z1);
+            var p010 = new Point3D(x0, y1, z0);
+            var p011 = new Point3D(x0, y1, z1);
+            var p100 = new Point3D(x1, y0, z0);
+            var p101 = new Point3D(x1, y0, z1);
+            var p110 = new Point3D(x1, y1, z0);
+            var p111 = new Point3D(x1, y1, z1);
+
+            // Add 6 faces (each face: 2 triangles). We duplicate vertices per face for correct normals.
+            AddFace(mesh, p101, p100, p110, p111); // +X
+            AddFace(mesh, p000, p001, p011, p010); // -X
+            AddFace(mesh, p010, p011, p111, p110); // +Y
+            AddFace(mesh, p100, p101, p001, p000); // -Y
+            AddFace(mesh, p001, p101, p111, p011); // +Z
+            AddFace(mesh, p100, p000, p010, p110); // -Z
+
+            return mesh;
+        }
+
+        private void AddFace(MeshGeometry3D mesh, Point3D p0, Point3D p1, Point3D p2, Point3D p3)
+        {
+            int i0 = mesh.Positions.Count;
+            mesh.Positions.Add(p0);
+            mesh.Positions.Add(p1);
+            mesh.Positions.Add(p2);
+            mesh.Positions.Add(p3);
+
+            // two triangles
+            mesh.TriangleIndices.Add(i0);
+            mesh.TriangleIndices.Add(i0 + 1);
+            mesh.TriangleIndices.Add(i0 + 2);
+
+            mesh.TriangleIndices.Add(i0);
+            mesh.TriangleIndices.Add(i0 + 2);
+            mesh.TriangleIndices.Add(i0 + 3);
+
+            // simple normal (face normal)
+            Vector3D n = Vector3D.CrossProduct(p1 - p0, p2 - p0);
+            n.Normalize();
+            mesh.Normals.Add(n);
+            mesh.Normals.Add(n);
+            mesh.Normals.Add(n);
+            mesh.Normals.Add(n);
+        }
+
+        private MeshGeometry3D CreateArrowMesh()
+        {
+            // 一个很简单的小“前向箭头”：沿 +X 方向放一个小三角楔子
+            // 放在盒子前端附近：x≈+0.18，y=0，z=0
+            var mesh = new MeshGeometry3D();
+
+            var p0 = new Point3D(0.18, 0.00, 0.00); // tip
+            var p1 = new Point3D(0.10, 0.03, 0.03);
+            var p2 = new Point3D(0.10, -0.03, 0.03);
+            var p3 = new Point3D(0.10, -0.03, -0.03);
+            var p4 = new Point3D(0.10, 0.03, -0.03);
+
+            // 4 side faces around tip (triangles)
+            AddTri(mesh, p0, p1, p2);
+            AddTri(mesh, p0, p2, p3);
+            AddTri(mesh, p0, p3, p4);
+            AddTri(mesh, p0, p4, p1);
+
+            // base (two triangles)
+            AddTri(mesh, p1, p4, p3);
+            AddTri(mesh, p1, p3, p2);
+
+            return mesh;
+        }
+
+        private void AddTri(MeshGeometry3D mesh, Point3D a, Point3D b, Point3D c)
+        {
+            int i0 = mesh.Positions.Count;
+            mesh.Positions.Add(a);
+            mesh.Positions.Add(b);
+            mesh.Positions.Add(c);
+
+            mesh.TriangleIndices.Add(i0);
+            mesh.TriangleIndices.Add(i0 + 1);
+            mesh.TriangleIndices.Add(i0 + 2);
+
+            Vector3D n = Vector3D.CrossProduct(b - a, c - a);
+            if (n.Length > 1e-9) n.Normalize();
+            mesh.Normals.Add(n);
+            mesh.Normals.Add(n);
+            mesh.Normals.Add(n);
+        }
+
+        #endregion
+
         private void log(string log)
         {
+
             this.Dispatcher.BeginInvoke(() =>
             {
                 _content.LogList += (log);
@@ -873,6 +1036,10 @@ namespace IMUMoCap
 
                         if (_MyWirelessMasterDevice?.gotoMeasurement() == true)
                         {
+                            //ICC
+                            //_MyWirelessMasterDevice.startRepresentativeMotion();
+                            //var result = _MyWirelessMasterDevice.stopRepresentativeMotion();
+                            //_MyWirelessMasterDevice.storeIccResults();
                             log(string.Format("Waiting for measurement start. ID: {0}", _MyWirelessMasterDevice.deviceId().toXsString().toString()));
                         }
                         else
@@ -888,6 +1055,8 @@ namespace IMUMoCap
                     {
                         if (_MyWirelessMasterDevice?.gotoConfig() == true)
                         {
+                            //ICC
+                            //_MyWirelessMasterDevice.setDeviceOptionFlags(XsDeviceOptionFlag.XDOF_EnableInrunCompassCalibration, XsDeviceOptionFlag.XDOF_None);
                             //log(string.Format("Stopping measurement. ID: {0}", _MyWirelessMasterDevice.deviceId().toXsString().toString()));
                         }
                         else
@@ -901,6 +1070,44 @@ namespace IMUMoCap
 
             }
             setWidgetsStates();
+        }
+        private void btnClear(object sender, EventArgs e)
+        {
+            _content.LogList = "";
+        }
+
+        private void Button_Click_1(object sender, RoutedEventArgs e)
+        {
+            var det = new ImuGaitEventDetector
+            {
+                Fs = 100.0,
+                MinStepIntervalSec = 0.35,
+
+                // 你的新数据有 FreeAcc_*，HS 阈值建议先用 1.0~2.0 m/s^2 之间试
+                HSThreshold = 1.2,
+
+                TO_SearchStartSec = 0.10,
+                PitchRateThreshold = 1.5
+            };
+
+            var samples = det.LoadCsv("D:\\SourceCode\\IMUData\\IMUData.csv");
+            var evs = det.Detect(samples);
+
+            log($"Samples: {samples.Count}");
+            log($"HeelStrikes (HS): {evs.HeelStrikes.Count}  => StepCount≈{evs.StepCount}");
+            log($"ToeOffs (TO): {evs.ToeOffs.Count}");
+
+            for (int i = 0; i < evs.HeelStrikes.Count; i++)
+            {
+                int hs = evs.HeelStrikes[i];
+                log($"HS[{i}_{hs}] t={samples[hs].T:F3}s dynAccMag={samples[hs].DynAccMag:F3}");
+
+                if (i < evs.ToeOffs.Count)
+                {
+                    int to = evs.ToeOffs[i];
+                    log($"  TO[{i}_{hs}] t={samples[to].T:F3}s pitchRate={samples[to].PitchRate:F3} rad/s");
+                }
+            }
         }
     }
 }
