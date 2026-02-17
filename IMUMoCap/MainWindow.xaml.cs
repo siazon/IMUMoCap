@@ -3,6 +3,7 @@ using IMUMoCap.Methods;
 using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Numerics;
+using System.Reflection.Metadata;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -38,6 +39,8 @@ namespace IMUMoCap
 
         ConcurrentQueue<double[]> actionQueue = new ConcurrentQueue<double[]>();
         BlockingCollection<RecoredData> ImuDataQueue = new BlockingCollection<RecoredData>(new ConcurrentQueue<RecoredData>(), 2000);
+        FootHeadingCalibrator calib;
+        string imuPelvis = "imuPelvis", imuL = "imuL", imuR = "imuR";
         public MainWindow()
         {
             InitializeComponent();
@@ -54,9 +57,19 @@ namespace IMUMoCap
 
             BuildAxes(AxesVisual12);
             BuildImuBox(ImuVisual12);
-            //Imus.Add(new ImuViewModel("1") { IMUDodel=ImuVisual});
-            Imus.Add(new ImuViewModel("2") { IMUDodel = ImuVisual1 });
-            Imus.Add(new ImuViewModel("3") { IMUDodel = ImuVisual12 });
+            Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43D12 });
+            Imus.Add(new ImuViewModel(imuL) { IMUDodel = ImuVisual1, DeviceId = 0x10B41904 });
+            Imus.Add(new ImuViewModel(imuR) { IMUDodel = ImuVisual12, DeviceId = 0x10b41913 });
+
+            calib = new FootHeadingCalibrator(pelvisId: imuPelvis, leftFootId: imuL, rightFootId: imuR);
+
+
+            // 你已有的 stance 判定（用 packetId 同步）
+            stanceLeftDet = new FootStanceDetector(fs: 100, minEnterMs: 40, minExitMs: 40);
+            stanceRightDet = new FootStanceDetector(fs: 100, minEnterMs: 40, minExitMs: 40);
+
+
+
 
             _measuringMtws = new Dictionary<XsDevice, MyMtwCallback>();
             _connectedMtwData = new Dictionary<uint, ConnectedMTwData>();
@@ -121,27 +134,7 @@ namespace IMUMoCap
                     {
                         var info = ImuDataQueue.Take(token);
 
-                        double[] qua = new double[] { info.Querternion.x, info.Querternion.y, info.Querternion.z, info.Querternion.w };
-                        double[] anu = new double[] { info.Orientation.X, info.Orientation.Y, info.Orientation.Z };
 
-                        var angle1 = quaternionHelper.GetYawAngle(qua, anu);
-                        var angle2 = quaternionHelper.GetPitchAngle(qua, anu);
-                        var angle3 = quaternionHelper.GetRollAngle(qua, anu);
-                        idx++;
-                        if (idx % 10 == 0)
-                        {
-                            log($"data:{info.PackageId},{info.Orientation.X},{info.Orientation.Y},{info.Orientation.Z}");
-
-                            var q = new System.Windows.Media.Media3D.Quaternion(info.Querternion.x, info.Querternion.y, info.Querternion.z, info.Querternion.w);
-                            var rot = new QuaternionRotation3D(q);
-                            var transform = new RotateTransform3D(rot);
-                            //Application.Current.Dispatcher.BeginInvoke(() =>
-                            //{
-                            //_content.Transform3D = transform;
-                            //deviceBox.Transform = transform;
-                            //forwardArrow.Transform = transform;
-                            //});
-                        }
                     }
                 }
                 catch (OperationCanceledException)
@@ -469,6 +462,7 @@ namespace IMUMoCap
                     log(string.Format("Obsolete data received of an MTw {0} that's no longer in the list.", mtwIdStr));
                     return;
                 }
+                currentPacketId = e.Packet.packetId();
 
                 if (!e.Packet.containsSdiData())
                 {
@@ -493,17 +487,28 @@ namespace IMUMoCap
                 }
                 // Getting SDI data.
                 XsSdiData sdiData = e.Packet.sdiData();
+
                 uint deviceId = e.Device.deviceId().legacyDeviceId();
+                string devices = GetOrAssignSlot(deviceId).SlotName;
+                var result = calib.OnSample(e.Packet.packetId(), devices, sdiData, e.Packet.calibratedData());
+                if (result != null)
+                {
+                    _deltaLeftRad = result.DeltaLeftRad;
+                    _deltaRightRad = result.DeltaRightRad;
+                    // 保存下来：deltaLeft/deltaRight
+                    log($"deltaL(deg)={result.ToString()}");
+                }
+                if (_deltaLeftRad != 0) OnImuCallback(e.Packet.packetId(), devices, sdiData, e.Packet.calibratedData());
                 _connectedMtwData[deviceId].XsQuaternion = sdiData.orientationIncrement(); //xsQuaternion;
 
                 _connectedMtwData[deviceId]._rssi = e.Packet.rssi();
-              
+
 
                 if (e.Packet.containsOrientation())
                 {
                     var quat = e.Packet.orientationQuaternion();
 
-                    var imuVM= GetOrAssignSlot(deviceId);
+                    var imuVM = GetOrAssignSlot(deviceId);
 
                     OnNewImuQuaternion(new Quaternion(quat.x(), quat.y(), quat.z(), quat.w()), imuVM.IMUDodel);
                     //Getting Euler angles.
@@ -557,24 +562,19 @@ namespace IMUMoCap
                 }
             });
         }
-
+        uint pelvisId = 0x00B43D12, leftFootId = 0x10B41904, rightFootId = 0x10B41913;
         public ImuViewModel GetOrAssignSlot(uint deviceId)
         {
             if (imuDevicesMap.TryGetValue(deviceId, out var vm))
                 return vm;
 
-            // 找一个还没绑定 deviceId 的槽位
-            var free = Imus.FirstOrDefault(x => x.DeviceId==0);
-            if (free == null)
-            {
-                // 超过 3 个设备：你可以选择忽略、或复用最久未更新的那个
-                // 这里先简单忽略：抛异常或返回 null
-                throw new InvalidOperationException("More than 3 IMUs detected.");
-            }
+            ImuViewModel imuVM = Imus.FirstOrDefault(a => a.DeviceId == deviceId);
+            if (imuVM == null)
+                throw new Exception($"Unrecognized deviceId {deviceId:X}. Please check your device IDs and update the code accordingly.");
 
-            free.BindDevice(deviceId);
-            imuDevicesMap[deviceId] = free;
-            return free;
+            imuVM.BindDevice(deviceId);
+            imuDevicesMap[deviceId] = imuVM;
+            return imuVM;
         }
 
         List<ImuViewModel> Imus = new List<ImuViewModel>();
@@ -1075,8 +1075,59 @@ namespace IMUMoCap
         {
             _content.LogList = "";
         }
-
+        PacketAggregator aggregator = null;
+        RealTimeFpaEstimator estimator = null;
+        float _deltaLeftRad = 0, _deltaRightRad = 0;
         private void Button_Click_1(object sender, RoutedEventArgs e)
+        {
+   
+        }
+        public void Test()
+        {
+
+            aggregator = new PacketAggregator(imuPelvis, imuL, imuR);
+            estimator = new RealTimeFpaEstimator(imuPelvis, imuL, imuR, _deltaLeftRad, _deltaRightRad);
+
+            estimator.OnStepFpa += res =>
+            {
+                float deg = res.FpaRad * 180f / MathF.PI;
+                log($"{res.Role} STEP FPA = {deg:F1} deg @ packet {res.PacketId}");
+                // 这里也可以推给 UI（每步一个值）
+            };
+
+        }
+        FootStanceDetector stanceLeftDet, stanceRightDet;
+
+        void OnImuCallback(long packetId, string deviceId, XsSdiData sdi, XsCalibratedData cal)
+        {
+            if (aggregator == null)
+                Test();
+            var bundle = aggregator.Add(packetId, deviceId, sdi, cal);
+            if (bundle == null) return;
+
+           
+
+            var acc = bundle.Left!.Value.cal.m_acc;
+            var gyr = bundle.Left!.Value.cal.m_gyr;
+
+            //log($"accMag={acc.cartesianLength():F3}, gyrMag={gyr.cartesianLength():F3}");
+
+            // 在拿到完整 bundle 后：
+            bool stanceL = stanceLeftDet.Update(bundle.Left!.Value.cal.m_acc, bundle.Left!.Value.cal.m_gyr);
+            bool stanceR = stanceRightDet.Update(bundle.Right!.Value.cal.m_acc, bundle.Right!.Value.cal.m_gyr);
+            if (stanceL)
+            {
+                log("Stance");
+            }
+            var (fpaL, fpaR) = estimator.ProcessBundle(bundle, stanceL, stanceR);
+
+            // 实时 UI 值（仅 stance 时有值）
+            if (fpaL.HasValue) log($"Left: {fpaL.Value * 180f / MathF.PI}");
+            if (fpaR.HasValue) log($"right: {fpaR.Value * 180f / MathF.PI}");
+        }
+
+
+        public void TestStance()
         {
             var det = new ImuGaitEventDetector
             {
@@ -1108,6 +1159,17 @@ namespace IMUMoCap
                     log($"  TO[{i}_{hs}] t={samples[to].T:F3}s pitchRate={samples[to].PitchRate:F3} rad/s");
                 }
             }
+        }
+
+
+        long currentPacketId = 0;
+        private void btnCalibration_click(object sender, RoutedEventArgs e)
+        {
+            calib.BeginStandingCalibration(startPacketId: currentPacketId, durationSec: 3f);
+
+
+
+
         }
     }
 }

@@ -24,9 +24,10 @@
             <RowDefinition />
         </Grid.RowDefinitions>
         <StackPanel Orientation="Horizontal">
-            <Button Click="Button_Click">Connect</Button>
+            <Button Click="Button_Click">Measure</Button>
+            <Button Click="btnCalibration_click" Margin="10">Calibration</Button>
             <Button Click="Button_Click_1">Test</Button>
-            <TextBlock Text="{Binding DeviceState}" />
+            <!--<TextBlock Text="{Binding DeviceState}" />-->
         </StackPanel>
         <GridSplitter
             Grid.RowSpan="5"

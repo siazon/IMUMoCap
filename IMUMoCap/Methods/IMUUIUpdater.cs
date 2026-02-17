@@ -16,10 +16,10 @@ namespace IMUMoCap.Methods
         }
 
         private readonly Matrix3D M = new Matrix3D(
-      1, 0, 0, 0,
-      0, 0, 1, 0,
-      0, -1, 0, 0,
-      0, 0, 0, 1);
+        1, 0, 0, 0,
+        0, 0, 1, 0,
+        0, -1, 0, 0,
+        0, 0, 0, 1);
         private Matrix3D Mt;
         private Matrix3D Rcorr;
         /// <summary>
