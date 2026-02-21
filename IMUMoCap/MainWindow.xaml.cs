@@ -1,6 +1,7 @@
 ﻿using IMUMoCap.AHRS;
 using IMUMoCap.Methods;
 using System.Collections.Concurrent;
+using System.Data;
 using System.Net.Sockets;
 using System.Numerics;
 using System.Reflection.Metadata;
@@ -41,6 +42,7 @@ namespace IMUMoCap
         BlockingCollection<RecoredData> ImuDataQueue = new BlockingCollection<RecoredData>(new ConcurrentQueue<RecoredData>(), 2000);
         FootHeadingCalibrator calib;
         string imuPelvis = "imuPelvis", imuL = "imuL", imuR = "imuR";
+        private readonly bool _useConjugateForHeading = true; // 你想用哪套就统一哪套
         public MainWindow()
         {
             InitializeComponent();
@@ -57,16 +59,18 @@ namespace IMUMoCap
 
             BuildAxes(AxesVisual12);
             BuildImuBox(ImuVisual12);
-            Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43D12 });
-            Imus.Add(new ImuViewModel(imuL) { IMUDodel = ImuVisual1, DeviceId = 0x10B41904 });
-            Imus.Add(new ImuViewModel(imuR) { IMUDodel = ImuVisual12, DeviceId = 0x10b41913 });
+            //Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43D12, Role = ImuRole.Pelvis });
+            Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis });
+            Imus.Add(new ImuViewModel(imuL) { IMUDodel = ImuVisual1, DeviceId = 0x10B41904, Role = ImuRole.LeftFoot });
+            Imus.Add(new ImuViewModel(imuR) { IMUDodel = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.RightFoot });
 
             calib = new FootHeadingCalibrator(pelvisId: imuPelvis, leftFootId: imuL, rightFootId: imuR);
 
 
             // 你已有的 stance 判定（用 packetId 同步）
-            stanceLeftDet = new FootStanceDetector(fs: 100, minEnterMs: 40, minExitMs: 40);
-            stanceRightDet = new FootStanceDetector(fs: 100, minEnterMs: 40, minExitMs: 40);
+            stanceLeftDet = new FootStanceDetector(fs: 100, windowMs: 100, minEnterMs: 80, minExitMs: 40);
+            stanceRightDet = new FootStanceDetector(fs: 100, windowMs: 100, minEnterMs: 80, minExitMs: 40);
+
 
 
 
@@ -164,6 +168,24 @@ namespace IMUMoCap
 
                             _content.DeviceState = States.CONNECTED;
                             log(string.Format("Master Connected. Port: {0}, ID: {1}", e.PortInfo.portName().toString(), e.PortInfo.deviceId().toXsString().toString()));
+
+                            // --- Station 专用：确保进入 operational state（文档：XsDevice::makeOperational） ---
+                            var did = e.PortInfo.deviceId();
+
+                            // 这两个方法在你的 SDK 文档里都有：isAwindaXStation / isAwinda2Station
+                            bool isStation = did.isAwindaXStation() || did.isAwinda2Station();
+
+                            if (isStation)
+                            {
+                                // 建议：先回到 config 再 makeOperational（更稳）
+                                // 如果 device 已在测量，直接 enableRadio 可能会失败或无效
+                                if (_MyWirelessMasterDevice.deviceState()!= XsDeviceState.XDS_Config)
+                                    _MyWirelessMasterDevice.gotoConfig();
+
+                                // 关键：Station 置 operational
+                                bool ok = _MyWirelessMasterDevice.makeOperational();
+                                log($"makeOperational() => {ok}");
+                            }
 
                             // Be sure to start with radio disabled
                             if (_MyWirelessMasterDevice.isRadioEnabled())
@@ -490,13 +512,27 @@ namespace IMUMoCap
 
                 uint deviceId = e.Device.deviceId().legacyDeviceId();
                 string devices = GetOrAssignSlot(deviceId).SlotName;
-                var result = calib.OnSample(e.Packet.packetId(), devices, sdiData, e.Packet.calibratedData());
-                if (result != null)
+                var outcome = calib.OnSample(e.Packet.packetId(), devices, sdiData, e.Packet.calibratedData(), _useConjugateForHeading);
+                if (outcome != null)
                 {
-                    _deltaLeftRad = result.DeltaLeftRad;
-                    _deltaRightRad = result.DeltaRightRad;
-                    // 保存下来：deltaLeft/deltaRight
-                    log($"deltaL(deg)={result.ToString()}");
+                    if (!outcome.Success)
+                    {
+                        log(outcome.Reason);
+                        // 提示重新标定
+                    }
+                    else
+                    {
+                        var result = outcome.Result!;
+                        _deltaLeftRad = result.DeltaLeftRad;
+                        _deltaRightRad = result.DeltaRightRad;
+                        estimator?.ResetProgressionDirection();
+                        // 保存下来：deltaLeft/deltaRight
+                        log($"delta(deg)={result.ToString()}");
+                        log($"dleftCorrected: {(result.LeftRawHeadingRad + _deltaLeftRad) * 180 / MathF.PI}");
+                        log($"dRightCorrected: {(result.RightRawHeadingRad + _deltaRightRad) * 180 / MathF.PI}");
+                        log($"pelvisHeading: {result.PelvisHeadingRad * 180 / MathF.PI}");
+                    }
+
                 }
                 if (_deltaLeftRad != 0) OnImuCallback(e.Packet.packetId(), devices, sdiData, e.Packet.calibratedData());
                 _connectedMtwData[deviceId].XsQuaternion = sdiData.orientationIncrement(); //xsQuaternion;
@@ -510,7 +546,7 @@ namespace IMUMoCap
 
                     var imuVM = GetOrAssignSlot(deviceId);
 
-                    OnNewImuQuaternion(new Quaternion(quat.x(), quat.y(), quat.z(), quat.w()), imuVM.IMUDodel);
+                    OnNewImuQuaternion(new Quaternion(quat.x(), quat.y(), quat.z(), quat.w()), imuVM);
                     //Getting Euler angles.
                     XsEuler oriEuler = e.Packet.orientationEuler();
 
@@ -604,7 +640,7 @@ namespace IMUMoCap
         /// <summary>
         /// 你在 IMU 回调里，把最新的 orientationQuats 传进来调用这个方法即可
         /// </summary>
-        public void OnNewImuQuaternion(Quaternion qImu, ModelVisual3D Imu3D)
+        public void OnNewImuQuaternion(Quaternion qImu, ImuViewModel Imu3D)
         {
             // 重要：WPF Quaternion 构造/存储顺序是 (X,Y,Z,W)
             // 如果你的 orientationQuats 是 (w,x,y,z)，你要自己调换成：
@@ -618,10 +654,30 @@ namespace IMUMoCap
             // UI线程更新
             Dispatcher.BeginInvoke(() =>
             {
+                //Imu3D.Transform = new IMUUIUpdater().CreateTransform(qImu, applyConjugate: true); // 你之前验证 Conjugate 会更接近正确，所以先保持 true
+                // 1) 原本的姿态 transform（你已有）
+                var baseTf = new IMUUIUpdater().CreateTransform(qImu, applyConjugate: true);
 
-                Imu3D.Transform = new IMUUIUpdater().CreateTransform(qImu, applyConjugate: true); // 你之前验证 Conjugate 会更接近正确，所以先保持 true
+                // 2) 选择对应的标定 yaw 修正角（弧度->度）
+                float deltaRad = Imu3D.Role switch
+                {
+                    ImuRole.LeftFoot => _deltaLeftRad,
+                    ImuRole.RightFoot => _deltaRightRad,
+                    _ => 0f
+                };
+                double deltaDeg = deltaRad * 180.0 / Math.PI;
 
-                //TxtQuat.Text = $"x={qWpf.X:F4} y={qWpf.Y:F4} z={qWpf.Z:F4} w={qWpf.W:F4}";
+                // 3) 绕 UI 的 Up 轴做一个 yaw 修正旋转
+                //    假设 UI: Y up
+                var yawFix = new RotateTransform3D(
+                    new AxisAngleRotation3D(new Vector3D(0, 1, 0), deltaDeg));
+
+                // 4) 合成 transform：base + yawFix
+                var group = new Transform3DGroup();
+                group.Children.Add(baseTf);
+                group.Children.Add(yawFix);
+
+                Imu3D.IMUDodel.Transform = group;
             });
         }
 
@@ -1080,7 +1136,7 @@ namespace IMUMoCap
         float _deltaLeftRad = 0, _deltaRightRad = 0;
         private void Button_Click_1(object sender, RoutedEventArgs e)
         {
-   
+
         }
         public void Test()
         {
@@ -1090,13 +1146,22 @@ namespace IMUMoCap
 
             estimator.OnStepFpa += res =>
             {
-                float deg = res.FpaRad * 180f / MathF.PI;
-                log($"{res.Role} STEP FPA = {deg:F1} deg @ packet {res.PacketId}");
-                // 这里也可以推给 UI（每步一个值）
+                var b = res.DebugBest!;
+                float progDeg = res.PelvisProgDirRad * 180f / MathF.PI;
+
+                log($"{res.Role} stepFPA={res.FpaRad * 180 / MathF.PI,6:F1}°  " +
+                    $"pelvisWin={b.PelvisDeg,7:F1}°  progDir={progDeg,7:F1}°  corr={b.CorrDeg,7:F1}°  " +
+                    $"gyroMean={b.GyroMean,5:F2} gyroMax={b.GyroMax,5:F2}");
             };
+
 
         }
         FootStanceDetector stanceLeftDet, stanceRightDet;
+
+
+
+        private long _lastLogTicks = 0;
+        private static readonly long OneSecondTicks = TimeSpan.FromSeconds(1).Ticks;
 
         void OnImuCallback(long packetId, string deviceId, XsSdiData sdi, XsCalibratedData cal)
         {
@@ -1105,7 +1170,7 @@ namespace IMUMoCap
             var bundle = aggregator.Add(packetId, deviceId, sdi, cal);
             if (bundle == null) return;
 
-           
+
 
             var acc = bundle.Left!.Value.cal.m_acc;
             var gyr = bundle.Left!.Value.cal.m_gyr;
@@ -1116,14 +1181,23 @@ namespace IMUMoCap
             bool stanceL = stanceLeftDet.Update(bundle.Left!.Value.cal.m_acc, bundle.Left!.Value.cal.m_gyr);
             bool stanceR = stanceRightDet.Update(bundle.Right!.Value.cal.m_acc, bundle.Right!.Value.cal.m_gyr);
             if (stanceL)
-            {
-                log("Stance");
+            { 
             }
-            var (fpaL, fpaR) = estimator.ProcessBundle(bundle, stanceL, stanceR);
+            var (fpaL, fpaR, pelvisHeading) = estimator.ProcessBundle(bundle, stanceL, stanceR, _useConjugateForHeading);
 
             // 实时 UI 值（仅 stance 时有值）
-            if (fpaL.HasValue) log($"Left: {fpaL.Value * 180f / MathF.PI}");
-            if (fpaR.HasValue) log($"right: {fpaR.Value * 180f / MathF.PI}");
+            //if (fpaL.HasValue) log($"Left: {fpaL.Value * 180f / MathF.PI}");
+            //if (fpaR.HasValue) log($"right: {fpaR.Value * 180f / MathF.PI}");
+
+
+            //long now = DateTime.UtcNow.Ticks;
+            //if (_lastLogTicks != 0 && (now - _lastLogTicks) < OneSecondTicks)
+            //    return;
+
+            //_lastLogTicks = now;
+
+            //log($"pelvisHeading: {pelvisHeading * 180f / MathF.PI}");
+
         }
 
 
@@ -1165,8 +1239,16 @@ namespace IMUMoCap
         long currentPacketId = 0;
         private void btnCalibration_click(object sender, RoutedEventArgs e)
         {
-            calib.BeginStandingCalibration(startPacketId: currentPacketId, durationSec: 3f);
 
+            estimator?.ResetProgressionDirection();
+            calib.BeginStandingCalibration(
+    startPacketId: currentPacketId,
+    delaySec: 1.0f,        // 先等 1 秒让人站稳
+    collectSec: 3.0f,      // 再采 6 秒
+    requireStill: true,    // 静止门控（推荐）
+    stillGyroThRad: 0.15f,
+    stillAccDevTh: 0.35f
+);
 
 
 

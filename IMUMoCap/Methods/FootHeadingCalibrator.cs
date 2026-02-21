@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Numerics;
 using System.Text;
@@ -8,7 +9,270 @@ using XDA;
 
 namespace IMUMoCap.Methods
 {
+    /// <summary>
+    /// Maintains per-device orientation q_WS by integrating orientationIncrement at 100Hz,
+    /// and performs a static standing calibration to estimate yaw/heading offsets for feet.
+    /// World frame assumed ENU (Z up). Heading computed from projected forward vector.
+    /// </summary>
+    public sealed class FootHeadingCalibrator
+    {
+        private readonly string _pelvisId, _leftFootId, _rightFootId;
+
+        // Per device orientation q_WS (integrated)
+        private readonly Dictionary<string, Quaternion> _qWs = new();
+
+        // Forward axis per device (sensor frame)
+        private readonly Dictionary<string, Vector3> _forwardAxis = new();
+
+        // ---- Calibration state ----
+        private bool _calibrating;
+        private long _startPacketId;
+
+        private float _delaySec = 1.0f;        // 延迟开始
+        private float _collectSec = 6.0f;      // 统计窗口时长（不含 delay）
+        private bool _requireStill = true;     // 是否要求静止才计入样本
+
+        // Static thresholds for "still" gating (tuned for foot/pelvis in quiet standing)
+        private float _stillGyroTh = 0.15f;    // rad/s
+        private float _stillAccDevTh = 0.35f;  // m/s^2 deviation from g
+
+        private const float Fs = 100f;
+        private float _gEst = 9.81f;           // gravity magnitude estimate
+
+        // Accumulators (circular mean)
+        private readonly AngleAccumulator _pelvisAcc = new();
+        private readonly AngleAccumulator _leftAcc = new();
+        private readonly AngleAccumulator _rightAcc = new();
+
+        public FootHeadingCalibrator(string pelvisId, string leftFootId, string rightFootId)
+        {
+            _pelvisId = pelvisId;
+            _leftFootId = leftFootId;
+            _rightFootId = rightFootId;
+
+            _qWs[_pelvisId] = Quaternion.Identity;
+            _qWs[_leftFootId] = Quaternion.Identity;
+            _qWs[_rightFootId] = Quaternion.Identity;
+
+            // You confirmed:
+            // foot: +X forward
+            // pelvis: -Z forward
+            _forwardAxis[_leftFootId] = new Vector3(1, 0, 0);
+            _forwardAxis[_rightFootId] = new Vector3(1, 0, 0);
+            _forwardAxis[_pelvisId] = new Vector3(0, 0, -1);
+        }
+
+        /// <summary>
+        /// Start a standing calibration with delayed collection and automatic failure checks.
+        /// </summary>
+        public void BeginStandingCalibration(
+            long startPacketId,
+            float delaySec = 1.0f,
+            float collectSec = 6.0f,
+            bool requireStill = true,
+            float stillGyroThRad = 0.15f,
+            float stillAccDevTh = 0.35f
+        )
+        {
+            _calibrating = true;
+            _startPacketId = startPacketId;
+
+            _delaySec = MathF.Max(0f, delaySec);
+            _collectSec = MathF.Max(1.0f, collectSec);
+            _requireStill = requireStill;
+
+            _stillGyroTh = stillGyroThRad;
+            _stillAccDevTh = stillAccDevTh;
+
+            _qWs[_pelvisId] = Quaternion.Identity;
+            _qWs[_leftFootId] = Quaternion.Identity;
+            _qWs[_rightFootId] = Quaternion.Identity;
+
+            _pelvisAcc.Reset();
+            _leftAcc.Reset();
+            _rightAcc.Reset();
+
+            _gEst = 9.81f;
+        }
+
+        /// <summary>
+        /// Feed per-device samples. Returns an outcome only once when calibration finishes (success or failure).
+        /// </summary>
+        public ImuCalibrationOutcome? OnSample(long packetId, string deviceId, XsSdiData sdi, XsCalibratedData cal, bool isUseConjugate)
+        {
+            // Update q(t) by orientation increment
+            Quaternion dq = ToNumericsQuaternion(sdi.orientationIncrement());
+
+
+            Quaternion qOld = _qWs.TryGetValue(deviceId, out var existing) ? existing : Quaternion.Identity;
+            Quaternion qNew = Utils.Normalize(Quaternion.Multiply(qOld, dq));
+            // Optional: quaternion sign continuity (avoid q/-q flips)
+            if (Quaternion.Dot(qNew, qOld) < 0)
+                qNew = new Quaternion(-qNew.X, -qNew.Y, -qNew.Z, -qNew.W);
+
+            _qWs[deviceId] = qNew;
+
+            if (!_calibrating) return null;
+
+            float t = PacketIdToTimeSec(packetId, _startPacketId);
+
+            // Delay phase: do nothing, let subject settle
+            if (t < _delaySec) return null;
+
+            // Collection window time (relative to delayed start)
+            float tc = t - _delaySec;
+
+            // If beyond collection time, finalize (but only when we have enough samples)
+            if (tc > _collectSec)
+            {
+                _calibrating = false;
+                return FinalizeCalibration(packetId);
+            }
+
+            // Still gating (recommended)
+            if (_requireStill)
+            {
+                float gyroMag = (float)cal.m_gyr.cartesianLength();     // rad/s (you confirmed)
+                float accMag = (float)cal.m_acc.cartesianLength();      // m/s^2 (you confirmed)
+
+                // Update g estimate slowly (only when gyro is low-ish)
+                if (gyroMag < 0.25f)
+                    _gEst = Lerp(_gEst, accMag, 0.01f);
+
+                float accDev = MathF.Abs(accMag - _gEst);
+
+                if (gyroMag > _stillGyroTh || accDev > _stillAccDevTh)
+                {
+                    // Not still -> skip this sample
+                    return null;
+                }
+            }
+
+            // Compute heading for this device
+            if (!_forwardAxis.TryGetValue(deviceId, out var fwd))
+                fwd = new Vector3(1, 0, 0);
+
+            float heading = Utils.HeadingENU_Consistent(qNew, fwd, isUseConjugate);
+
+            // Accumulate
+            if (deviceId == _pelvisId) _pelvisAcc.Add(heading);
+            else if (deviceId == _leftFootId) _leftAcc.Add(heading);
+            else if (deviceId == _rightFootId) _rightAcc.Add(heading);
+
+            return null;
+        }
+
+        private ImuCalibrationOutcome FinalizeCalibration(long packetId)
+        {
+            // Basic sample count check
+            int n = Math.Min(_pelvisAcc.Count, Math.Min(_leftAcc.Count, _rightAcc.Count));
+            if (n < 150) // ~1.5s effective still samples @100Hz
+            {
+                return new ImuCalibrationOutcome
+                {
+                    Success = false,
+                    Reason = $"Calibration failed: not enough still samples (used={n}). Stand still longer / loosen thresholds.",
+                    SamplesUsed = n
+                };
+            }
+
+            float Hp = _pelvisAcc.MeanAngle();
+            float Hl = _leftAcc.MeanAngle();
+            float Hr = _rightAcc.MeanAngle();
+
+            float deltaL = Utils.WrapPi(Hp - Hl);
+            float deltaR = Utils.WrapPi(Hp - Hr);
+
+            // Sanity: apply deltas and compute residual errors
+            float errL = Utils.WrapPi((Hl + deltaL) - Hp);
+            float errR = Utils.WrapPi((Hr + deltaR) - Hp);
+
+            float errLdeg = Rad2Deg(errL);
+            float errRdeg = Rad2Deg(errR);
+
+            // This error should be near 0 if math is consistent.
+            // If not near 0, something is inconsistent in your quaternion direction/order.
+            if (MathF.Abs(errLdeg) > 2f || MathF.Abs(errRdeg) > 2f)
+            {
+                return new ImuCalibrationOutcome
+                {
+                    Success = false,
+                    Reason = $"Calibration failed: internal inconsistency (errL={errLdeg:F1}°, errR={errRdeg:F1}°). Check quaternion order / multiply order / conjugate usage.",
+                    ErrLeftDeg = errLdeg,
+                    ErrRightDeg = errRdeg,
+                    SamplesUsed = n
+                };
+            }
+
+            // Practical quality gate: even if internal consistency is OK,
+            // we want feet aligned with pelvis in the calibration posture.
+            // Here we check raw-vs-pelvis offsets magnitude (i.e., -delta) is not absurdly varying between feet.
+            // More importantly: you can enforce that corrected headings are close to pelvis by checking during the same window,
+            // but since corr==pelvis by construction in mean, we instead gate delta difference.
+            float deltaDiffDeg = MathF.Abs(Rad2Deg(Utils.WrapPi(deltaL - deltaR)));
+
+            // If left/right delta differ too much, likely the posture was not symmetric / sensors moved / not aligned.
+            if (deltaDiffDeg > 25f)
+            {
+                return new ImuCalibrationOutcome
+                {
+                    Success = false,
+                    Reason = $"Calibration failed: left/right offsets differ too much (|deltaL-deltaR|={deltaDiffDeg:F1}°). Re-wear or re-stand with both feet pointing forward.",
+                    SamplesUsed = n
+                };
+            }
+
+            // Optional gate: delta too close to +/-180 can indicate forward axis mismatch
+            // (not always wrong, but often suspicious). We don't hard-fail, just warn.
+            // You can decide to fail if you want.
+            // if (MathF.Abs(MathF.Abs(Rad2Deg(deltaL)) - 180f) < 10f) ...
+
+            var result = new ImuCalibrationResult
+            {
+                DeltaLeftRad = deltaL,
+                DeltaRightRad = deltaR,
+                PelvisHeadingRad = Hp,
+                LeftRawHeadingRad = Hl,
+                RightRawHeadingRad = Hr,
+                SamplesUsed = n
+            };
+
+            return new ImuCalibrationOutcome
+            {
+                Success = true,
+                Reason = "OK",
+                Result = result,
+                ErrLeftDeg = errLdeg,
+                ErrRightDeg = errRdeg,
+                SamplesUsed = n
+            };
+        }
+
+        // ---------- math helpers ----------
+        private static float PacketIdToTimeSec(long packetId, long startPacketId)
+            => (packetId - startPacketId) / Fs;
+
+        private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+        private static float Rad2Deg(float r) => r * 180f / MathF.PI;
+
+        // TODO: replace with your SDK mapping
+        private static Quaternion ToNumericsQuaternion(XsQuaternion inc)
+            => new Quaternion((float)inc.x(), (float)inc.y(), (float)inc.z(), (float)inc.w());
+    }
     public enum ImuRole { Pelvis, LeftFoot, RightFoot }
+
+    public sealed class ImuCalibrationOutcome
+    {
+        public bool Success { get; init; }
+        public string Reason { get; init; } = "";
+
+        public ImuCalibrationResult? Result { get; init; }
+
+        // Optional extra debug
+        public float ErrLeftDeg { get; init; }
+        public float ErrRightDeg { get; init; }
+        public int SamplesUsed { get; init; }
+    }
 
     public sealed class ImuCalibrationResult
     {
@@ -24,220 +288,30 @@ namespace IMUMoCap.Methods
         }
     }
 
-    /// <summary>
-    /// Maintains per-device orientation q_WS by integrating orientationIncrement at 100Hz,
-    /// and performs a static standing calibration to estimate yaw/heading offsets for feet.
-    /// World frame assumed ENU (Z up). Heading computed from projected forward vector.
-    /// </summary>
-    public sealed class FootHeadingCalibrator
+    public sealed class AngleAccumulator
     {
-        // --- Configure these 3 IDs in your app ---
-        private readonly string _pelvisId;
-        private readonly string _leftFootId;
-        private readonly string _rightFootId;
+        private double _sumSin;
+        private double _sumCos;
+        public int Count { get; private set; }
 
-
-        // 100 Hz
-        private const float Fs = 100f;
-
-        // Per device orientation state: q_WS (sensor frame rotated into world frame)
-        private readonly Dictionary<string, Quaternion> _qWs = new();
-
-        // Calibration window buffers
-        private bool _calibrating;
-        private long _calibStartPacketId;
-        private float _calibDurationSec;
-
-        private readonly AngleAccumulator _pelvisHeadingAcc = new();
-        private readonly AngleAccumulator _leftHeadingAcc = new();
-        private readonly AngleAccumulator _rightHeadingAcc = new();
-        private readonly Dictionary<string, Vector3> _forwardAxis = new();
-
-
-        public FootHeadingCalibrator(string pelvisId, string leftFootId, string rightFootId)
+        public void Reset()
         {
-            _pelvisId = pelvisId;
-            _leftFootId = leftFootId;
-            _rightFootId = rightFootId;
-
-            // Initialize orientations to identity (world == sensor at t0).
-            _qWs[_pelvisId] = Quaternion.Identity;
-            _qWs[_leftFootId] = Quaternion.Identity;
-            _qWs[_rightFootId] = Quaternion.Identity;
-
-            // Forward axis in SENSOR frame for each device:
-            _forwardAxis[_leftFootId] = new Vector3(1, 0, 0);   // +X forward
-            _forwardAxis[_rightFootId] = new Vector3(1, 0, 0);   // +X forward
-            _forwardAxis[_pelvisId] = new Vector3(0, 0, -1);  // -Z forward (your腰部安装)
+            _sumSin = 0;
+            _sumCos = 0;
+            Count = 0;
         }
 
-        /// <summary>
-        /// Call this once you instruct the subject to stand still and align feet forward.
-        /// durationSec: e.g., 6 seconds.
-        /// </summary>
-        public void BeginStandingCalibration(long startPacketId, float durationSec = 6f)
+        public void Add(float angleRad)
         {
-            _calibrating = true;
-            _calibStartPacketId = startPacketId;
-            _calibDurationSec = durationSec;
-
-            _pelvisHeadingAcc.Reset();
-            _leftHeadingAcc.Reset();
-            _rightHeadingAcc.Reset();
+            _sumSin += Math.Sin(angleRad);
+            _sumCos += Math.Cos(angleRad);
+            Count++;
         }
 
-        /// <summary>
-        /// Feed samples from your 100Hz callback.
-        /// Expect: all 3 devices share same packetId for a given time.
-        /// </summary>
-        public ImuCalibrationResult? OnSample(
-            long packetId,
-            string deviceId,
-            XsSdiData sdi,
-            XsCalibratedData cal // not used in this basic calibration, kept for extensibility
-        )
+        public float MeanAngle()
         {
-            // 1) Update q_WS by integrating orientationIncrement
-            // NOTE: orientationIncrement must be converted into System.Numerics.Quaternion (X,Y,Z,W).
-            Quaternion dq = ToNumericsQuaternion(sdi.orientationIncrement());
-
-            // Common integration: q(t+dt) = normalize(q(t) * dq)
-            Quaternion q = _qWs.TryGetValue(deviceId, out var existing) ? existing : Quaternion.Identity;
-            q = Normalize(Quaternion.Multiply(q, dq));
-            _qWs[deviceId] = q;
-
-            // 2) If calibrating, accumulate heading for this device
-            if (_calibrating)
-            {
-                float t = PacketIdToTimeSec(packetId, _calibStartPacketId);
-
-                // Only accumulate within [0, duration]
-                if (t >= 0 && t <= _calibDurationSec)
-                {
-                    Vector3 fwd = _forwardAxis.TryGetValue(deviceId, out var v) ? v : new Vector3(1, 0, 0);
-                    float heading = ComputeHeadingRadFromQuaternionENU(q, fwd);
-
-                    if (deviceId == _pelvisId) _pelvisHeadingAcc.Add(heading);
-                    else if (deviceId == _leftFootId) _leftHeadingAcc.Add(heading);
-                    else if (deviceId == _rightFootId) _rightHeadingAcc.Add(heading);
-                }
-
-                // 3) Finish when time exceeds duration AND we have enough samples from all three
-                if (t > _calibDurationSec &&
-                    _pelvisHeadingAcc.Count > 50 &&
-                    _leftHeadingAcc.Count > 50 &&
-                    _rightHeadingAcc.Count > 50)
-                {
-                    _calibrating = false;
-
-                    float Hp = _pelvisHeadingAcc.MeanAngle();
-                    float Hl = _leftHeadingAcc.MeanAngle();
-                    float Hr = _rightHeadingAcc.MeanAngle();
-
-                    // Offsets so that corrected foot heading aligns to pelvis heading in the neutral stance.
-                    float deltaLeft = WrapPi(Hp - Hl);
-                    float deltaRight = WrapPi(Hp - Hr);
-
-                    return new ImuCalibrationResult
-                    {
-                        DeltaLeftRad = deltaLeft,
-                        DeltaRightRad = deltaRight,
-                        PelvisHeadingRad = Hp,
-                        LeftRawHeadingRad = Hl,
-                        RightRawHeadingRad = Hr,
-                        SamplesUsed = Math.Min(_pelvisHeadingAcc.Count, Math.Min(_leftHeadingAcc.Count, _rightHeadingAcc.Count))
-                    };
-                }
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Convert packetId to seconds with 100Hz.
-        /// If packetId is incremental and can wrap, uint subtraction still works with wrap if window is short.
-        /// </summary>
-        private  float PacketIdToTimeSec(long packetId, long startPacketId)
-        {
-            long diff = packetId - startPacketId; // handles wrap-around in uint arithmetic for short intervals
-            return diff / Fs;
-        }
-
-        /// <summary>
-        /// Compute heading from sensor forward axis rotated to world frame, projected to horizontal plane.
-        /// World ENU: Z is up, horizontal plane is XY.
-        /// </summary>
-        private static float ComputeHeadingRadFromQuaternionENU(Quaternion qWs, Vector3 sensorForwardAxis)
-        {
-            // Rotate the chosen forward axis from SENSOR frame into WORLD frame
-            Vector3 fw = Vector3.Transform(sensorForwardAxis, qWs);
-
-            // Project to horizontal plane (ENU => Z up)
-            fw.Z = 0;
-
-            if (fw.LengthSquared() < 1e-8f)
-                return 0f;
-
-            fw = Vector3.Normalize(fw);
-
-            // Heading in [-pi, pi]
-            return MathF.Atan2(fw.Y, fw.X);
-        }
-
-
-        private Quaternion Normalize(Quaternion q)
-        {
-            float n = MathF.Sqrt(q.X * q.X + q.Y * q.Y + q.Z * q.Z + q.W * q.W);
-            if (n < 1e-12f) return Quaternion.Identity;
-            float inv = 1f / n;
-            return new Quaternion(q.X * inv, q.Y * inv, q.Z * inv, q.W * inv);
-        }
-
-        private  float WrapPi(float a)
-        {
-            while (a > MathF.PI) a -= 2f * MathF.PI;
-            while (a < -MathF.PI) a += 2f * MathF.PI;
-            return a;
-        }
-
-        /// <summary>
-        /// Implement this conversion based on your SDK struct layout.
-        /// System.Numerics.Quaternion expects (X,Y,Z,W).
-        /// If your SDK gives (w,x,y,z), reorder here.
-        /// </summary>
-        private  Quaternion ToNumericsQuaternion(XsQuaternion inc)
-        {
-            // Example assumes inc has fields X,Y,Z,W already.
-            // If your SDK provides W,X,Y,Z: return new Quaternion(inc.X, inc.Y, inc.Z, inc.W) accordingly.
-            return new Quaternion((float)inc.x(), (float)inc.y(), (float)inc.z(), (float)inc.w());
-        }
-
-        // Circular mean accumulator: mean angle robustly over wrap-around
-        private sealed class AngleAccumulator
-        {
-            private double _sumSin;
-            private double _sumCos;
-            public int Count { get; private set; }
-
-            public void Reset()
-            {
-                _sumSin = 0;
-                _sumCos = 0;
-                Count = 0;
-            }
-
-            public void Add(float angleRad)
-            {
-                _sumSin += Math.Sin(angleRad);
-                _sumCos += Math.Cos(angleRad);
-                Count++;
-            }
-
-            public float MeanAngle()
-            {
-                if (Count == 0) return 0f;
-                return (float)Math.Atan2(_sumSin / Count, _sumCos / Count);
-            }
+            if (Count == 0) return 0f;
+            return (float)Math.Atan2(_sumSin / Count, _sumCos / Count);
         }
     }
 }

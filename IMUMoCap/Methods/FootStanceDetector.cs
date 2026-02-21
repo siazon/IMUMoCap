@@ -73,8 +73,8 @@ public sealed class FootStanceDetector
 
         // Still / moving decisions with hysteresis thresholds
         bool stillNow = (gyroFeat < _gyroThEnter) && (accFeat < _accThEnter);
-        bool moveNow = (gyroFeat > _gyroThExit) || (accFeat > _accThExit);
-
+        //bool moveNow = (gyroFeat > _gyroThExit) || (accFeat > _accThExit);
+        bool moveNow = (gyroMag > _gyroThExit) || (accDev > _accThExit);
         if (!_isStance)
         {
             if (stillNow)
