@@ -34,12 +34,17 @@ namespace IMUMoCap.Methods
         public event Action<StepFpaResult>? OnStepFpa;  // fired when a step value is finalized (TO)
 
         public readonly CircularMovingAverage _pelvisProgDir = new CircularMovingAverage(300); // 3秒@100Hz
+        public bool EnableAntiJumpGate { get; set; } = false;  // 防突变总开关
 
         private readonly HeadingQualityGate _leftFootGate = new HeadingQualityGate(fs: 100f);
         private readonly HeadingQualityGate _rightFootGate = new HeadingQualityGate(fs: 100f);
 
+        private const int _minFramesForStep = 8;              // stance里至少80ms有效样本再出step
+        private const int _maxFootRejectStreakForAdd = 6;     // 短时拒绝仍允许用hold值入窗，避免窗口断裂
+
 
         private float? _pelvisHeadingPrev = null;
+        private float? _pelvisHeadingUsedPrev = null;
         private long _pelvisPrevPacket = 0;
         private int _pelvisRejectStreak = 0;
         // ---- Magnetometer quality gate (pelvis) ----
@@ -70,6 +75,15 @@ namespace IMUMoCap.Methods
             _forwardAxis[_leftId] = new Vector3(1, 0, 0);
             _forwardAxis[_rightId] = new Vector3(1, 0, 0);
             _forwardAxis[_pelvisId] = new Vector3(0, 0, -1);
+
+            // 脚部门控稍微放宽，否则在磁扰/瞬态下容易导致窗口样本不足
+            _leftFootGate.MaxJumpDeg = 35f;
+            _leftFootGate.YawRateRatioBad = 5f;
+            _leftFootGate.MagRelBadTh = 0.35f;
+
+            _rightFootGate.MaxJumpDeg = 35f;
+            _rightFootGate.YawRateRatioBad = 5f;
+            _rightFootGate.MagRelBadTh = 0.35f;
         }
 
         /// <summary>
@@ -94,7 +108,7 @@ namespace IMUMoCap.Methods
             float pelvisGyroMag = (float)b.Pelvis!.Value.cal.m_gyr.cartesianLength();
             float pelvisMagNorm = (float)b.Pelvis!.Value.cal.m_mag.cartesianLength();
 
-            AddPelvisHeadingByGate(pelvisHeading, b.PacketId, pelvisGyroMag, pelvisMagNorm);
+            float pelvisHeadingUsed = AddPelvisHeadingByGate(pelvisHeading, b.PacketId, pelvisGyroMag, pelvisMagNorm);
 
             Quaternion qLeft = _qWs[_leftId];
             float leftRaw = Utils.HeadingENU_Consistent(qLeft, _forwardAxis[_leftId], isUseConjugate);
@@ -115,23 +129,26 @@ namespace IMUMoCap.Methods
             float leftMagNorm = (float)b.Left!.Value.cal.m_mag.cartesianLength();
             float rightMagNorm = (float)b.Right!.Value.cal.m_mag.cartesianLength();
 
+            _leftFootGate.EnableAntiJumpGate = EnableAntiJumpGate;
+            _rightFootGate.EnableAntiJumpGate = EnableAntiJumpGate;
+
             bool leftOk = _leftFootGate.Update(leftCorr, leftGyroMag, leftMagNorm, out float leftCorrUsed);
             bool rightOk = _rightFootGate.Update(rightCorr, rightGyroMag, rightMagNorm, out float rightCorrUsed);
 
             // 如果拒绝：最保守做法是“该帧不写入 step window”
             // 只要你在 Add(...) 前做判断即可，HandleFootStep 里会做 Add
             // 所以我们这里把 isStance 改成 false 来阻止 Add（不改变真实stance状态机可选）
-            bool stanceLForAdd = stanceLeft && leftOk;
-            bool stanceRForAdd = stanceRight && rightOk;
+            bool stanceLForAdd = stanceLeft && (leftOk || _leftFootGate.RejectStreak <= _maxFootRejectStreakForAdd);
+            bool stanceRForAdd = stanceRight && (rightOk || _rightFootGate.RejectStreak <= _maxFootRejectStreakForAdd);
 
 
             // 然后用 leftCorrUsed/rightCorrUsed 继续走流程（避免突然跳变导致FPA炸）
             HandleFootStep(ImuRole.LeftFoot, b.PacketId, stanceLeft, stanceLForAdd,
-                          fpaLeft, pelvisHeading, leftCorrUsed, leftGyroMag,
+                          fpaLeft, pelvisHeadingUsed, leftCorrUsed, leftGyroMag,
                             _leftStep, ref _leftWasStance);
 
             HandleFootStep(ImuRole.RightFoot, b.PacketId, stanceRight, stanceRForAdd,
-                           fpaRight, pelvisHeading, rightCorrUsed, rightGyroMag,
+                           fpaRight, pelvisHeadingUsed, rightCorrUsed, rightGyroMag,
                             _rightStep, ref _rightWasStance);
 
             // 4) instantaneous values for UI (optional: only when stance)
@@ -141,12 +158,12 @@ namespace IMUMoCap.Methods
             return (uiLeft, uiRight, pelvisHeading);
         }
 
-        private void AddPelvisHeadingByGate(float pelvisHeading, long packetId, float pelvisGyroMag, float pelvisMagNorm)
+        private float AddPelvisHeadingByGate(float pelvisHeading, long packetId, float pelvisGyroMag, float pelvisMagNorm)
         {
             bool accept = true;
 
             // --- A) jump gate (your existing idea) ---
-            if (_pelvisHeadingPrev.HasValue)
+            if (EnableAntiJumpGate && _pelvisHeadingPrev.HasValue)
             {
                 float d = Utils.WrapPi(pelvisHeading - _pelvisHeadingPrev.Value);
                 float dDeg = d * 180f / MathF.PI;
@@ -184,6 +201,7 @@ namespace IMUMoCap.Methods
             {
                 _pelvisProgDir.Add(pelvisHeading);
                 _pelvisRejectStreak = 0;
+                _pelvisHeadingUsedPrev = pelvisHeading;
             }
             else
             {
@@ -193,6 +211,8 @@ namespace IMUMoCap.Methods
 
             _pelvisHeadingPrev = pelvisHeading;
             _pelvisPrevPacket = packetId;
+
+            return accept ? pelvisHeading : (_pelvisHeadingUsedPrev ?? pelvisHeading);
         }
 
         private uint _lastPelvisAxisLogPacket = 0;
@@ -209,33 +229,37 @@ namespace IMUMoCap.Methods
             // transition: stance -> swing means TO; finalize a per-step value
             if (wasStance && !isStance)
             {
-                var best = window.ComputeBestSubwindowFpaByCorrMinusPelvis(packetId, subWindowN: window.WindowFrames);
-
-                if (best.HasValue)
+                int subWindowN = Math.Min(window.WindowFrames, window.Count);
+                if (subWindowN >= _minFramesForStep)
                 {
-                    float progDir = _pelvisProgDir.MeanRad;
-                    // progDir 过于“不可信”时不输出（例如最近持续磁异常）
-                    if (_pelvisRejectStreak >= 50) return; // 0.5s 都异常，直接不信任参考
+                    var best = window.ComputeBestSubwindowFpaByCorrMinusPelvis(packetId, subWindowN: subWindowN);
 
-                    // corr 与 progDir 的差如果接近 180°，往往是参考翻转/干扰
-                    float diff = Utils.WrapPi(best.CorrMeanRad - progDir);
-                    if (MathF.Abs(diff) > (120f * MathF.PI / 180f)) return; // >120° 直接丢
-                    float stepFpa = Utils.WrapPi(best.CorrMeanRad - progDir);
-                    bool ok = best.GyroMean < 0.3f &&                // stance窗口足够静
-                        MathF.Abs(stepFpa * 180f / MathF.PI) < 45f && // FPA 不应离谱
-                        _pelvisRejectStreak < 30;              // 最近 0.3s 没连续异常
-
-                    if (!ok) return;
-
-                    OnStepFpa?.Invoke(new StepFpaResult
+                    if (best.HasValue)
                     {
-                        Role = role,
-                        PacketId = packetId,
-                        FpaRad = stepFpa,
-                        DebugBest = best,
-                        PelvisProgDirRad = progDir
-                    });
+                        float progDir = _pelvisProgDir.MeanRad;
+                        float diff = Utils.WrapPi(best.CorrMeanRad - progDir);
+                        float stepFpa = Utils.WrapPi(best.CorrMeanRad - progDir);
+
+                        bool ok = _pelvisRejectStreak < 80 &&
+                            MathF.Abs(diff) <= (140f * MathF.PI / 180f) &&
+                            best.GyroMean < 0.45f &&
+                            MathF.Abs(stepFpa * 180f / MathF.PI) < 50f &&
+                            _pelvisRejectStreak < 50;
+
+                        if (ok)
+                        {
+                            OnStepFpa?.Invoke(new StepFpaResult
+                            {
+                                Role = role,
+                                PacketId = packetId,
+                                FpaRad = stepFpa,
+                                DebugBest = best,
+                                PelvisProgDirRad = progDir
+                            });
+                        }
+                    }
                 }
+
                 window.Reset();
             }
 
@@ -256,6 +280,7 @@ namespace IMUMoCap.Methods
             _rightWasStance = false;
 
             _pelvisHeadingPrev = null;
+            _pelvisHeadingUsedPrev = null;
             _pelvisRejectStreak = 0;
             _pelvisMagBaseline = 0;
             _pelvisMagBaseCount = 0;
@@ -481,6 +506,7 @@ namespace IMUMoCap.Methods
         public float MagLearnGyroTh { get; set; } = 0.35f;    // rad/s，脚在stance静止时学习基线
         public float MagRelBadTh { get; set; } = 0.25f;       // |mag|相对偏差阈值（20~30%）
         public int MagBaselineMinCount { get; set; } = 200;   // 至少2秒@100Hz
+        public bool EnableAntiJumpGate { get; set; } = true;  // 仅控制jump/yaw-rate突变门控
 
         public HeadingQualityGate(float fs)
         {
@@ -507,7 +533,7 @@ namespace IMUMoCap.Methods
             bool accept = true;
 
             // A) jump gate + yaw-rate consistency gate
-            if (_prevHeading.HasValue)
+            if (EnableAntiJumpGate && _prevHeading.HasValue)
             {
                 float d = WrapPi(headingRad - _prevHeading.Value);
                 float dDeg = d * 180f / MathF.PI;
