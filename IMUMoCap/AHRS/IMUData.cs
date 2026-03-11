@@ -27,29 +27,23 @@ namespace IMUMoCap.AHRS
         public double aY { get; set; }
         public double aZ { get; set; }
         public double Angle { get; set; }
-        public Querternion Q1 { get; set; }
-        public Querternion Q2 { get; set; }
-        public Querternion Q3 { get; set; }
-        public Querternion Q4 { get; set; }
-        public Querternion Q5 { get; set; }
-        public Querternion Q6 { get; set; }
+        public Quaternion Q1 { get; set; }
+        public Quaternion Q2 { get; set; }
+        public Quaternion Q3 { get; set; }
+        public Quaternion Q4 { get; set; }
+        public Quaternion Q5 { get; set; }
+        public Quaternion Q6 { get; set; }
         public RecoredData[] RecoredDatas = new RecoredData[8];
     }
     public class RecoredData
     {
         public string PackageId { get; set; }
-        public Querternion Querternion { get; set; }
+        public Quaternion quaternion { get; set; }
         public Vector3 Accelerate { get; set; }
         public Vector3 Orientation { get; set; }
         public Vector3 AHRS { get; set; }
         public Vector3 MadgwickAHRS { get; set; }
     }
 
-    public class Querternion
-    {
-        public double x { get; set; }
-        public double y { get; set; }
-        public double z { get; set; }
-        public double w { get; set; }
-    }
+ 
 }

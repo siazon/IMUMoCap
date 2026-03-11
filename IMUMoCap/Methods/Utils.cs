@@ -4,6 +4,8 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows;
+using XDA;
 
 namespace IMUMoCap.Methods
 {
@@ -34,5 +36,15 @@ namespace IMUMoCap.Methods
             while (a < -MathF.PI) a += 2f * MathF.PI;
             return a;
         }
+        public static Quaternion ToNumericsQuaternion(XsQuaternion inc)
+        {
+            // Adjust here if your SDK is WXYZ etc.
+            return new Quaternion((float)inc.x(), (float)inc.y(), (float)inc.z(), (float)inc.w());
+        }
+        public static Vector3 ToNumericsVector3(XsVector v)
+        {
+           return new Vector3((float)v.value(0), (float)v.value(1), (float)v.value(2));
+        }
+     
     }
 }

@@ -34,18 +34,18 @@ namespace IMUMoCap.AHRS
         public void WriteCVS(string path, string fileName, List<RecoredData> data)
         {
             var csv = new StringBuilder();
-            var header = string.Format("Time (s),Gyroscope X (deg/s),Gyroscope Y (deg/s),Gyroscope Z (deg/s),Accelerometer X (g),Accelerometer Y (g),Accelerometer Z (g)");
+            var header = string.Format("PacketId,Gyroscope X (deg/s),Gyroscope Y (deg/s),Gyroscope Z (deg/s),Accelerometer X (g),Accelerometer Y (g),Accelerometer Z (g)");
             csv.AppendLine(header);
             foreach (var item in data)
             {
                 var first = item.PackageId;
                 var second = item.ToString();
-                var newLine = string.Format("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16}", item.PackageId, 
-                    item.Orientation.X.ToString(), item.Orientation.Y.ToString(), item.Orientation.Z.ToString(),
-                    item.Accelerate.X.ToString(), item.Accelerate.Y.ToString(), item.Accelerate.Z.ToString(),
-                    item.Querternion.x,item.Querternion.y,item.Querternion.z, item.Querternion.w,
-                    item.AHRS.X,item.AHRS.Y,item.AHRS.Z,
-                    item.MadgwickAHRS.X,item.MadgwickAHRS.Y,item.MadgwickAHRS.Z);
+                var newLine = string.Format("{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12},{13},{14},{15},{16}", item.PackageId,
+                        item.quaternion.X, item.quaternion.Y, item.quaternion.Z, item.quaternion.W,
+                    item.Accelerate.X, item.Accelerate.Y, item.Accelerate.Z,
+                    item.Orientation.X, item.Orientation.Y, item.Orientation.Z,
+                    item.MadgwickAHRS.X, item.MadgwickAHRS.Y, item.MadgwickAHRS.Z,
+                    item.AHRS.X,item.AHRS.Y,item.AHRS.Z);
                 csv.AppendLine(newLine);
             }
 

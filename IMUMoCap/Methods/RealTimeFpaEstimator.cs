@@ -143,11 +143,11 @@ namespace IMUMoCap.Methods
 
 
             // 然后用 leftCorrUsed/rightCorrUsed 继续走流程（避免突然跳变导致FPA炸）
-            HandleFootStep(ImuRole.LeftFoot, b.PacketId, stanceLeft, stanceLForAdd,
+            HandleFootStep(ImuRole.Left, b.PacketId, stanceLeft, stanceLForAdd,
                           fpaLeft, pelvisHeadingUsed, leftCorrUsed, leftGyroMag,
                             _leftStep, ref _leftWasStance);
 
-            HandleFootStep(ImuRole.RightFoot, b.PacketId, stanceRight, stanceRForAdd,
+            HandleFootStep(ImuRole.Right, b.PacketId, stanceRight, stanceRForAdd,
                            fpaRight, pelvisHeadingUsed, rightCorrUsed, rightGyroMag,
                             _rightStep, ref _rightWasStance);
 
@@ -295,7 +295,7 @@ namespace IMUMoCap.Methods
        
         private void UpdateOrientation(string deviceId, XsSdiData sdi)
         {
-            Quaternion dq = ToNumericsQuaternion(sdi.orientationIncrement());
+            Quaternion dq = Utils.ToNumericsQuaternion(sdi.orientationIncrement());
 
             // Common integration: q(t+dt) = normalize(q(t) * dq)
             Quaternion q = _qWs[deviceId];
@@ -303,11 +303,7 @@ namespace IMUMoCap.Methods
             _qWs[deviceId] = q;
         }
 
-        private static Quaternion ToNumericsQuaternion(XsQuaternion inc)
-        {
-            // Adjust here if your SDK is WXYZ etc.
-            return new Quaternion((float)inc.x(), (float)inc.y(), (float)inc.z(), (float)inc.w());
-        }
+        
     }
 
     public sealed class StepDebugWindow

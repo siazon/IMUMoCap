@@ -259,7 +259,7 @@ namespace IMUMoCap.Methods
         private static Quaternion ToNumericsQuaternion(XsQuaternion inc)
             => new Quaternion((float)inc.x(), (float)inc.y(), (float)inc.z(), (float)inc.w());
     }
-    public enum ImuRole { Pelvis, LeftFoot, RightFoot }
+    public enum ImuRole { Pelvis, Left, Right }
 
     public sealed class ImuCalibrationOutcome
     {

@@ -45,12 +45,14 @@ namespace IMUMoCap
                 OnPropertyChanged(nameof(Logs));
             }
         }
-        private Transform3D  _transform3D;
+        private Transform3D _transform3D;
 
         public Transform3D Transform3D
         {
             get { return _transform3D; }
-            set { _transform3D = value;
+            set
+            {
+                _transform3D = value;
                 OnPropertyChanged(nameof(Transform3D));
             }
         }
@@ -60,16 +62,20 @@ namespace IMUMoCap
         public string LogList
         {
             get { return _logList; }
-            set { _logList = value;
+            set
+            {
+                _logList = value;
                 OnPropertyChanged(nameof(LogList));
             }
         }
-        private bool _isScrollToEnd=true;
+        private bool _isScrollToEnd = true;
 
         public bool IsScollerToEnd
         {
             get { return _isScrollToEnd; }
-            set { _isScrollToEnd = value;
+            set
+            {
+                _isScrollToEnd = value;
                 OnPropertyChanged(nameof(IsScollerToEnd));
             }
         }
@@ -161,7 +167,7 @@ namespace IMUMoCap
             get { return _xsTime; }
             set { _xsTime = value; OnPropertyChanged(nameof(XsTime)); }
         }
-        
+
 
         private States _state;
 
@@ -175,6 +181,93 @@ namespace IMUMoCap
                 OnPropertyChanged(nameof(DeviceState));
             }
         }
+
+        private string _statusLabel;
+
+
+        public string StatusLabel
+        {
+            get { return _statusLabel; }
+            set
+            {
+                _statusLabel = value;
+                OnPropertyChanged(nameof(StatusLabel));
+            }
+        }
+
+        private string _CalibrationState = "Not calibrated";
+
+        public string CalibrationState
+        {
+            get { return _CalibrationState; }
+            set
+            {
+                _CalibrationState = value;
+                OnPropertyChanged(nameof(CalibrationState));
+            }
+        }
+
+        private float _ProgDirDeg;
+
+        public float ProgDirDeg
+        {
+            get { return _ProgDirDeg; }
+            set
+            {
+                _ProgDirDeg = value;
+                OnPropertyChanged(nameof(ProgDirDeg));
+            }
+        }
+
+        private int _PelvisRejectStreak;
+
+        public int PelvisRejectStreak
+        {
+            get { return _PelvisRejectStreak; }
+            set
+            {
+                _PelvisRejectStreak = value;
+                OnPropertyChanged(nameof(PelvisRejectStreak));
+            }
+        }
+
+        private string _StanceSummary;
+
+        public string StanceSummary
+        {
+            get { return _StanceSummary; }
+            set
+            {
+                _StanceSummary = value;
+                OnPropertyChanged(nameof(StanceSummary));
+            }
+        }
+
+        private float _LeftFpaDeg;
+
+        public float LeftFpaDeg
+        {
+            get { return _LeftFpaDeg; }
+            set
+            {
+                _LeftFpaDeg = value;
+                OnPropertyChanged(nameof(LeftFpaDeg));
+            }
+        }
+
+        private float _RightFpaDeg;
+
+        public float RightFpaDeg
+        {
+            get { return _RightFpaDeg; }
+            set
+            {
+                _RightFpaDeg = value;
+                OnPropertyChanged(nameof(RightFpaDeg));
+            }
+        }
+
+
         private bool _RotationByDegree = true;
 
         public bool RotationByDegree
@@ -188,12 +281,14 @@ namespace IMUMoCap
         }
 
         //public ObservableCollection<ISeries> Series { get; set; } = new ObservableCollection<ISeries>();
-        private IMUData  _imuData   ;
+        private IMUData _imuData;
 
         public IMUData ImuData
         {
             get { return _imuData; }
-            set { _imuData = value;
+            set
+            {
+                _imuData = value;
                 OnPropertyChanged(nameof(ImuData));
             }
         }

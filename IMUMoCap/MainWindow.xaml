@@ -15,6 +15,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="8*" />
             <ColumnDefinition Width="8*" />
+            <ColumnDefinition Width="8*" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="4*" />
         </Grid.ColumnDefinitions>
@@ -27,16 +28,71 @@
             <Button Click="Button_Click">Measure</Button>
             <Button Click="btnCalibration_click" Margin="10">Calibration</Button>
             <Button Click="Button_Click_1">Test</Button>
-            <!--<TextBlock Text="{Binding DeviceState}" />-->
         </StackPanel>
+        <!-- Row 1: Status + Left/Right FPA -->
+        <Grid Grid.Row="1" Grid.ColumnSpan="3" Margin="12,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="8*" />
+                <ColumnDefinition Width="8*" />
+                <ColumnDefinition Width="8*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Col 0: device & system status -->
+            <Border Grid.Column="0" Padding="12" CornerRadius="8" Background="#11000000">
+                <StackPanel>
+                    <TextBlock Text="{Binding DeviceState}" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="{Binding StatusLabel}" FontSize="24" FontWeight="Bold" Margin="0,6,0,12"/>
+
+                    <!-- 推荐加的状态信息（你在 ViewModel 里补对应属性即可） -->
+                    <UniformGrid Columns="2" Rows="3">
+                        <TextBlock Text="Calib:" Opacity="0.7"/>
+                        <TextBlock Text="{Binding CalibrationState}"/>
+
+                        <TextBlock Text="ProgDir:" Opacity="0.7"/>
+                        <TextBlock Text="{Binding ProgDirDeg, StringFormat={}{0:F1}°}"/>
+
+                        <TextBlock Text="Gate Reject:" Opacity="0.7"/>
+                        <TextBlock Text="{Binding PelvisRejectStreak}"/>
+                    </UniformGrid>
+
+                    <UniformGrid Columns="2" Rows="2" Margin="0,8,0,0">
+                        <TextBlock Text="Stance L/R:" Opacity="0.7"/>
+                        <TextBlock Text="{Binding StanceSummary}"/>
+
+                        <TextBlock Text="PacketId:" Opacity="0.7"/>
+                        <TextBlock Text="{Binding PacketId}"/>
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <!-- Col 1: Left FPA -->
+            <Border Grid.Column="1" Padding="12" CornerRadius="8" Background="#11000000" Margin="8,0">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="Left FPA" FontSize="18" Opacity="0.75" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding LeftFpaDeg, StringFormat={}{0:F1}°}"
+                       FontSize="54" FontWeight="Bold" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding LeftFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Col 2: Right FPA -->
+            <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#11000000" Margin="8,0">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="Right FPA" FontSize="18" Opacity="0.75" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding RightFpaDeg, StringFormat={}{0:F1}°}"
+                       FontSize="54" FontWeight="Bold" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding RightFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+        </Grid>
         <GridSplitter
             Grid.RowSpan="5"
-            Grid.Column="2"
+            Grid.Column="3"
             Width="3"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"
             ShowsPreview="True" />
-        <StackPanel Grid.Column="3"  Orientation="Horizontal">
+        <StackPanel Grid.Column="4"  Orientation="Horizontal">
             <CheckBox Grid.Column="2" IsChecked="{Binding IsScollerToEnd}">Scroll To End</CheckBox>
             <Button Grid.Column="2"  Click="btnClear" Margin="20">Clear</Button>
         </StackPanel>
@@ -45,13 +101,13 @@
             x:Name="LogBox"
             Grid.Row="1"
             Grid.RowSpan="10"
-            Grid.Column="3"
+            Grid.Column="4"
             AcceptsReturn="True"
             IsReadOnly="True"
             Text="{Binding LogList}"
             TextWrapping="Wrap" />
 
-        <Grid Grid.Row="1" Grid.ColumnSpan="2">
+        <Grid Grid.Row="2" >
             <Viewport3D   Grid.Column="1">
 
                 <!-- Camera -->
@@ -88,7 +144,7 @@
                 <TextBlock x:Name="TxtQuat" Foreground="White" FontFamily="Consolas" FontSize="14"/>
             </Border>-->
         </Grid>
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="2" Grid.Column="1">
             <Viewport3D   Grid.Column="1">
 
                 <!-- Camera -->
@@ -125,7 +181,7 @@
                 <TextBlock x:Name="TxtQuat" Foreground="White" FontFamily="Consolas" FontSize="14"/>
             </Border>-->
         </Grid>
-        <Grid Grid.Row="2" Grid.Column="1">
+        <Grid Grid.Row="2" Grid.Column="2">
             <Viewport3D   Grid.Column="1">
 
                 <!-- Camera -->

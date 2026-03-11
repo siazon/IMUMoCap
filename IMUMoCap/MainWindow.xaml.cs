@@ -1,17 +1,25 @@
-﻿using IMUMoCap.AHRS;
+﻿using GaitTraining.Gait;
+using GaitTraining.Imu;
+using IMUMoCap.AHRS;
 using IMUMoCap.Methods;
+using IMUMoCap.Vide;
 using System.Collections.Concurrent;
 using System.Data;
+using System.Diagnostics;
+using System.Net;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Numerics;
 using System.Reflection.Metadata;
 using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
 using System.Windows.Navigation;
@@ -37,17 +45,33 @@ namespace IMUMoCap
         private Dictionary<XsDevice, MyMtwCallback> _measuringMtws;
         private Dictionary<XsDevice, MyMtwCallback>.Enumerator _nextBatteryRequest;
         private Dictionary<uint, ConnectedMTwData> _connectedMtwData;
-
+        public WebSocketBroadcastServer? _wsServer;
         ConcurrentQueue<double[]> actionQueue = new ConcurrentQueue<double[]>();
         BlockingCollection<RecoredData> ImuDataQueue = new BlockingCollection<RecoredData>(new ConcurrentQueue<RecoredData>(), 2000);
-        FootHeadingCalibrator calib;
         string imuPelvis = "imuPelvis", imuL = "imuL", imuR = "imuR";
         private readonly bool _useConjugateForHeading = true; // 你想用哪套就统一哪套
+        ImuFrameAggregator aggregator;
+        GaitPipeline pipeline;
+
+        private volatile bool _stanceL;
+        private volatile bool _stanceR;
+        private DispatcherTimer _uiTimer;
         public MainWindow()
         {
             InitializeComponent();
             this.DataContext = _content;
 
+            _wsServer = new WebSocketBroadcastServer();
+            _wsServer.Start(new[] { "http://+:8765/ws/" });
+            log("WebSocket server started: ws://192.168.137.1:8765/ws/");
+           
+            _wsServer.OnTextMessage += (clientId, text) =>
+            {
+                // 注意：这里可能在后台线程
+                HandleWsMessage(clientId, text);
+            };
+
+            _content.StatusLabel = "Ready to calibration";
             _imuRotTf = new RotateTransform3D(_imuRot);
 
             BuildAxes(AxesVisual);
@@ -61,10 +85,9 @@ namespace IMUMoCap
             BuildImuBox(ImuVisual12);
             //Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43D12, Role = ImuRole.Pelvis });
             Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis });
-            Imus.Add(new ImuViewModel(imuL) { IMUDodel = ImuVisual1, DeviceId = 0x10B41904, Role = ImuRole.LeftFoot });
-            Imus.Add(new ImuViewModel(imuR) { IMUDodel = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.RightFoot });
+            Imus.Add(new ImuViewModel(imuL) { IMUDodel = ImuVisual1, DeviceId = 0x10B41904, Role = ImuRole.Left });
+            Imus.Add(new ImuViewModel(imuR) { IMUDodel = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.Right });
 
-            calib = new FootHeadingCalibrator(pelvisId: imuPelvis, leftFootId: imuL, rightFootId: imuR);
 
 
             // 你已有的 stance 判定（用 packetId 同步）
@@ -72,6 +95,77 @@ namespace IMUMoCap
             stanceRightDet = new FootStanceDetector(fs: 100, windowMs: 100, minEnterMs: 80, minExitMs: 40);
 
 
+            StanceDetector detectorL = new StanceDetector();
+            StanceDetector detectorR = new StanceDetector();
+            QualityGate qualityGate = new QualityGate(new QualityGateConfig() { EnableAll = false });
+
+            aggregator = new ImuFrameAggregator();
+            StandingCalibrator calibrator = new StandingCalibrator();
+
+
+            // 初始化
+            pipeline = new GaitPipeline();
+
+            // 步态输出：每步一次，直接打日志
+            pipeline.OnStepFpa += result =>
+                Dispatcher.Invoke(() =>
+                {
+                    _content.ProgDirDeg = result.ProgDirDeg;
+                    if (result.Foot == ImuRole.Left)
+                    {
+                        _content.LeftFpaDeg = result.FpaDeg;
+                    }
+                    else if (result.Foot == ImuRole.Right)
+                    {
+                        _content.RightFpaDeg = result.FpaDeg;
+                    }
+                    PushToClient(result);
+                    log("Step: " + result.ToString());
+                });
+
+            // 标定事件
+            pipeline.OnCalibrationStateChanged += state =>
+                Dispatcher.Invoke(() =>
+                {
+                    _content.StatusLabel = state switch
+                    {
+                        CalibrationState.Waiting => "Stand up straight, ready to begin...",
+                        CalibrationState.Collecting => "Data collection in progress. Please remain still.",
+                        CalibrationState.Done => "Calibration completed",
+                        CalibrationState.Failed => "Calibration failed. Please try again.",
+                        _ => ""
+                    };
+                });
+
+            pipeline.OnCalibrationFailed += (_, msg) =>
+                Dispatcher.Invoke(() => log("Calibration failed：" + msg));
+
+            pipeline.OnSanityWarning += (_, msg) =>
+                Dispatcher.Invoke(() => log("Calibration Warning：" + msg));
+
+            pipeline.OnCalibrationDone += result =>
+                Dispatcher.Invoke(() =>
+                {
+                    _content.CalibrationState = "Calibrated";
+                    log("Calibration completed: " + result.ToString());
+                });
+
+            pipeline.OnStanceStatusChanged += status =>
+            {
+                // Update fields only in the callback thread; do not touch the UI.
+                _stanceL = status.LeftInStance;
+                _stanceR = status.RightInStance;
+            };
+
+            _uiTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(100)  // 10Hz
+            };
+            _uiTimer.Tick += (_, _) =>
+            {
+                _content.StanceSummary = $"L:{_stanceL} R:{_stanceR}";
+            };
+            _uiTimer.Start();
 
 
 
@@ -100,7 +194,99 @@ namespace IMUMoCap
         {
             _imuLoopCts?.Cancel();
             ImuDataQueue?.CompleteAdding();
+            // stop websocket server
+            if (_wsServer != null)
+            {
+                try { _wsServer.StopAsync().GetAwaiter().GetResult(); } catch { }
+            }
+
             base.OnClosed(e);
+        }
+
+        private void HandleWsMessage(Guid clientId, string text)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(text);
+                var root = doc.RootElement;
+
+                // 约定：客户端发送 {"cmd":"...", ...}
+                if (!root.TryGetProperty("cmd", out var cmdEl)) return;
+                var cmd = cmdEl.GetString() ?? "";
+
+                switch (cmd)
+                {
+                    case "ping":
+                        _ = _wsServer?.BroadcastJsonAsync(new { type = "pong", t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+                        break;
+
+                    case "setTargetFpa":
+                        // {"cmd":"setTargetFpa","foot":"Left","target":10.0}
+                        var foot = root.TryGetProperty("foot", out var fEl) ? fEl.GetString() : "Both";
+                        var target = root.TryGetProperty("target", out var tEl) ? tEl.GetDouble() : 0.0;
+
+                        Dispatcher.Invoke(() =>
+                        {
+                            // TODO：这里改成你自己的目标值变量/绑定字段
+                            // _content.TargetLeftFpa = target; ...
+                            log($"WS: setTargetFpa foot={foot} target={target}");
+                        });
+                        break;
+
+                    case "start":
+                        Dispatcher.Invoke(() =>
+                        {
+                            // TODO：调用你现有的开始训练/开始采集
+                            log("WS: start");
+                        });
+                        break;
+
+                    case "stop":
+                        Dispatcher.Invoke(() =>
+                        {
+                            // TODO：停止
+                            log("WS: stop");
+                        });
+                        break;
+
+                    case "calibrate":
+                        Dispatcher.Invoke(() =>
+                        {
+                            // TODO：触发你的校准逻辑，例如 pipeline.BeginCalibration() / StartCalibration()
+                            log("WS: calibrate");
+                        });
+                        break;
+
+                    default:
+                        Dispatcher.Invoke(() => log($"WS: unknown cmd={cmd}, raw={text}"));
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() => log($"WS parse error: {ex.Message}, raw={text}"));
+            }
+        }
+
+        private void PushToClient(GaitTraining.Gait.StepFpaResult result)
+        {
+            bool isStance = true;
+
+            // status 你要的是一个字符串：这里我用当前 StatusLabel（你也可换成 CalibrationState 等）
+            string status = Math.Abs(result.FpaDeg) > 15 ? "Red" : "Green";
+
+            // 发送给 AR 眼镜的 payload（只推“结果”，不推原始IMU）
+            var payload = new
+            {
+                Foot = result.Foot.ToString(),     // "Left"/"Right"/...
+                FpaDegree = result.FpaDeg,         // double
+                IsStance = isStance,               // bool
+                status = status                    // string
+            };
+
+            // 广播（后台线程，不阻塞 UI）
+            _ = _wsServer?.BroadcastJsonAsync(payload);
+
         }
 
         QuaternionHelper quaternionHelper = new QuaternionHelper();
@@ -179,7 +365,7 @@ namespace IMUMoCap
                             {
                                 // 建议：先回到 config 再 makeOperational（更稳）
                                 // 如果 device 已在测量，直接 enableRadio 可能会失败或无效
-                                if (_MyWirelessMasterDevice.deviceState()!= XsDeviceState.XDS_Config)
+                                if (_MyWirelessMasterDevice.deviceState() != XsDeviceState.XDS_Config)
                                     _MyWirelessMasterDevice.gotoConfig();
 
                                 // 关键：Station 置 operational
@@ -511,42 +697,20 @@ namespace IMUMoCap
                 XsSdiData sdiData = e.Packet.sdiData();
 
                 uint deviceId = e.Device.deviceId().legacyDeviceId();
-                string devices = GetOrAssignSlot(deviceId).SlotName;
-                var outcome = calib.OnSample(e.Packet.packetId(), devices, sdiData, e.Packet.calibratedData(), _useConjugateForHeading);
-                if (outcome != null)
-                {
-                    if (!outcome.Success)
-                    {
-                        log(outcome.Reason);
-                        // 提示重新标定
-                    }
-                    else
-                    {
-                        var result = outcome.Result!;
-                        _deltaLeftRad = result.DeltaLeftRad;
-                        _deltaRightRad = result.DeltaRightRad;
-                        estimator?.ResetProgressionDirection();
-                        // 保存下来：deltaLeft/deltaRight
-                        log($"delta(deg)={result.ToString()}");
-                        log($"dleftCorrected: {(result.LeftRawHeadingRad + _deltaLeftRad) * 180 / MathF.PI}");
-                        log($"dRightCorrected: {(result.RightRawHeadingRad + _deltaRightRad) * 180 / MathF.PI}");
-                        log($"pelvisHeading: {result.PelvisHeadingRad * 180 / MathF.PI}");
-                    }
+                ImuViewModel imuViewModel = GetOrAssignSlot(deviceId);
 
-                }
-                if (_deltaLeftRad != 0) OnImuCallback(e.Packet.packetId(), devices, sdiData, e.Packet.calibratedData());
+                string devices = imuViewModel.SlotName;
+
                 _connectedMtwData[deviceId].XsQuaternion = sdiData.orientationIncrement(); //xsQuaternion;
 
                 _connectedMtwData[deviceId]._rssi = e.Packet.rssi();
 
-
+                OnXsensData(imuViewModel.Role, e.Packet);
                 if (e.Packet.containsOrientation())
                 {
                     var quat = e.Packet.orientationQuaternion();
 
-                    var imuVM = GetOrAssignSlot(deviceId);
-
-                    OnNewImuQuaternion(new Quaternion(quat.x(), quat.y(), quat.z(), quat.w()), imuVM);
+                    OnNewImuQuaternion(new Quaternion(quat.x(), quat.y(), quat.z(), quat.w()), imuViewModel);
                     //Getting Euler angles.
                     XsEuler oriEuler = e.Packet.orientationEuler();
 
@@ -661,8 +825,8 @@ namespace IMUMoCap
                 // 2) 选择对应的标定 yaw 修正角（弧度->度）
                 float deltaRad = Imu3D.Role switch
                 {
-                    ImuRole.LeftFoot => _deltaLeftRad,
-                    ImuRole.RightFoot => _deltaRightRad,
+                    ImuRole.Left => _deltaLeftRad,
+                    ImuRole.Right => _deltaRightRad,
                     _ => 0f
                 };
                 double deltaDeg = deltaRad * 180.0 / Math.PI;
@@ -1131,29 +1295,26 @@ namespace IMUMoCap
         {
             _content.LogList = "";
         }
-        PacketAggregator aggregator = null;
-        RealTimeFpaEstimator estimator = null;
         float _deltaLeftRad = 0, _deltaRightRad = 0;
         private void Button_Click_1(object sender, RoutedEventArgs e)
         {
+            Task.Run(() =>
+            {
+                for (int i = 0; i < 1000; i++)
+                {
+                    float fpa = new Random().Next(-45, 45);
+                    GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { Foot = i % 2 == 0 ? ImuRole.Left : ImuRole.Right, FpaDeg = fpa, };
+                    PushToClient(result);
 
+                    Thread.Sleep(500);
+                }
+
+            });
+
+            //new CvsUntil().WriteCVS("D:\\SourceCode\\IMUData\\", "IMUDataNewR.csv", datas);
         }
         public void Test()
         {
-
-            aggregator = new PacketAggregator(imuPelvis, imuL, imuR);
-            estimator = new RealTimeFpaEstimator(imuPelvis, imuL, imuR, _deltaLeftRad, _deltaRightRad);
-
-            estimator.OnStepFpa += res =>
-            {
-                var b = res.DebugBest!;
-                float progDeg = res.PelvisProgDirRad * 180f / MathF.PI;
-
-                log($"{res.Role} stepFPA={res.FpaRad * 180 / MathF.PI,6:F1}°  " +
-                    $"pelvisWin={b.PelvisDeg,7:F1}°  progDir={progDeg,7:F1}°  corr={b.CorrDeg,7:F1}°  " +
-                    $"gyroMean={b.GyroMean,5:F2} gyroMax={b.GyroMax,5:F2}");
-            };
-
 
         }
         FootStanceDetector stanceLeftDet, stanceRightDet;
@@ -1163,42 +1324,6 @@ namespace IMUMoCap
         private long _lastLogTicks = 0;
         private static readonly long OneSecondTicks = TimeSpan.FromSeconds(1).Ticks;
 
-        void OnImuCallback(long packetId, string deviceId, XsSdiData sdi, XsCalibratedData cal)
-        {
-            if (aggregator == null)
-                Test();
-            var bundle = aggregator.Add(packetId, deviceId, sdi, cal);
-            if (bundle == null) return;
-
-
-
-            var acc = bundle.Left!.Value.cal.m_acc;
-            var gyr = bundle.Left!.Value.cal.m_gyr;
-
-            //log($"accMag={acc.cartesianLength():F3}, gyrMag={gyr.cartesianLength():F3}");
-
-            // 在拿到完整 bundle 后：
-            bool stanceL = stanceLeftDet.Update(bundle.Left!.Value.cal.m_acc, bundle.Left!.Value.cal.m_gyr);
-            bool stanceR = stanceRightDet.Update(bundle.Right!.Value.cal.m_acc, bundle.Right!.Value.cal.m_gyr);
-            if (stanceL)
-            { 
-            }
-            var (fpaL, fpaR, pelvisHeading) = estimator.ProcessBundle(bundle, stanceL, stanceR, _useConjugateForHeading);
-
-            // 实时 UI 值（仅 stance 时有值）
-            //if (fpaL.HasValue) log($"Left: {fpaL.Value * 180f / MathF.PI}");
-            //if (fpaR.HasValue) log($"right: {fpaR.Value * 180f / MathF.PI}");
-
-
-            //long now = DateTime.UtcNow.Ticks;
-            //if (_lastLogTicks != 0 && (now - _lastLogTicks) < OneSecondTicks)
-            //    return;
-
-            //_lastLogTicks = now;
-
-            //log($"pelvisHeading: {pelvisHeading * 180f / MathF.PI}");
-
-        }
 
 
         public void TestStance()
@@ -1239,19 +1364,34 @@ namespace IMUMoCap
         long currentPacketId = 0;
         private void btnCalibration_click(object sender, RoutedEventArgs e)
         {
-
-            estimator?.ResetProgressionDirection();
-            calib.BeginStandingCalibration(
-    startPacketId: currentPacketId,
-    delaySec: 1.0f,        // 先等 1 秒让人站稳
-    collectSec: 3.0f,      // 再采 6 秒
-    requireStill: true,    // 静止门控（推荐）
-    stillGyroThRad: 0.15f,
-    stillAccDevTh: 0.35f
-);
-
-
-
+            _content.CalibrationState = "Calibrating";
+            pipeline.BeginCalibration();
         }
+
+        List<RecoredData> datas = new List<RecoredData>();
+        // 在 Xsens 的 OnDataAvailable 回调中
+        void OnXsensData(ImuRole sensor, XsDataPacket packet)
+        {
+            var rawData = new RecoredData()
+            {
+                PackageId = packet.packetId().ToString(),
+                quaternion = Utils.ToNumericsQuaternion(packet.orientationQuaternion()),
+                Accelerate = Utils.ToNumericsVector3(packet.calibratedAcceleration()),
+                Orientation = Utils.ToNumericsVector3(packet.calibratedGyroscopeData()),
+                MadgwickAHRS = Utils.ToNumericsVector3(packet.calibratedMagneticField())
+            };
+            datas.Add(rawData);
+
+            var raw = new ImuRawData(
+                Utils.ToNumericsQuaternion(packet.orientationQuaternion()),
+                Utils.ToNumericsVector3(packet.calibratedAcceleration()),
+                Utils.ToNumericsVector3(packet.calibratedGyroscopeData()),
+                Utils.ToNumericsVector3(packet.calibratedMagneticField()));
+            pipeline.OnImuData(sensor, packet.packetId(), raw);
+
+            //aggregator.OnImuData(sensor, packet.packetId(), raw);
+        }
+
+
     }
 }

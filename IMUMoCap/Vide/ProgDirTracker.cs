@@ -1,0 +1,280 @@
+﻿using System;
+using System.Diagnostics;
+
+namespace GaitTraining.Gait
+{
+    // ─────────────────────────────────────────────────────────────
+    //  配置
+    // ─────────────────────────────────────────────────────────────
+
+    public sealed class ProgDirConfig
+    {
+        /// <summary>滑动窗口长度（s）。默认 3s = 300 帧。</summary>
+        public float WindowSeconds { get; set; } = 3f;
+
+        /// <summary>
+        /// 转弯检测：骨盆 yaw rate 超过此值（°/s）认为正在转弯，冻结 progDir。
+        /// 正常行走骨盆 yaw rate 约 30-60°/s，默认 60°/s 作为转弯阈值。
+        /// 调参：室内窄空间转弯快可降到 45°/s；直线跑道可升到 80°/s。
+        /// </summary>
+        public float TurnYawRateThreshDeg { get; set; } = 60f;
+
+        /// <summary>
+        /// 转弯结束判定：yaw rate 低于阈值连续此帧数后认为转弯结束，清空窗口重新积累。
+        /// 默认 50 帧 = 0.5s。
+        /// </summary>
+        public int TurnExitStableFrames { get; set; } = 50;
+
+        /// <summary>
+        /// 进入转弯保护所需最小持续帧数。
+        /// yaw rate 超过阈值必须持续此帧数才认为是真正转弯。
+        /// 默认 10 帧 = 100ms，单次晃动通常 1-3 帧，不会触发。
+        /// </summary>
+        public int TurnEnterMinFrames { get; set; } = 10;
+
+        /// <summary>
+        /// progDir 有效所需最小窗口帧数。
+        /// 低于此值时 IsReady = false，步输出被压制。
+        /// 默认 100 帧 = 1s。
+        /// </summary>
+        public int MinReadyFrames { get; set; } = 100;
+
+        /// <summary>IMU 采样率（Hz）。</summary>
+        public int SampleRateHz { get; set; } = 100;
+
+        internal int WindowFrames => (int)(WindowSeconds * SampleRateHz);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  诊断
+    // ─────────────────────────────────────────────────────────────
+
+    public sealed class ProgDirDiagnostics
+    {
+        public float ProgDirDeg { get; internal set; }
+        public bool IsReady { get; internal set; }
+        public bool IsTurning { get; internal set; }
+        public int WindowFrameCount { get; internal set; }
+        public float LastYawRateDeg { get; internal set; }
+
+        public override string ToString() =>
+            $"ProgDir={ProgDirDeg:F1}° Ready={IsReady} Turning={IsTurning} " +
+            $"WinFrames={WindowFrameCount} YawRate={LastYawRateDeg:F1}°/s";
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    //  ProgDirTracker
+    // ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 骨盆 heading 圆滑动均值，输出行进方向 progDir（rad）。
+    /// <para>
+    /// 机制1：质量门控通过且 yaw rate 低于转弯阈值时，写入滑动窗口并更新 progDir。
+    /// 机制2：yaw rate 持续超过阈值（转弯中），冻结 progDir；转弯稳定结束后清空窗口重新积累。
+    /// </para>
+    /// <para>线程假设：单线程调用。</para>
+    /// </summary>
+    public sealed class ProgDirTracker
+    {
+        public ProgDirConfig Config { get; set; }
+
+        // ── 诊断 ─────────────────────────────────────────────────
+        private readonly ProgDirDiagnostics _diag = new();
+        public ProgDirDiagnostics GetDiagnostics() => _diag;
+
+        // 内部状态里加一个进入计数器
+        private int _turnEnterFrameCount;  // 新增
+
+        // ── 滑动窗口（sin/cos 累加，O(1) 圆均值） ────────────────
+        // 用循环缓冲存原始 heading，同时维护 sin/cos 累加和，避免每帧全量重算
+        private float[] _sinBuf;
+        private float[] _cosBuf;
+        private int _head;
+        private int _count;
+        private float _sinSum;
+        private float _cosSum;
+
+        // ── 转弯状态 ─────────────────────────────────────────────
+        private bool _isTurning;
+        private int _stableFrameCount;   // 转弯后连续稳定帧计数
+
+        // ── 上一帧 heading（用于 yaw rate 计算） ─────────────────
+        private float _prevHeading = float.NaN;
+
+        // ── 当前 progDir ─────────────────────────────────────────
+        private float _progDir;            // rad，圆均值结果
+        public float ProgDir => _progDir; // rad
+
+        public bool IsReady => _count >= Config.MinReadyFrames;
+
+        // ── 构造 ─────────────────────────────────────────────────
+        public ProgDirTracker(ProgDirConfig? config = null)
+        {
+            Config = config ?? new ProgDirConfig();
+            int cap = Math.Max(1, Config.WindowFrames);
+            _sinBuf = new float[cap];
+            _cosBuf = new float[cap];
+        }
+
+        // ─────────────────────────────────────────────────────────
+        //  主入口：每帧调用
+        // ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 传入当前帧骨盆 heading（rad，来自 QualityResult.PelvisHeading）和质量标志。
+        /// 质量门控不通过时直接跳过，不更新任何状态。
+        /// </summary>
+        public void Update(float pelvisHeading, bool qualityValid)
+        {
+            if (!qualityValid) return;
+
+            // ── 计算瞬时 yaw rate ────────────────────────────────
+            float yawRateDeg = 0f;
+            bool hasPrev = !float.IsNaN(_prevHeading);
+
+            if (hasPrev)
+            {
+                float diffRad = HeadingUtil.AngleDiff(pelvisHeading, _prevHeading);
+                yawRateDeg = MathF.Abs(diffRad) * (180f / MathF.PI) * Config.SampleRateHz;
+            }
+
+            float turnThresh = Config.TurnYawRateThreshDeg;
+
+            // ── 转弯状态机 ───────────────────────────────────────
+            if (!_isTurning)
+            {
+                if (yawRateDeg > turnThresh && hasPrev)
+                {
+                    _turnEnterFrameCount++;
+                    if (_turnEnterFrameCount >= Config.TurnEnterMinFrames)
+                    {
+                        // 持续超过阈值足够长，才真正进入转弯
+                        _isTurning = true;
+                        _stableFrameCount = 0;
+                        _turnEnterFrameCount = 0;
+                        Debug.WriteLine(
+                            $"[ProgDir] Turn detected. YawRate={yawRateDeg:F1}°/s");
+                    }
+                    // 未达到最小帧数：暂时不写窗口，但也不标记转弯
+                    // 这几帧的晃动数据直接丢弃，不污染 progDir
+                }
+                else
+                {
+                    // yaw rate 正常：重置进入计数，正常写窗口
+                    _turnEnterFrameCount = 0;
+                    PushToWindow(pelvisHeading);
+                    if (_count > 0)
+                        _progDir = MathF.Atan2(_sinSum / _count, _cosSum / _count);
+                }
+            }
+            else
+            {
+                // 转弯中：等待稳定
+                if (yawRateDeg <= turnThresh)
+                {
+                    _stableFrameCount++;
+                    if (_stableFrameCount >= Config.TurnExitStableFrames)
+                    {
+                        // 转弯结束：清空窗口，重新积累
+                        Debug.WriteLine(
+                            $"[ProgDir] Turn ended. Clearing window, re-accumulating.");
+                        ClearWindow();
+                        _isTurning = false;
+                        _stableFrameCount = 0;
+
+                        // 把当前帧作为第一个新样本写入
+                        PushToWindow(pelvisHeading);
+                    }
+                    // 未达到稳定帧数：继续等待，不写窗口
+                }
+                else
+                {
+                    // 仍在转弯：重置稳定计数
+                    _stableFrameCount = 0;
+                }
+            }
+
+            _prevHeading = pelvisHeading;
+
+            // ── 更新诊断 ─────────────────────────────────────────
+            _diag.ProgDirDeg = _progDir * (180f / MathF.PI);
+            _diag.IsReady = IsReady;
+            _diag.IsTurning = _isTurning;
+            _diag.WindowFrameCount = _count;
+            _diag.LastYawRateDeg = yawRateDeg;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        //  滑动窗口（O(1) sin/cos 累加）
+        // ─────────────────────────────────────────────────────────
+
+        private void PushToWindow(float heading)
+        {
+            EnsureWindowCapacity();
+            int cap = _sinBuf.Length;
+
+            if (_count == cap)
+            {
+                // 移除最老元素
+                _sinSum -= _sinBuf[_head];
+                _cosSum -= _cosBuf[_head];
+            }
+
+            _sinBuf[_head] = MathF.Sin(heading);
+            _cosBuf[_head] = MathF.Cos(heading);
+            _sinSum += _sinBuf[_head];
+            _cosSum += _cosBuf[_head];
+            _head = (_head + 1) % cap;
+            if (_count < cap) _count++;
+        }
+
+        private void ClearWindow()
+        {
+            Array.Clear(_sinBuf, 0, _sinBuf.Length);
+            Array.Clear(_cosBuf, 0, _cosBuf.Length);
+            _head = 0;
+            _count = 0;
+            _sinSum = 0f;
+            _cosSum = 0f;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        //  窗口容量自适应
+        // ─────────────────────────────────────────────────────────
+
+        private int _lastWindowFrames = -1;
+
+        private void EnsureWindowCapacity()
+        {
+            int needed = Config.WindowFrames;
+            if (needed == _lastWindowFrames) return;
+
+            // 容量变化：重建（清空，重新积累）
+            _sinBuf = new float[needed];
+            _cosBuf = new float[needed];
+            ClearWindow();
+            _lastWindowFrames = needed;
+            Debug.WriteLine($"[ProgDir] Window resized to {needed} frames.");
+        }
+
+        // ─────────────────────────────────────────────────────────
+        //  Reset
+        // ─────────────────────────────────────────────────────────
+
+        public void Reset()
+        {
+            ClearWindow();
+            _isTurning = false;
+            _stableFrameCount = 0;
+            _prevHeading = float.NaN;
+            _progDir = 0f;
+            _diag.ProgDirDeg = 0f;
+            _diag.IsReady = false;
+            _diag.IsTurning = false;
+            _diag.WindowFrameCount = 0;
+            _diag.LastYawRateDeg = 0f;
+            _turnEnterFrameCount = 0;
+            Debug.WriteLine("[ProgDir] Reset.");
+        }
+    }
+}
