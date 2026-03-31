@@ -37,10 +37,10 @@ namespace GaitTraining.Gait
     public sealed class CalibrationConfig
     {
         /// <summary>延迟开始时间（s）。调用 Begin 后等待此时长再开始采集。</summary>
-        public float DelaySeconds { get; set; } = 1f;
+        public float DelaySeconds { get; set; } = 0.5f;
 
         /// <summary>数据收集时长（s）。</summary>
-        public float CollectSeconds { get; set; } = 6f;
+        public float CollectSeconds { get; set; } = 3f;
 
         /// <summary>IMU 采样率（Hz）。</summary>
         public int SampleRateHz { get; set; } = 100;
@@ -50,7 +50,7 @@ namespace GaitTraining.Gait
         /// 不足时标定失败，通知 UI 重试。
         /// 默认 400 = 6s × 100Hz × 67%，留有 33% 的静止门控余量。
         /// </summary>
-        public int MinValidFrames { get; set; } = 400;
+        public int MinValidFrames { get; set; } = 100;
 
         /// <summary>
         /// Sanity check 警告阈值（°）。

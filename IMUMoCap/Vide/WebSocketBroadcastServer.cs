@@ -21,7 +21,13 @@ namespace IMUMoCap.Vide
         private readonly object _gate = new object();
         private readonly Dictionary<Guid, WebSocket> _clients = new Dictionary<Guid, WebSocket>();
         public event Action<Guid, string>? OnTextMessage;
+        public event Action<Guid, string?>? OnClientConnected;
+        public event Action<Guid, string?>? OnClientDisconnected;
         public bool IsRunning { get; private set; }
+        public int ClientCount
+        {
+            get { lock (_gate) return _clients.Count; }
+        }
 
         // 例如：prefix="http://+:8765/ws/"  (注意：HttpListener 这里是 http 前缀，但客户端连的是 ws://)
         public void Start(string[] prefix)
@@ -92,7 +98,7 @@ namespace IMUMoCap.Vide
                 }
             }
         }
-        private async Task ReceiveLoopAsync(Guid id, WebSocket ws)
+        private async Task ReceiveLoopAsync(Guid id, WebSocket ws, string? remote)
         {
             var buffer = new byte[4096];
             var ms = new MemoryStream();
@@ -133,6 +139,7 @@ namespace IMUMoCap.Vide
             finally
             {
                 RemoveClient(id);
+                OnClientDisconnected?.Invoke(id, remote);
                 try
                 {
                     if (ws.State == WebSocketState.Open || ws.State == WebSocketState.CloseReceived)
@@ -151,7 +158,6 @@ namespace IMUMoCap.Vide
                 if (_clients.TryGetValue(id, out ws))
                     _clients.Remove(id);
             }
-            try { ws?.Dispose(); } catch { }
         }
 
         private async Task AcceptLoopAsync()
@@ -192,8 +198,14 @@ namespace IMUMoCap.Vide
                 var id = Guid.NewGuid();
                 lock (_gate) _clients[id] = ws;
 
+                // 记录客户端来源（可能为 null）
+                string? remote = ctx.Request.RemoteEndPoint?.ToString();
+
+                // 触发连接事件
+                OnClientConnected?.Invoke(id, remote);
+
                 // 可选：启动一个接收循环（用于感知断线/客户端发消息），不处理内容也行
-                _ = Task.Run(() => ReceiveLoopAsync(id, ws));
+                _ = Task.Run(() => ReceiveLoopAsync(id, ws, remote));
             }
         }
 

@@ -33,6 +33,24 @@ namespace GaitTraining.Gait
         public int TurnEnterMinFrames { get; set; } = 10;
 
         /// <summary>
+        /// 转弯证据窗口长度（s）。
+        /// 用短时间内的累计净转角和同向性，区分真实转弯与普通步态中的骨盆摆动。
+        /// </summary>
+        public float TurnEvidenceSeconds { get; set; } = 0.8f;
+
+        /// <summary>
+        /// 转弯证据：窗口内累计净转角阈值（°）。
+        /// 越大越不容易把普通摆动误判成转弯。
+        /// </summary>
+        public float TurnMinNetYawDeg { get; set; } = 15f;
+
+        /// <summary>
+        /// 转弯证据：窗口内旋转同向性阈值，范围 0-1。
+        /// 1 表示几乎全程同向；越低越容易进入转弯。
+        /// </summary>
+        public float TurnMinConsistencyRatio { get; set; } = 0.75f;
+
+        /// <summary>
         /// progDir 有效所需最小窗口帧数。
         /// 低于此值时 IsReady = false，步输出被压制。
         /// 默认 100 帧 = 1s。
@@ -43,6 +61,7 @@ namespace GaitTraining.Gait
         public int SampleRateHz { get; set; } = 100;
 
         internal int WindowFrames => (int)(WindowSeconds * SampleRateHz);
+        internal int TurnEvidenceFrames => Math.Max(2, (int)(TurnEvidenceSeconds * SampleRateHz));
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -56,10 +75,13 @@ namespace GaitTraining.Gait
         public bool IsTurning { get; internal set; }
         public int WindowFrameCount { get; internal set; }
         public float LastYawRateDeg { get; internal set; }
+        public float TurnEvidenceNetYawDeg { get; internal set; }
+        public float TurnEvidenceConsistencyRatio { get; internal set; }
 
         public override string ToString() =>
             $"ProgDir={ProgDirDeg:F1}° Ready={IsReady} Turning={IsTurning} " +
-            $"WinFrames={WindowFrameCount} YawRate={LastYawRateDeg:F1}°/s";
+            $"WinFrames={WindowFrameCount} YawRate={LastYawRateDeg:F1}°/s " +
+            $"NetYaw={TurnEvidenceNetYawDeg:F1}° Cons={TurnEvidenceConsistencyRatio:F2}";
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -94,6 +116,13 @@ namespace GaitTraining.Gait
         private float _sinSum;
         private float _cosSum;
 
+        // ── 转弯证据窗口（短窗累计净转角） ────────────────────────
+        private float[] _turnDiffBuf;
+        private int _turnDiffHead;
+        private int _turnDiffCount;
+        private float _turnDiffSum;
+        private float _turnAbsDiffSum;
+
         // ── 转弯状态 ─────────────────────────────────────────────
         private bool _isTurning;
         private int _stableFrameCount;   // 转弯后连续稳定帧计数
@@ -114,6 +143,7 @@ namespace GaitTraining.Gait
             int cap = Math.Max(1, Config.WindowFrames);
             _sinBuf = new float[cap];
             _cosBuf = new float[cap];
+            _turnDiffBuf = new float[Config.TurnEvidenceFrames];
         }
 
         // ─────────────────────────────────────────────────────────
@@ -135,15 +165,19 @@ namespace GaitTraining.Gait
             if (hasPrev)
             {
                 float diffRad = HeadingUtil.AngleDiff(pelvisHeading, _prevHeading);
-                yawRateDeg = MathF.Abs(diffRad) * (180f / MathF.PI) * Config.SampleRateHz;
+                float diffDegSigned = diffRad * (180f / MathF.PI);
+                yawRateDeg = MathF.Abs(diffDegSigned) * Config.SampleRateHz;
+                PushTurnEvidence(diffDegSigned);
             }
 
             float turnThresh = Config.TurnYawRateThreshDeg;
+            bool turnEvidenceStrong = HasStrongTurnEvidence();
+            bool turnCandidate = hasPrev && yawRateDeg > turnThresh && turnEvidenceStrong;
 
             // ── 转弯状态机 ───────────────────────────────────────
             if (!_isTurning)
             {
-                if (yawRateDeg > turnThresh && hasPrev)
+                if (turnCandidate)
                 {
                     _turnEnterFrameCount++;
                     if (_turnEnterFrameCount >= Config.TurnEnterMinFrames)
@@ -155,12 +189,11 @@ namespace GaitTraining.Gait
                         Debug.WriteLine(
                             $"[ProgDir] Turn detected. YawRate={yawRateDeg:F1}°/s");
                     }
-                    // 未达到最小帧数：暂时不写窗口，但也不标记转弯
-                    // 这几帧的晃动数据直接丢弃，不污染 progDir
+                    // 未达到最小帧数：暂时不写窗口，不让转弯起始段污染 progDir
                 }
                 else
                 {
-                    // yaw rate 正常：重置进入计数，正常写窗口
+                    // 证据不足：视为正常步态摆动，正常写窗口
                     _turnEnterFrameCount = 0;
                     PushToWindow(pelvisHeading);
                     if (_count > 0)
@@ -202,6 +235,9 @@ namespace GaitTraining.Gait
             _diag.IsTurning = _isTurning;
             _diag.WindowFrameCount = _count;
             _diag.LastYawRateDeg = yawRateDeg;
+            _diag.TurnEvidenceNetYawDeg = _turnDiffSum;
+            _diag.TurnEvidenceConsistencyRatio =
+                _turnAbsDiffSum > 1e-5f ? MathF.Abs(_turnDiffSum) / _turnAbsDiffSum : 0f;
         }
 
         // ─────────────────────────────────────────────────────────
@@ -238,11 +274,50 @@ namespace GaitTraining.Gait
             _cosSum = 0f;
         }
 
+        private void PushTurnEvidence(float diffDegSigned)
+        {
+            EnsureTurnEvidenceCapacity();
+            int cap = _turnDiffBuf.Length;
+
+            if (_turnDiffCount == cap)
+            {
+                float oldest = _turnDiffBuf[_turnDiffHead];
+                _turnDiffSum -= oldest;
+                _turnAbsDiffSum -= MathF.Abs(oldest);
+            }
+            else
+            {
+                _turnDiffCount++;
+            }
+
+            _turnDiffBuf[_turnDiffHead] = diffDegSigned;
+            _turnDiffSum += diffDegSigned;
+            _turnAbsDiffSum += MathF.Abs(diffDegSigned);
+            _turnDiffHead = (_turnDiffHead + 1) % cap;
+        }
+
+        private bool HasStrongTurnEvidence()
+        {
+            if (_turnDiffCount < Config.TurnEvidenceFrames)
+                return false;
+
+            float netYawDeg = MathF.Abs(_turnDiffSum);
+            if (netYawDeg < Config.TurnMinNetYawDeg)
+                return false;
+
+            if (_turnAbsDiffSum <= 1e-5f)
+                return false;
+
+            float consistency = netYawDeg / _turnAbsDiffSum;
+            return consistency >= Config.TurnMinConsistencyRatio;
+        }
+
         // ─────────────────────────────────────────────────────────
         //  窗口容量自适应
         // ─────────────────────────────────────────────────────────
 
         private int _lastWindowFrames = -1;
+        private int _lastTurnEvidenceFrames = -1;
 
         private void EnsureWindowCapacity()
         {
@@ -255,6 +330,20 @@ namespace GaitTraining.Gait
             ClearWindow();
             _lastWindowFrames = needed;
             Debug.WriteLine($"[ProgDir] Window resized to {needed} frames.");
+        }
+
+        private void EnsureTurnEvidenceCapacity()
+        {
+            int needed = Config.TurnEvidenceFrames;
+            if (needed == _lastTurnEvidenceFrames) return;
+
+            _turnDiffBuf = new float[needed];
+            _turnDiffHead = 0;
+            _turnDiffCount = 0;
+            _turnDiffSum = 0f;
+            _turnAbsDiffSum = 0f;
+            _lastTurnEvidenceFrames = needed;
+            Debug.WriteLine($"[ProgDir] Turn evidence window resized to {needed} frames.");
         }
 
         // ─────────────────────────────────────────────────────────
@@ -273,7 +362,14 @@ namespace GaitTraining.Gait
             _diag.IsTurning = false;
             _diag.WindowFrameCount = 0;
             _diag.LastYawRateDeg = 0f;
+            _diag.TurnEvidenceNetYawDeg = 0f;
+            _diag.TurnEvidenceConsistencyRatio = 0f;
             _turnEnterFrameCount = 0;
+            _turnDiffHead = 0;
+            _turnDiffCount = 0;
+            _turnDiffSum = 0f;
+            _turnAbsDiffSum = 0f;
+            Array.Clear(_turnDiffBuf, 0, _turnDiffBuf.Length);
             Debug.WriteLine("[ProgDir] Reset.");
         }
     }

@@ -28,6 +28,7 @@
             <Button Click="Button_Click">Measure</Button>
             <Button Click="btnCalibration_click" Margin="10">Calibration</Button>
             <Button Click="Button_Click_1">Test</Button>
+            <TextBox x:Name="txtParams" Width="100" Height="30" Margin="10 0 0 0"></TextBox>
         </StackPanel>
         <!-- Row 1: Status + Left/Right FPA -->
         <Grid Grid.Row="1" Grid.ColumnSpan="3" Margin="12,6">
@@ -59,8 +60,8 @@
                         <TextBlock Text="Stance L/R:" Opacity="0.7"/>
                         <TextBlock Text="{Binding StanceSummary}"/>
 
-                        <TextBlock Text="PacketId:" Opacity="0.7"/>
-                        <TextBlock Text="{Binding PacketId}"/>
+                        <!--<TextBlock Text="PacketId:" Opacity="0.7"/>
+                        <TextBlock Text="{Binding PacketId}"/>-->
                     </UniformGrid>
                 </StackPanel>
             </Border>

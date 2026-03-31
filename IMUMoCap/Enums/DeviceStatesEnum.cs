@@ -19,4 +19,6 @@ namespace IMUMoCap
         RECORDING,
         FLUSHING
     };
+    public enum TestState { Launching, Connected,  Calibrating, Calibrated, Step };
+
 }

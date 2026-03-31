@@ -91,6 +91,8 @@ namespace GaitTraining.Gait
 
         // ── 内部状态 ─────────────────────────────────────────────
         private CalibrationResult? _calibration;
+        private bool? _lastLeftInStance;
+        private bool? _lastRightInStance;
 
         // ── 构造 ─────────────────────────────────────────────────
         public GaitPipeline(GaitPipelineConfig? config = null)
@@ -198,10 +200,15 @@ namespace GaitTraining.Gait
                 Debug.WriteLine($"  FpaR:     {fr}");
             }
 
-            // 每帧广播 stance 状态
-            OnStanceStatusChanged?.Invoke(new StanceStatus(
-                stateL == StanceState.Stance,
-                stateR == StanceState.Stance));
+            // 仅在 stance 状态发生变化时广播，避免每帧重复推送相同状态。
+            bool leftInStance = stateL == StanceState.Stance;
+            bool rightInStance = stateR == StanceState.Stance;
+            if (_lastLeftInStance != leftInStance || _lastRightInStance != rightInStance)
+            {
+                _lastLeftInStance = leftInStance;
+                _lastRightInStance = rightInStance;
+                OnStanceStatusChanged?.Invoke(new StanceStatus(leftInStance, rightInStance));
+            }
         }
 
         // ─────────────────────────────────────────────────────────
@@ -223,6 +230,8 @@ namespace GaitTraining.Gait
             FpaL.Reset();
             FpaR.Reset();
             _calibration = null;
+            _lastLeftInStance = null;
+            _lastRightInStance = null;
             Debug.WriteLine("[Pipeline] Full reset.");
         }
 
@@ -239,6 +248,8 @@ namespace GaitTraining.Gait
             ProgDir.Reset();
             FpaL.Reset();
             FpaR.Reset();
+            _lastLeftInStance = null;
+            _lastRightInStance = null;
             Debug.WriteLine("[Pipeline] Gait-only reset (calibration preserved).");
         }
     }

@@ -60,11 +60,12 @@ namespace GaitTraining.Gait
 
         /// <summary>stance 结束的 packetId。</summary>
         public long PacketIdEnd { get; init; }
+        public bool inStance { get; set; }
 
         public DateTimeOffset Timestamp { get; init; }
 
         public override string ToString() =>
-            $"[{Foot}] FPA={FpaDeg:+0.0;-0.0}° " +
+            $"[{Foot}] FPA={FpaDeg:+0.0;-0.0}° inStance={inStance}" +
             $"CorrH={CorrectedHeadingDeg:F1}° ProgDir={ProgDirDeg:F1}° " +
             $"StanceFrames={StanceFrameCount} BestWin=[{BestWindowStartIndex}+{BestWindowActualFrames}] " +
             $"pkt={PacketIdStart}~{PacketIdEnd}";
@@ -208,7 +209,7 @@ namespace GaitTraining.Gait
 
             // ── stance 结束：计算并输出 ───────────────────────────
             if (!inStance && _wasInStance)
-                TryEmitStep(frame.PacketId - 1);
+                TryEmitStep(frame.PacketId - 1, inStance);
 
             // ── 更新诊断 ─────────────────────────────────────────
             _wasInStance = inStance;
@@ -220,7 +221,7 @@ namespace GaitTraining.Gait
         //  步计算
         // ─────────────────────────────────────────────────────────
 
-        private void TryEmitStep(long packetIdEnd)
+        private void TryEmitStep(long packetIdEnd,bool inStance)
         {
             int frameCount = _stanceFrames.Count;
 
@@ -284,6 +285,7 @@ namespace GaitTraining.Gait
                 PacketIdStart = _stanceStartPacketId,
                 PacketIdEnd = packetIdEnd,
                 Timestamp = DateTimeOffset.UtcNow,
+                inStance=inStance
             };
 
             Debug.WriteLine($"[FPA/{_foot}] Step: {result}");
