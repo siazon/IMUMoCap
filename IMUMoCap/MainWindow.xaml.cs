@@ -184,15 +184,18 @@ namespace IMUMoCap
 
             pipeline.OnStanceStatusChanged += status =>
             {
-                if (_stanceL != status.LeftInStance)
+                if (_content.CalibrationState == "Calibrated")
                 {
-                    var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Left, inStance=status.LeftInStance,FpaDeg= _content.LeftFpaDeg };
-                    PushToClient(result, TestState.Step);
-                }
-                if (_stanceR != status.RightInStance)
-                {
-                    var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Right,inStance=status.RightInStance,FpaDeg= _content.RightFpaDeg };
-                    PushToClient(result, TestState.Step);
+                    if (_stanceL != status.LeftInStance)
+                    {
+                        var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Left, inStance = status.LeftInStance, FpaDeg = _content.LeftFpaDeg };
+                        PushToClient(result, TestState.Step);
+                    }
+                    if (_stanceR != status.RightInStance)
+                    {
+                        var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Right, inStance = status.RightInStance, FpaDeg = _content.RightFpaDeg };
+                        PushToClient(result, TestState.Step);
+                    }
                 }
                 // Update fields only in the callback thread; do not touch the UI.
                 _stanceL = status.LeftInStance;
@@ -275,11 +278,12 @@ namespace IMUMoCap
                         });
                         break;
 
-                    case "start":
+                    case "Start":
                         Dispatcher.Invoke(() =>
                         {
                             // TODO：调用你现有的开始训练/开始采集
                             log("WS: start");
+                            Button_Click(null, null);
                         });
                         break;
 
