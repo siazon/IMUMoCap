@@ -53,6 +53,9 @@ namespace IMUMoCap
         private readonly bool _useConjugateForHeading = true; // 你想用哪套就统一哪套
         ImuFrameAggregator aggregator;
         GaitPipeline pipeline;
+        private readonly BaselineTracker _baselineTracker = new(20);
+        private const double TrainingStatusThresholdDeg = 10.0;
+        private TestState _sessionState = TestState.Launching;
 
         private volatile bool _stanceL;
         private volatile bool _stanceR;
@@ -74,13 +77,8 @@ namespace IMUMoCap
             _wsServer.OnClientConnected += (id, remote) =>
             {
                 GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { };
-                ImuViewModel imuVM = Imus.FirstOrDefault(a => a.IsConnected == false);
-                if (imuVM == null)
-                {
-                    PushToClient(result, TestState.Connected);
-                }
-                else
-                    PushToClient(result, TestState.Launching);
+                SyncIdleSessionState();
+                PushToClient(result, _sessionState);
             };
 
             _content.StatusLabel = "Ready to calibration";
@@ -131,8 +129,28 @@ namespace IMUMoCap
                     {
                         _content.RightFpaDeg = result.FpaDeg;
                     }
-                    PushToClient(result,TestState.Step);
                     log("Step: " + result.ToString());
+
+                    if (_sessionState == TestState.Baseline)
+                    {
+                        if (_baselineTracker.TryAddStep(result))
+                        {
+                            string progressText = _baselineTracker.GetProgressText(result.Foot);
+                            _content.StatusLabel =
+                                $"Collecting baseline: L {_baselineTracker.LeftCount}/{_baselineTracker.RequiredStepsPerFoot}, " +
+                                $"R {_baselineTracker.RightCount}/{_baselineTracker.RequiredStepsPerFoot}";
+                            PushToClient(result, TestState.Baseline, statusOverride: progressText);
+                            if (_baselineTracker.IsComplete)
+                            {
+                                _content.StatusLabel = "Baseline completed. Formal training started.";
+                                TransitionSessionState(TestState.Step);
+                            }
+                        }
+                    }
+                    else if (_sessionState == TestState.Step)
+                    {
+                        PushToClient(result, TestState.Step);
+                    }
                 });
 
             // 标定事件
@@ -147,14 +165,15 @@ namespace IMUMoCap
                         case CalibrationState.Waiting:
                             break;
                         case CalibrationState.Collecting:
-                            PushToClient(result, TestState.Calibrating);
+                            TransitionSessionState(TestState.Calibrating);
                             break;
                         case CalibrationState.Computing:
                             break;
                         case CalibrationState.Done:
-                            PushToClient(result, TestState.Calibrated);
                             break;
                         case CalibrationState.Failed:
+                            TransitionSessionState(TestState.Connected);
+                            _content.CalibrationState = "Not calibrated";
                             break;
                         default:
                             break;
@@ -180,23 +199,14 @@ namespace IMUMoCap
                 {
                     _content.CalibrationState = "Calibrated";
                     log("Calibration completed: " + result.ToString());
+                    TransitionSessionState(TestState.Calibrated);
+                    _content.StatusLabel = "Calibration completed. Collecting baseline.";
+                    _baselineTracker.Reset();
+                    TransitionSessionState(TestState.Baseline);
                 });
 
             pipeline.OnStanceStatusChanged += status =>
             {
-                if (_content.CalibrationState == "Calibrated")
-                {
-                    if (_stanceL != status.LeftInStance)
-                    {
-                        var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Left, inStance = status.LeftInStance, FpaDeg = _content.LeftFpaDeg };
-                        PushToClient(result, TestState.Step);
-                    }
-                    if (_stanceR != status.RightInStance)
-                    {
-                        var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Right, inStance = status.RightInStance, FpaDeg = _content.RightFpaDeg };
-                        PushToClient(result, TestState.Step);
-                    }
-                }
                 // Update fields only in the callback thread; do not touch the UI.
                 _stanceL = status.LeftInStance;
                 _stanceR = status.RightInStance;
@@ -265,41 +275,20 @@ namespace IMUMoCap
                         _ = _wsServer?.BroadcastJsonAsync(new { type = "pong", t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
                         break;
 
-                    case "setTargetFpa":
-                        // {"cmd":"setTargetFpa","foot":"Left","target":10.0}
-                        var foot = root.TryGetProperty("foot", out var fEl) ? fEl.GetString() : "Both";
-                        var target = root.TryGetProperty("target", out var tEl) ? tEl.GetDouble() : 0.0;
-
-                        Dispatcher.Invoke(() =>
-                        {
-                            // TODO：这里改成你自己的目标值变量/绑定字段
-                            // _content.TargetLeftFpa = target; ...
-                            log($"WS: setTargetFpa foot={foot} target={target}");
-                        });
-                        break;
-
                     case "Start":
                         Dispatcher.Invoke(() =>
                         {
-                            // TODO：调用你现有的开始训练/开始采集
                             log("WS: start");
-                            Button_Click(null, null);
+                            StartSession();
                         });
                         break;
 
                     case "stop":
+                    case "Stop":
                         Dispatcher.Invoke(() =>
                         {
-                            // TODO：停止
                             log("WS: stop");
-                        });
-                        break;
-
-                    case "calibrate":
-                        Dispatcher.Invoke(() =>
-                        {
-                            // TODO：触发你的校准逻辑，例如 pipeline.BeginCalibration() / StartCalibration()
-                            log("WS: calibrate");
+                            StopSession();
                         });
                         break;
 
@@ -316,23 +305,125 @@ namespace IMUMoCap
 
         private void PushToClient(GaitTraining.Gait.StepFpaResult result, TestState state = TestState.Calibrated)
         {
+            PushToClient(result, state, statusOverride: null);
+        }
 
-            // status 你要的是一个字符串：这里我用当前 StatusLabel（你也可换成 CalibrationState 等）
-            string status = Math.Abs(result.FpaDeg) > 10 ? "Red" : "Green";
+        private void PushToClient(GaitTraining.Gait.StepFpaResult result, TestState state, string? statusOverride)
+        {
+            double? targetFpaDegree = null;
+            double? deltaFromTarget = null;
+            string status = statusOverride ?? ComputePayloadStatus(result, state, out targetFpaDegree, out deltaFromTarget);
 
             // 发送给 AR 眼镜的 payload（只推“结果”，不推原始IMU）
-            var payload = new
+            var payload = new ArStepPayload
             {
                 CMD = state.ToString(),
                 Foot = result.Foot.ToString(),     // "Left"/"Right"/...
                 FpaDegree = result.FpaDeg,         // double
-                IsStance = result.inStance,               // bool
-                status = status                    // string
+                IsStance = result.inStance,        // bool
+                status = status,                   // string
+                TargetFpaDegree = targetFpaDegree,
+                DeltaFromTarget = deltaFromTarget,
+                BaselineLeftCount = _baselineTracker.LeftCount,
+                BaselineRightCount = _baselineTracker.RightCount,
+                BaselineRequiredPerFoot = _baselineTracker.RequiredStepsPerFoot,
+                BaselineProgress = state == TestState.Baseline
+                    ? $"L {_baselineTracker.LeftCount}/{_baselineTracker.RequiredStepsPerFoot}, R {_baselineTracker.RightCount}/{_baselineTracker.RequiredStepsPerFoot}"
+                    : null,
+                FootBaselineProgress = state == TestState.Baseline &&
+                                       (result.Foot == ImuRole.Left || result.Foot == ImuRole.Right)
+                    ? _baselineTracker.GetProgressText(result.Foot)
+                    : null
             };
-
+            log("-----: "+payload.ToString());
             // 广播（后台线程，不阻塞 UI）
             _ = _wsServer?.BroadcastJsonAsync(payload);
 
+        }
+
+        private string ComputePayloadStatus(
+            GaitTraining.Gait.StepFpaResult result,
+            TestState state,
+            out double? targetFpaDegree,
+            out double? deltaFromTarget)
+        {
+            targetFpaDegree = null;
+            deltaFromTarget = null;
+
+            if (state == TestState.Baseline)
+                return "CollectingBaseline";
+
+            if (state != TestState.Step)
+                return state.ToString();
+
+            if (!_baselineTracker.TryGetMean(result.Foot, out double target))
+                return "NoBaseline";
+
+            targetFpaDegree = target;
+            deltaFromTarget = result.FpaDeg - target;
+            return Math.Abs(deltaFromTarget.Value) > TrainingStatusThresholdDeg ? "Red" : "Green";
+        }
+
+        private void TransitionSessionState(TestState next)
+        {
+            _sessionState = next;
+            PushToClient(new GaitTraining.Gait.StepFpaResult(), next, statusOverride: next.ToString());
+        }
+
+        private void SyncIdleSessionState()
+        {
+            if (_sessionState == TestState.Calibrating ||
+                _sessionState == TestState.Calibrated ||
+                _sessionState == TestState.Baseline ||
+                _sessionState == TestState.Step)
+                return;
+
+            _sessionState = AreAllRequiredImusConnected()
+                ? TestState.Connected
+                : TestState.Launching;
+        }
+
+        private bool AreAllRequiredImusConnected()
+            => Imus.All(a => a.IsConnected);
+
+        private void ResetSessionData()
+        {
+            _baselineTracker.Reset();
+            _stanceL = false;
+            _stanceR = false;
+            _content.LeftFpaDeg = 0;
+            _content.RightFpaDeg = 0;
+            _content.ProgDirDeg = 0;
+            _content.CalibrationState = "Not calibrated";
+        }
+
+        private void StartSession()
+        {
+            if (!AreAllRequiredImusConnected())
+            {
+                log("Cannot start session: IMUs are not fully connected.");
+                SyncIdleSessionState();
+                PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState, statusOverride: "IMUsNotReady");
+                return;
+            }
+
+            ResetSessionData();
+            pipeline.Reset();
+            _content.StatusLabel = "Starting calibration...";
+            TransitionSessionState(TestState.Calibrating);
+            StartMeasurementInternal();
+        }
+
+        private void StopSession()
+        {
+            if (_content.DeviceState == States.MEASURING)
+                StopMeasurementInternal();
+
+            pipeline.Reset();
+            ResetSessionData();
+            SyncIdleSessionState();
+            _content.StatusLabel = "Session stopped.";
+            PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState, statusOverride: "Stopped");
         }
 
         QuaternionHelper quaternionHelper = new QuaternionHelper();
@@ -531,7 +622,8 @@ namespace IMUMoCap
                     if (imuVM == null)
                     {
                         GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { };
-                        PushToClient(result, TestState.Connected);
+                        SyncIdleSessionState();
+                        PushToClient(result, _sessionState);
                     }
                     log(string.Format("Connected MTw list ({0}):{1}", _content.ConnectedMtws.Count, mtwIdStr));
                 }
@@ -555,6 +647,15 @@ namespace IMUMoCap
                     _content.SelectedMtw = _content.ConnectedMtws.Count - 1;
                     log(string.Format("Connected MTw list ({0}):", _content.ConnectedMtws.Count));
                     //btnMeasure.Enabled =_content.DeviceState == States.ENABLED && connectedMtwList.Items.Count > 0;
+                }
+
+                if (!AreAllRequiredImusConnected())
+                {
+                    pipeline.Reset();
+                    ResetSessionData();
+                    _sessionState = TestState.Launching;
+                    _content.StatusLabel = "IMU disconnected. Session stopped.";
+                    PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState, statusOverride: "SensorDisconnected");
                 }
             });
         }
@@ -1278,6 +1379,23 @@ namespace IMUMoCap
 
         private void Button_Click(object sender, RoutedEventArgs e)
         {
+            if (_content.DeviceState == States.ENABLED || _content.DeviceState == States.OPERATIONAL)
+            {
+                StartSession();
+                return;
+            }
+
+            if (_content.DeviceState == States.MEASURING)
+            {
+                StopSession();
+                return;
+            }
+
+            setWidgetsStates();
+        }
+
+        private void StartMeasurementInternal()
+        {
             switch (_content.DeviceState)
             {
                 case States.ENABLED:
@@ -1328,14 +1446,23 @@ namespace IMUMoCap
 
                     }
                     break;
+                default:
+                    break;
 
+            }
+            setWidgetsStates();
+        }
+
+        private void StopMeasurementInternal()
+        {
+            switch (_content.DeviceState)
+            {
                 case States.MEASURING:
                     {
                         if (_MyWirelessMasterDevice?.gotoConfig() == true)
                         {
                             //ICC
                             //_MyWirelessMasterDevice.setDeviceOptionFlags(XsDeviceOptionFlag.XDOF_EnableInrunCompassCalibration, XsDeviceOptionFlag.XDOF_None);
-                            //log(string.Format("Stopping measurement. ID: {0}", _MyWirelessMasterDevice.deviceId().toXsString().toString()));
                         }
                         else
                         {
@@ -1345,8 +1472,8 @@ namespace IMUMoCap
                     break;
                 default:
                     break;
-
             }
+
             setWidgetsStates();
         }
         private void btnClear(object sender, EventArgs e)
