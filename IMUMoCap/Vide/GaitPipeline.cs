@@ -55,6 +55,7 @@ namespace GaitTraining.Gait
         public ProgDirTracker ProgDir { get; }
         public FpaComputer FpaL { get; }
         public FpaComputer FpaR { get; }
+        public FootstepImpactDetector FootstepDetector { get; }
         public readonly struct StanceStatus
         {
             public readonly bool LeftInStance;
@@ -93,6 +94,10 @@ namespace GaitTraining.Gait
         private CalibrationResult? _calibration;
         private bool? _lastLeftInStance;
         private bool? _lastRightInStance;
+        
+        // ── 跺脚检测与延迟标定 ─────────────────────────────────
+        private DateTimeOffset? _footstepDetectedTime;
+        private readonly int _delayAfterFootstepMs = 500;
 
         // ── 构造 ─────────────────────────────────────────────────
         public GaitPipeline(GaitPipelineConfig? config = null)
@@ -107,6 +112,12 @@ namespace GaitTraining.Gait
             ProgDir = new ProgDirTracker(config.ProgDir);
             FpaL = new FpaComputer(ImuRole.Left, ProgDir, config.FpaL);
             FpaR = new FpaComputer(ImuRole.Right, ProgDir, config.FpaR);
+            FootstepDetector = new FootstepImpactDetector(
+                baselineCollectionDurationMs: 500f,
+                waitBeforeDetectDurationMs: 500f,
+                accelPeakThresholdMs2: 15f,
+                accelRatioThreshold: 2.0f,
+                imuSamplingRateHz: 100);
 
             // 聚合完整帧 → 主处理链
             Aggregator.OnFrameReady += ProcessFrame;
@@ -167,15 +178,35 @@ namespace GaitTraining.Gait
             // 2. progDir 更新（只用质量通过的帧，不限 stance）
             ProgDir.Update(quality.PelvisHeading, quality.IsValid);
 
-            // 3. stance 检测（质量不通过的帧仍然喂入，让状态机自然运行；
+            // 3. 跺脚检测（左脚原地跺脚）
+            bool leftFootstepDetected = FootstepDetector.Update(frame.Left);
+            if (leftFootstepDetected)
+            {
+                _footstepDetectedTime = DateTimeOffset.UtcNow;
+                Debug.WriteLine($"[Pipeline] Left footstep detected at frame {_debugFrameCount}");
+            }
+
+            // 3.5 检查是否该触发标定（跺脚后延迟500ms）
+            if (_footstepDetectedTime.HasValue)
+            {
+                double msSinceFootstep = (DateTimeOffset.UtcNow - _footstepDetectedTime.Value).TotalMilliseconds;
+                if (msSinceFootstep >= _delayAfterFootstepMs)
+                {
+                    Debug.WriteLine($"[Pipeline] Triggering CalibrationStart {msSinceFootstep:F0}ms after footstep");
+                    BeginCalibration();
+                    _footstepDetectedTime = null;  // 清空标志，只触发一次
+                }
+            }
+
+            // 4. stance 检测（质量不通过的帧仍然喂入，让状态机自然运行；
             //    FpaComputer 内部只收质量通过的帧）
             var stateL = StanceL.Update(frame.Left);
             var stateR = StanceR.Update(frame.Right);
 
-            // 4. 标定采集
+            // 5. 标定采集
             Calibrator.Update(frame, stateL, stateR, quality);
 
-            // 5. FPA 计算（标定完成前 calibration 为 null，FpaComputer 内部跳过）
+            // 6. FPA 计算（标定完成前 calibration 为 null，FpaComputer 内部跳过）
             FpaL.Update(frame, stateL, quality, _calibration);
             FpaR.Update(frame, stateR, quality, _calibration);
 
@@ -188,6 +219,7 @@ namespace GaitTraining.Gait
                 var fr = FpaR.GetDiagnostics();
                 var sl = StanceL.GetDiagnostics();
                 var sr = StanceR.GetDiagnostics();
+                var fd = FootstepDetector.GetDiagnostics();
 
                 Debug.WriteLine($"[Pipeline @{_debugFrameCount}]");
                 Debug.WriteLine($"  Quality:  Total={qd.TotalFrames} Invalid={qd.InvalidFrames} " +
@@ -198,6 +230,7 @@ namespace GaitTraining.Gait
                 Debug.WriteLine($"  StanceR:  {sr}");
                 Debug.WriteLine($"  FpaL:     {fl}");
                 Debug.WriteLine($"  FpaR:     {fr}");
+                Debug.WriteLine($"  Footstep: {fd}");
             }
 
             // 仅在 stance 状态发生变化时广播，避免每帧重复推送相同状态。
@@ -229,9 +262,11 @@ namespace GaitTraining.Gait
             ProgDir.Reset();
             FpaL.Reset();
             FpaR.Reset();
+            FootstepDetector.Reset();
             _calibration = null;
             _lastLeftInStance = null;
             _lastRightInStance = null;
+            _footstepDetectedTime = null;
             Debug.WriteLine("[Pipeline] Full reset.");
         }
 
@@ -248,8 +283,10 @@ namespace GaitTraining.Gait
             ProgDir.Reset();
             FpaL.Reset();
             FpaR.Reset();
+            FootstepDetector.Reset();
             _lastLeftInStance = null;
             _lastRightInStance = null;
+            _footstepDetectedTime = null;
             Debug.WriteLine("[Pipeline] Gait-only reset (calibration preserved).");
         }
     }

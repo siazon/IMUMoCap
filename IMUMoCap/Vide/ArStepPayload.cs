@@ -9,13 +9,7 @@ namespace IMUMoCap
         public float FpaDegree { get; init; }
         public bool IsStance { get; init; }
         public string status { get; init; } = string.Empty;
-        public double? TargetFpaDegree { get; init; }
-        public double? DeltaFromTarget { get; init; }
-        public int BaselineLeftCount { get; init; }
-        public int BaselineRightCount { get; init; }
-        public int BaselineRequiredPerFoot { get; init; }
-        public string? BaselineProgress { get; init; }
-        public string? FootBaselineProgress { get; init; }
+        public string Msg { get; init; } = string.Empty;
 
         public override string ToString()
         {
@@ -24,14 +18,8 @@ namespace IMUMoCap
                    $"Foot={Foot}, " +
                    $"FpaDegree={FpaDegree:F1}, " +
                    $"IsStance={IsStance}, " +
-                   $"status={status}, " +
-                   $"TargetFpaDegree={Format(TargetFpaDegree)}, " +
-                   $"DeltaFromTarget={Format(DeltaFromTarget)}, " +
-                   $"BaselineLeftCount={BaselineLeftCount}, " +
-                   $"BaselineRightCount={BaselineRightCount}, " +
-                   $"BaselineRequiredPerFoot={BaselineRequiredPerFoot}, " +
-                   $"BaselineProgress={BaselineProgress ?? "null"}, " +
-                   $"FootBaselineProgress={FootBaselineProgress ?? "null"}" +
+                   $"Color={status}, " +
+                   $"Msg={Msg}, " +
                    "}";
         }
 

@@ -89,11 +89,6 @@ namespace IMUMoCap
             };
         }
 
-        public string GetProgressText(ImuRole foot)
-        {
-            string footName = foot.ToString();
-            int current = GetCount(foot);
-            return $"{footName} {current}/{_requiredStepsPerFoot} steps";
-        }
+     
     }
 }
