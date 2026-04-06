@@ -27,17 +27,17 @@ namespace GaitTraining.Gait
     {
         // ── 进入阈值（窗口 median） ───────────────────────────────
         /// <summary>进入 stance：窗口 median GyrMag 上限（rad/s）。降低 → 更难进入。</summary>
-        public float EnterGyrThresh { get; set; } = 0.5f;
+        public float EnterGyrThresh { get; set; } = 1.0f;
 
         /// <summary>进入 stance：窗口 median |AccMag-g| 上限（m/s²）。降低 → 更难进入。</summary>
-        public float EnterAccDevThresh { get; set; } = 0.8f;
+        public float EnterAccDevThresh { get; set; } = 1.2f;
 
         // ── 退出阈值（瞬时值） ───────────────────────────────────
         /// <summary>退出 stance：瞬时 GyrMag 下限（rad/s）。降低 → 更容易退出。</summary>
-        public float ExitGyrThresh { get; set; } = 1.0f;
+        public float ExitGyrThresh { get; set; } = 0.8f;
 
         /// <summary>退出 stance：瞬时 |AccMag-g| 下限（m/s²）。降低 → 更容易退出。</summary>
-        public float ExitAccDevThresh { get; set; } = 1.5f;
+        public float ExitAccDevThresh { get; set; } = 1.2f;
 
         /// <summary>
         /// 退出条件逻辑。true = 两个信号都超标才退出（更保守）；
@@ -47,13 +47,13 @@ namespace GaitTraining.Gait
 
         // ── 窗口与持续时间 ───────────────────────────────────────
         /// <summary>Median 计算窗口（ms）。增大 → 对冲击更鲁棒，但响应变慢。</summary>
-        public int MedianWindowMs { get; set; } = 80;
+        public int MedianWindowMs { get; set; } = 60;
 
         /// <summary>进入 stance 所需最小持续时间（ms）。增大 → 减少误触发。</summary>
-        public int MinEnterMs { get; set; } = 80;
+        public int MinEnterMs { get; set; } = 40;
 
         /// <summary>退出 stance 所需最小持续时间（ms）。增大 → stance 内抖动容忍度更高。</summary>
-        public int MinExitMs { get; set; } = 20;
+        public int MinExitMs { get; set; } = 15;
 
         // ── 物理常数 ─────────────────────────────────────────────
         /// <summary>重力加速度（m/s²）。</summary>

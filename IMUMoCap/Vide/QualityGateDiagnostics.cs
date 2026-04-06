@@ -19,7 +19,7 @@ namespace GaitTraining.Gait
         /// false = 所有门控跳过，IsValid 恒为 true。
         /// 调试时遇到无 step 输出，先关此开关确认步态检测本身是否正常。
         /// </summary>
-        public bool EnableAll { get; set; } = true;
+        public bool EnableAll { get; set; } = false;
 
         // ── 独立开关 ─────────────────────────────────────────────
         /// <summary>Gate 1：heading 帧间突变检测。</summary>

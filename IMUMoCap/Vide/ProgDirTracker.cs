@@ -57,6 +57,12 @@ namespace GaitTraining.Gait
         /// </summary>
         public int MinReadyFrames { get; set; } = 100;
 
+        /// <summary>
+        /// 转弯结束后重新建窗时的最小 ready 帧数。
+        /// 用更短的稳定段快速恢复 FPA 输出，后续再继续自然积累完整窗口。
+        /// </summary>
+        public int MinReadyFramesAfterTurn { get; set; } = 25;
+
         /// <summary>IMU 采样率（Hz）。</summary>
         public int SampleRateHz { get; set; } = 100;
 
@@ -133,8 +139,9 @@ namespace GaitTraining.Gait
         // ── 当前 progDir ─────────────────────────────────────────
         private float _progDir;            // rad，圆均值结果
         public float ProgDir => _progDir; // rad
+        private int _readyFrameTarget;
 
-        public bool IsReady => _count >= Config.MinReadyFrames;
+        public bool IsReady => _count >= _readyFrameTarget;
 
         // ── 构造 ─────────────────────────────────────────────────
         public ProgDirTracker(ProgDirConfig? config = null)
@@ -144,6 +151,7 @@ namespace GaitTraining.Gait
             _sinBuf = new float[cap];
             _cosBuf = new float[cap];
             _turnDiffBuf = new float[Config.TurnEvidenceFrames];
+            _readyFrameTarget = Config.MinReadyFrames;
         }
 
         // ─────────────────────────────────────────────────────────
@@ -186,6 +194,7 @@ namespace GaitTraining.Gait
                         _isTurning = true;
                         _stableFrameCount = 0;
                         _turnEnterFrameCount = 0;
+                        _readyFrameTarget = Config.MinReadyFrames;
                         Debug.WriteLine(
                             $"[ProgDir] Turn detected. YawRate={yawRateDeg:F1}°/s");
                     }
@@ -214,9 +223,14 @@ namespace GaitTraining.Gait
                         ClearWindow();
                         _isTurning = false;
                         _stableFrameCount = 0;
+                        _readyFrameTarget = Math.Max(1, Math.Min(
+                            Config.MinReadyFramesAfterTurn,
+                            Config.MinReadyFrames));
+                        ResetTurnEvidence();
 
                         // 把当前帧作为第一个新样本写入
                         PushToWindow(pelvisHeading);
+                        _progDir = pelvisHeading;
                     }
                     // 未达到稳定帧数：继续等待，不写窗口
                 }
@@ -296,6 +310,15 @@ namespace GaitTraining.Gait
             _turnDiffHead = (_turnDiffHead + 1) % cap;
         }
 
+        private void ResetTurnEvidence()
+        {
+            _turnDiffHead = 0;
+            _turnDiffCount = 0;
+            _turnDiffSum = 0f;
+            _turnAbsDiffSum = 0f;
+            Array.Clear(_turnDiffBuf, 0, _turnDiffBuf.Length);
+        }
+
         private bool HasStrongTurnEvidence()
         {
             if (_turnDiffCount < Config.TurnEvidenceFrames)
@@ -338,10 +361,7 @@ namespace GaitTraining.Gait
             if (needed == _lastTurnEvidenceFrames) return;
 
             _turnDiffBuf = new float[needed];
-            _turnDiffHead = 0;
-            _turnDiffCount = 0;
-            _turnDiffSum = 0f;
-            _turnAbsDiffSum = 0f;
+            ResetTurnEvidence();
             _lastTurnEvidenceFrames = needed;
             Debug.WriteLine($"[ProgDir] Turn evidence window resized to {needed} frames.");
         }
@@ -357,6 +377,7 @@ namespace GaitTraining.Gait
             _stableFrameCount = 0;
             _prevHeading = float.NaN;
             _progDir = 0f;
+            _readyFrameTarget = Config.MinReadyFrames;
             _diag.ProgDirDeg = 0f;
             _diag.IsReady = false;
             _diag.IsTurning = false;
@@ -365,11 +386,7 @@ namespace GaitTraining.Gait
             _diag.TurnEvidenceNetYawDeg = 0f;
             _diag.TurnEvidenceConsistencyRatio = 0f;
             _turnEnterFrameCount = 0;
-            _turnDiffHead = 0;
-            _turnDiffCount = 0;
-            _turnDiffSum = 0f;
-            _turnAbsDiffSum = 0f;
-            Array.Clear(_turnDiffBuf, 0, _turnDiffBuf.Length);
+            ResetTurnEvidence();
             Debug.WriteLine("[ProgDir] Reset.");
         }
     }

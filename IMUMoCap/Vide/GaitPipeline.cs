@@ -76,6 +76,9 @@ namespace GaitTraining.Gait
         /// <summary>每步输出一次 FPA（左脚或右脚）。在 Xsens 回调线程触发。</summary>
         public event Action<StepFpaResult>? OnStepFpa;
 
+        /// <summary>标定开始。</summary>
+        public event Action? OnCalibrationStarted;
+
         /// <summary>标定成功。</summary>
         public event Action<CalibrationResult>? OnCalibrationDone;
 
@@ -157,7 +160,11 @@ namespace GaitTraining.Gait
         /// <summary>
         /// 开始站立标定。建议在 UI 提示受试者"请站直朝向行进方向"后调用。
         /// </summary>
-        public void BeginCalibration() => Calibrator.BeginStandingCalibration();
+        public void BeginCalibration()
+        {
+            OnCalibrationStarted?.Invoke();
+            Calibrator.BeginStandingCalibration();
+        }
 
         // ─────────────────────────────────────────────────────────
         //  主处理链

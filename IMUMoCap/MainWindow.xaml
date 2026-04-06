@@ -24,10 +24,16 @@
             <RowDefinition />
             <RowDefinition />
         </Grid.RowDefinitions>
-        <StackPanel Orientation="Horizontal">
+        <StackPanel Orientation="Horizontal" Grid.ColumnSpan="10">
             <Button Click="Button_Click">Measure</Button>
             <Button Click="btnCalibration_click" Margin="10">Calibration</Button>
+            <Button Click="Button_Restart" Margin="10">Restart Session</Button>
+            <Button Click="Button_SaveData" Margin="10">Save Data</Button>
             <Button Click="Button_Click_1">Test</Button>
+            <StackPanel Orientation="Horizontal" Margin="10 0 0 0" VerticalAlignment="Center">
+                <TextBlock Text="Sample Rate (Hz):" VerticalAlignment="Center" Margin="0 0 5 0"/>
+                <TextBox x:Name="txtSampleRate" Width="60" Height="25" Text="10" VerticalAlignment="Center"/>
+            </StackPanel>
             <TextBox x:Name="txtParams" Width="100" Height="30" Margin="10 0 0 0"></TextBox>
         </StackPanel>
         <!-- Row 1: Status + Left/Right FPA -->
@@ -139,11 +145,14 @@
 
             </Viewport3D>
 
-            <!-- Debug -->
-            <!--<Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
-                Background="#AA000000" Padding="10" CornerRadius="8">
-                <TextBlock x:Name="TxtQuat" Foreground="White" FontFamily="Consolas" FontSize="14"/>
-            </Border>-->
+            <!-- IMU Status Indicator -->
+            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+                Background="#AA000000" Padding="8" CornerRadius="4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="PelvisStatusDot" Width="12" Height="12" Fill="Gray" Margin="0,0,6,0"/>
+                    <TextBlock x:Name="PelvisStatusText" Text="Pelvis: Disconnected" Foreground="White" FontSize="12"/>
+                </StackPanel>
+            </Border>
         </Grid>
         <Grid Grid.Row="2" Grid.Column="1">
             <Viewport3D   Grid.Column="1">
@@ -176,11 +185,14 @@
 
             </Viewport3D>
 
-            <!-- Debug -->
-            <!--<Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
-                Background="#AA000000" Padding="10" CornerRadius="8">
-                <TextBlock x:Name="TxtQuat" Foreground="White" FontFamily="Consolas" FontSize="14"/>
-            </Border>-->
+            <!-- IMU Status Indicator -->
+            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+                Background="#AA000000" Padding="8" CornerRadius="4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="LeftStatusDot" Width="12" Height="12" Fill="Gray" Margin="0,0,6,0"/>
+                    <TextBlock x:Name="LeftStatusText" Text="Left: Disconnected" Foreground="White" FontSize="12"/>
+                </StackPanel>
+            </Border>
         </Grid>
         <Grid Grid.Row="2" Grid.Column="2">
             <Viewport3D   Grid.Column="1">
@@ -213,11 +225,14 @@
 
             </Viewport3D>
 
-            <!-- Debug -->
-            <!--<Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
-         Background="#AA000000" Padding="10" CornerRadius="8">
-                <TextBlock x:Name="TxtQuat1" Foreground="White" FontFamily="Consolas" FontSize="14"/>
-            </Border>-->
+            <!-- IMU Status Indicator -->
+            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
+                Background="#AA000000" Padding="8" CornerRadius="4">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="RightStatusDot" Width="12" Height="12" Fill="Gray" Margin="0,0,6,0"/>
+                    <TextBlock x:Name="RightStatusText" Text="Right: Disconnected" Foreground="White" FontSize="12"/>
+                </StackPanel>
+            </Border>
         </Grid>
 
     </Grid>

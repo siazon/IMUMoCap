@@ -20,9 +20,15 @@ namespace GaitTraining.Gait
 
         /// <summary>
         /// 步输出门控：stance 最小持续帧数。
-        /// 低于此值丢弃本步（防止短暂静止误触发）。默认 30 帧 = 300ms。
+        /// 低于此值丢弃本步（防止短暂静止误触发）。默认 20 帧 = 200ms，适应正常步速。
         /// </summary>
-        public int MinStanceFrames { get; set; } = 30;
+        public int MinStanceFrames { get; set; } = 20;
+
+        /// <summary>
+        /// 是否把 Entering / Exiting 也视为可收集的支撑段。
+        /// 开启后可覆盖更完整的脚掌着地过程，适合正常步速下 stance 稳定段较短的场景。
+        /// </summary>
+        public bool IncludeTransitionFrames { get; set; } = true;
 
         /// <summary>IMU 采样率（Hz）。</summary>
         public int SampleRateHz { get; set; } = 100;
@@ -178,17 +184,18 @@ namespace GaitTraining.Gait
             if (calibration is null) return;
 
             bool inStance = stanceState == StanceState.Stance;
+            bool inSupport = IsSupportPhase(stanceState);
             _lastPacketId = frame.PacketId;
 
-            // ── stance 开始 ───────────────────────────────────────
-            if (inStance && !_wasInStance)
+            // ── 支撑段开始 ───────────────────────────────────────
+            if (inSupport && !_wasInStance)
             {
                 _stanceFrames.Clear();
                 _stanceStartPacketId = frame.PacketId;
             }
 
-            // ── stance 期间：收集有效帧 ───────────────────────────
-            if (inStance && quality.IsValid)
+            // ── 支撑段期间：收集有效帧 ───────────────────────────
+            if (inSupport && quality.IsValid)
             {
                 float footHeading = _foot == ImuRole.Left
                     ? quality.LeftHeading
@@ -207,14 +214,14 @@ namespace GaitTraining.Gait
                 _stanceFrames.Add(new StanceFrameRecord(corrected, gyrMag, frame.PacketId));
             }
 
-            // ── stance 结束：计算并输出 ───────────────────────────
-            if (!inStance && _wasInStance)
+            // ── 支撑段结束：计算并输出 ───────────────────────────
+            if (!inSupport && _wasInStance)
                 TryEmitStep(frame.PacketId - 1, inStance);
 
             // ── 更新诊断 ─────────────────────────────────────────
-            _wasInStance = inStance;
+            _wasInStance = inSupport;
             _diag.InStance = inStance;
-            _diag.CurrentStanceFrames = inStance ? _stanceFrames.Count : 0;
+            _diag.CurrentStanceFrames = inSupport ? _stanceFrames.Count : 0;
         }
 
         // ─────────────────────────────────────────────────────────
@@ -330,6 +337,14 @@ namespace GaitTraining.Gait
             }
 
             return bestStart;
+        }
+
+        private bool IsSupportPhase(StanceState stanceState)
+        {
+            if (!Config.IncludeTransitionFrames)
+                return stanceState == StanceState.Stance;
+
+            return stanceState != StanceState.Swing;
         }
 
         // ─────────────────────────────────────────────────────────

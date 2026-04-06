@@ -17,7 +17,6 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -62,11 +61,12 @@ namespace IMUMoCap
         private volatile bool _stanceR;
         private DispatcherTimer _uiTimer;
 
-        string initStr = "Initializing... Please wait.";
-        string AllSetStr = "Preparation Complete. Please stand upright.";
-        string CalibrationStr = "1. Static Calibration in progress... Do not move.";
-        string ToBaselineStr = "Calibration Successful. Initializing Baseline Assessment.";
-        string BaselineStr = "2. Recording Baseline Gait Data... Walk Naturally.";
+        // Data recording configuration
+        private int _sampleRateHz = 100; // Default 10 Hz
+        private int _sampleCounter = 0;
+        private int _samplesPerFrame; // Calculated based on IMU update rate and desired sample rate
+
+
 
         public MainWindow()
         {
@@ -86,7 +86,7 @@ namespace IMUMoCap
             {
                 GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { };
                 SyncIdleSessionState();
-                PushToClient(result, _sessionState, initStr);
+                PushToClient(result, _sessionState);
             };
             _content.StatusLabel = "Ready to calibration";
             _imuRotTf = new RotateTransform3D(_imuRot);
@@ -105,6 +105,9 @@ namespace IMUMoCap
             Imus.Add(new ImuViewModel(imuL) { IMUDodel = ImuVisual1, DeviceId = 0x10B41904, Role = ImuRole.Left });
             Imus.Add(new ImuViewModel(imuR) { IMUDodel = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.Right });
 
+            // Initialize IMU status indicators
+            UpdateImuStatusIndicators();
+
 
 
             // 你已有的 stance 判定（用 packetId 同步）
@@ -122,6 +125,34 @@ namespace IMUMoCap
 
             // 初始化
             pipeline = new GaitPipeline();
+
+            // 优化 Baseline / 正常步速步行：
+            // 1) 放宽 stance 进入条件，减少必须刻意“踩死/抬后跟”才进支撑期；
+            // 2) FPA 允许利用 Entering/Exiting 过渡段，缩短单步所需稳定帧数。
+            pipeline.StanceL.Config.EnterGyrThresh = 1.4f;
+            pipeline.StanceL.Config.EnterAccDevThresh = 1.8f;
+            pipeline.StanceL.Config.MinEnterMs = 25;
+            pipeline.StanceL.Config.MinExitMs = 20;
+            pipeline.StanceL.Config.MedianWindowMs = 50;
+
+            pipeline.StanceR.Config.EnterGyrThresh = 1.4f;
+            pipeline.StanceR.Config.EnterAccDevThresh = 1.8f;
+            pipeline.StanceR.Config.MinEnterMs = 25;
+            pipeline.StanceR.Config.MinExitMs = 20;
+            pipeline.StanceR.Config.MedianWindowMs = 50;
+
+            // 转弯后更快恢复 progDir / FPA 输出
+            pipeline.ProgDir.Config.TurnExitStableFrames = 20;
+            pipeline.ProgDir.Config.MinReadyFrames = 60;
+            pipeline.ProgDir.Config.MinReadyFramesAfterTurn = 20;
+
+            pipeline.FpaL.Config.IncludeTransitionFrames = true;
+            pipeline.FpaL.Config.MinStanceFrames = 12;
+            pipeline.FpaL.Config.BestWindowFrames = 10;
+
+            pipeline.FpaR.Config.IncludeTransitionFrames = true;
+            pipeline.FpaR.Config.MinStanceFrames = 12;
+            pipeline.FpaR.Config.BestWindowFrames = 10;
 
             // 步态输出：每步一次，直接打日志
             pipeline.OnStepFpa += result =>
@@ -145,7 +176,7 @@ namespace IMUMoCap
                             _content.StatusLabel =
                                 $"Collecting baseline: L {_baselineTracker.LeftCount}/{_baselineTracker.RequiredStepsPerFoot}, " +
                                 $"R {_baselineTracker.RightCount}/{_baselineTracker.RequiredStepsPerFoot}";
-                            PushToClient(result, TestState.Baseline, BaselineStr);
+                            PushToClient(result, TestState.Baseline);
                             if (_baselineTracker.IsComplete)
                             {
                                 _content.StatusLabel = "Baseline completed. Formal training started.";
@@ -159,7 +190,6 @@ namespace IMUMoCap
                     }
                 });
 
-            // 标定事件
             pipeline.OnCalibrationStateChanged += state =>
                 Dispatcher.Invoke(() =>
                 {
@@ -172,6 +202,7 @@ namespace IMUMoCap
                             break;
                         case CalibrationState.Collecting:
                             TransitionSessionState(TestState.Calibrating);
+                            PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrating);
                             break;
                         case CalibrationState.Computing:
                             break;
@@ -207,7 +238,7 @@ namespace IMUMoCap
                     _content.CalibrationState = "Calibrated";
                     log("Calibration completed: " + result.ToString());
                     TransitionSessionState(TestState.Calibrated);
-                    PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrated, BaselineStr);
+                    PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrated, getMsgStr(TestState.Baseline));//通知客户端进入 Baseline 阶段
                     _content.StatusLabel = "Calibration completed. Collecting baseline.";
                     _baselineTracker.Reset();
                     TransitionSessionState(TestState.Baseline);
@@ -328,7 +359,9 @@ namespace IMUMoCap
 
         private void PushToClient(GaitTraining.Gait.StepFpaResult result, TestState state, string? msg = "")
         {
-            var color= ComputePayloadStatus(result, state, out double? targetFpa, out double? deltaFromTarget);
+            if (string.IsNullOrEmpty(msg))
+                msg = getMsgStr(state);
+            var color = ComputePayloadStatus(result, state, out double? targetFpa, out double? deltaFromTarget);
             // 发送给 AR 眼镜的 payload（只推“结果”，不推原始IMU）
             var payload = new ArStepPayload
             {
@@ -399,6 +432,8 @@ namespace IMUMoCap
             _content.RightFpaDeg = 0;
             _content.ProgDirDeg = 0;
             _content.CalibrationState = "Not calibrated";
+            datas.Clear(); // Clear recorded data
+            _sampleCounter = 0; // Reset sample counter
         }
 
         private void StartSession()
@@ -407,7 +442,7 @@ namespace IMUMoCap
             {
                 log("Cannot start session: IMUs are not fully connected.");
                 SyncIdleSessionState();
-                PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState, initStr);
+                PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
                 return;
             }
 
@@ -416,7 +451,7 @@ namespace IMUMoCap
             _content.StatusLabel = "Starting calibration...";
             TransitionSessionState(TestState.Calibrating);
 
-            PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrating, CalibrationStr);
+            PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrating);
             StartMeasurementInternal();
         }
 
@@ -429,7 +464,37 @@ namespace IMUMoCap
             ResetSessionData();
             SyncIdleSessionState();
             _content.StatusLabel = "Session stopped.";
-            PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState, initStr);
+            PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
+        }
+
+        /// <summary>
+        /// 重启整个流程（保持IMU和AR连接），重新开始标定和步态检测
+        /// </summary>
+        private void RestartSession()
+        {
+            // 1. 停止当前测量（如果正在进行）
+            //if (_content.DeviceState == States.MEASURING)
+            //    StopMeasurementInternal();
+
+            // 2. 重置会话数据
+            ResetSessionData();
+            
+            // 3. 重置pipeline（清除标定结果，需要重新标定）
+            pipeline.Reset();
+            
+            // 4. 重置会话状态
+            TransitionSessionState(TestState.Connected);
+            
+            // 5. 更新UI状态
+            _content.StatusLabel = "Ready to restart. Please stand up straight and wait for footstep detection.";
+            _content.CalibrationState = "Not calibrated";
+
+            // 6. 通知客户端重启
+            PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
+
+            // 7. 自动开始新的测量流程
+            //log("Session restarted. Waiting for footstep detection to begin calibration.");
+            //StartMeasurementInternal();
         }
 
         QuaternionHelper quaternionHelper = new QuaternionHelper();
@@ -624,14 +689,18 @@ namespace IMUMoCap
                     ImuViewModel imuVM = Imus.FirstOrDefault(a => a.DeviceId == e.DeviceId.legacyDeviceId());
                     if (imuVM != null)
                         imuVM.IsConnected = true;
+                    
+                    // Update IMU status indicators
+                    UpdateImuStatusIndicators();
+                    
                     imuVM = Imus.FirstOrDefault(a => a.IsConnected == false);
                     if (imuVM == null)
                     {
                         // All 3 IMUs connected, auto-start measurement with footstep detection
                         log("All 3 IMUs connected. Auto-starting measurement with footstep detection...");
-                        
+
                         StartMeasurementInternal();
-                        
+
                         GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { };
                         SyncIdleSessionState();
                         PushToClient(result, _sessionState);
@@ -660,13 +729,16 @@ namespace IMUMoCap
                     //btnMeasure.Enabled =_content.DeviceState == States.ENABLED && connectedMtwList.Items.Count > 0;
                 }
 
+                // Update IMU status indicators
+                UpdateImuStatusIndicators();
+
                 if (!AreAllRequiredImusConnected())
                 {
                     pipeline.Reset();
                     ResetSessionData();
                     _sessionState = TestState.Launching;
                     _content.StatusLabel = "IMU disconnected. Session stopped.";
-                    PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState, initStr);
+                    PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
                 }
             });
         }
@@ -946,6 +1018,49 @@ namespace IMUMoCap
 
         List<ImuViewModel> Imus = new List<ImuViewModel>();
         Dictionary<uint, ImuViewModel> imuDevicesMap = new Dictionary<uint, ImuViewModel>();
+
+        /// <summary>
+        /// Update IMU status indicators in the 3D viewports
+        /// </summary>
+        private void UpdateImuStatusIndicators()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                foreach (var imu in Imus)
+                {
+                    string statusText;
+                    string dotColor;
+
+                    if (imu.IsConnected)
+                    {
+                        statusText = $"{imu.Role}: Connected";
+                        dotColor = "Green";
+                    }
+                    else
+                    {
+                        statusText = $"{imu.Role}: Disconnected";
+                        dotColor = "Gray";
+                    }
+
+                    // Update the corresponding UI elements
+                    switch (imu.Role)
+                    {
+                        case ImuRole.Pelvis:
+                            PelvisStatusText.Text = statusText;
+                            PelvisStatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dotColor));
+                            break;
+                        case ImuRole.Left:
+                            LeftStatusText.Text = statusText;
+                            LeftStatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dotColor));
+                            break;
+                        case ImuRole.Right:
+                            RightStatusText.Text = statusText;
+                            RightStatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dotColor));
+                            break;
+                    }
+                }
+            });
+        }
 
         void _callbackHandler_BatteryLevelChanged(object? sender, BatteryLevelChangedArgs e)
         {
@@ -1446,7 +1561,7 @@ namespace IMUMoCap
                             //_MyWirelessMasterDevice.storeIccResults();
                             log(string.Format("Waiting for measurement start. ID: {0}", _MyWirelessMasterDevice.deviceId().toXsString().toString()));
 
-                         
+
                         }
                         else
                         {
@@ -1498,17 +1613,17 @@ namespace IMUMoCap
             GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Right, FpaDeg = fpa, };
             TestState state = TestState.Launching;
             if (this.txtParams.Text == "1")
-                PushToClient(result, TestState.Launching, initStr);
+                PushToClient(result, TestState.Launching);
             else if (this.txtParams.Text == "2")
-                PushToClient(result, TestState.Connected, AllSetStr);
+                PushToClient(result, TestState.Connected);
             else if (this.txtParams.Text == "3")
-                PushToClient(result, TestState.Calibrating, CalibrationStr);
+                PushToClient(result, TestState.Calibrating);
             else if (this.txtParams.Text == "4")
-                PushToClient(result, TestState.Calibrated, ToBaselineStr);
+                PushToClient(result, TestState.Calibrated);
             else if (this.txtParams.Text == "5")
-                PushToClient(result, TestState.Baseline, BaselineStr);
+                PushToClient(result, TestState.Baseline);
             else if (this.txtParams.Text == "6")
-                PushToClient(result, TestState.Step, "step");
+                PushToClient(result, TestState.Step);
 
             return;
             Task.Run(() =>
@@ -1524,11 +1639,11 @@ namespace IMUMoCap
 
             });
 
-            //new CvsUntil().WriteCVS("D:\\SourceCode\\IMUData\\", "IMUDataNewR.csv", datas);
+           
         }
-        public void Test()
+        public void SvaeCVSTofile()
         {
-
+            new CvsUntil().WriteCVS("D:\\SourceCode\\IMUData\\", "IMUDataNewR.csv", datas);
         }
         FootStanceDetector stanceLeftDet, stanceRightDet;
 
@@ -1574,6 +1689,33 @@ namespace IMUMoCap
         }
 
 
+        private string getMsgStr(TestState sessionState)
+        {
+            string msg = "Initializing... Please wait.";
+            switch (sessionState)
+            {
+                case TestState.Launching:
+                    break;
+                case TestState.Connected:
+                    msg = "Please stand upright. Stomp your left foot to start";
+                    break;
+                case TestState.Calibrating:
+                    msg = "1. Static Calibration in progress... Do not move.";
+                    break;
+                case TestState.Calibrated:
+                    msg = "Calibration Successful. Initializing Baseline Assessment.";
+                    break;
+                case TestState.Baseline:
+                    msg = "2. Recording Baseline Gait Data... Walk Naturally.";
+                    break;
+                case TestState.Step:
+                    break;
+                default:
+                    break;
+            }
+            return msg;
+        }
+
         long currentPacketId = 0;
         private void btnCalibration_click(object sender, RoutedEventArgs e)
         {
@@ -1581,19 +1723,91 @@ namespace IMUMoCap
             pipeline.BeginCalibration();
         }
 
+        private void Button_Restart(object sender, RoutedEventArgs e)
+        {
+            log("Restarting session...");
+            RestartSession();
+        }
+
+        private void Button_SaveData(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Update sample rate from UI
+                if (int.TryParse(this.txtSampleRate.Text, out int newSampleRate) && newSampleRate > 0)
+                {
+                    _sampleRateHz = newSampleRate;
+                    log($"Sample rate updated to {_sampleRateHz} Hz");
+                }
+                else
+                {
+                    log("Invalid sample rate. Using current rate.");
+                }
+
+                if (datas.Count == 0)
+                {
+                    log("No data to save.");
+                    return;
+                }
+                SvaeCVSTofile();
+                return;
+                // Create save dialog
+                var saveFileDialog = new Microsoft.Win32.SaveFileDialog
+                {
+                    Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                    DefaultExt = ".csv",
+                    FileName = $"IMU_Data_{DateTime.Now:yyyyMMdd_HHmmss}_{_sampleRateHz}Hz.csv"
+                };
+
+                if (saveFileDialog.ShowDialog() == true)
+                {
+                    string? filePath = System.IO.Path.GetDirectoryName(saveFileDialog.FileName);
+                    string? fileName = System.IO.Path.GetFileName(saveFileDialog.FileName);
+
+                    if (!string.IsNullOrEmpty(filePath) && !string.IsNullOrEmpty(fileName))
+                    {
+                        // Use existing WriteCVS method
+                        var cvsUtil = new IMUMoCap.AHRS.CvsUntil();
+                        cvsUtil.WriteCVS(filePath, fileName, datas);
+
+                        log($"Data saved to {saveFileDialog.FileName} ({datas.Count} samples at {_sampleRateHz} Hz)");
+                    }
+                    else
+                    {
+                        log("Invalid file path.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                log($"Error saving data: {ex.Message}");
+            }
+        }
+
         List<RecoredData> datas = new List<RecoredData>();
         // 在 Xsens 的 OnDataAvailable 回调中
         void OnXsensData(ImuRole sensor, XsDataPacket packet)
         {
-            var rawData = new RecoredData()
+            // Update samples per frame calculation (assuming 100Hz IMU rate)
+            int imuRateHz = 100; // Xsens default rate
+            _samplesPerFrame = Math.Max(1, imuRateHz / _sampleRateHz);
+
+            _sampleCounter++;
+            
+            // Only record data at the configured sample rate
+            if (_sampleCounter >= _samplesPerFrame)
             {
-                PackageId = packet.packetId().ToString(),
-                quaternion = Utils.ToNumericsQuaternion(packet.orientationQuaternion()),
-                Accelerate = Utils.ToNumericsVector3(packet.calibratedAcceleration()),
-                Orientation = Utils.ToNumericsVector3(packet.calibratedGyroscopeData()),
-                MadgwickAHRS = Utils.ToNumericsVector3(packet.calibratedMagneticField())
-            };
-            datas.Add(rawData);
+                var rawData = new RecoredData()
+                {
+                    PackageId = packet.packetId().ToString(),
+                    quaternion = Utils.ToNumericsQuaternion(packet.orientationQuaternion()),
+                    Accelerate = Utils.ToNumericsVector3(packet.calibratedAcceleration()),
+                    Orientation = Utils.ToNumericsVector3(packet.calibratedGyroscopeData()),
+                    MadgwickAHRS = Utils.ToNumericsVector3(packet.calibratedMagneticField())
+                };
+                datas.Add(rawData);
+                _sampleCounter = 0; // Reset counter
+            }
 
             var raw = new ImuRawData(
                 Utils.ToNumericsQuaternion(packet.orientationQuaternion()),
