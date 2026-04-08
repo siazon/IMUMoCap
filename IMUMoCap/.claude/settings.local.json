@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(curl -s https://raw.githubusercontent.com/obra/superpowers/main/README.md)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl -s \"https://api.github.com/repos/obra/superpowers/contents/\")",
+      "Bash(curl -s \"https://api.github.com/repos/obra/superpowers/contents/skills\")"
+    ]
+  }
+}

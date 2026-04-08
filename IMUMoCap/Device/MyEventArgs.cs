@@ -38,17 +38,6 @@ using XDA;
 
 namespace IMUMoCap
 {
-    public class MtwEventArgs : EventArgs
-    {
-        public XsDevice Mtw { get; private set; }
-        public bool Connected { get; private set; }
-        public MtwEventArgs(XsDevice mtw, bool connected)
-        {
-            Mtw = mtw;
-            Connected = connected;
-        }
-    }
-
     public class DataAvailableArgs : EventArgs
     {
         public XsDevice Device { get; private set; }

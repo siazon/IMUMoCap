@@ -7,8 +7,8 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-
-namespace IMUMoCap.Vide
+    
+namespace IMUMoCap.Methods
 {
     // ======================= WebSocket Server (Broadcast) =======================
 

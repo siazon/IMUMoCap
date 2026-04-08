@@ -30,6 +30,17 @@ namespace IMUMoCap.Methods
             float inv = 1f / n;
             return new Quaternion(q.X * inv, q.Y * inv, q.Z * inv, q.W * inv);
         }
+
+        public static Quaternion ApplyRotationOffset(Quaternion source, Quaternion offset)
+        {
+            return Normalize(offset * source);
+        }
+
+        public static Vector3 RotateVector(Vector3 source, Quaternion rotation)
+        {
+            return Vector3.Transform(source, Normalize(rotation));
+        }
+
         public static float WrapPi(float a)
         {
             while (a > MathF.PI) a -= 2f * MathF.PI;
@@ -44,6 +55,11 @@ namespace IMUMoCap.Methods
         public static Vector3 ToNumericsVector3(XsVector v)
         {
            return new Vector3((float)v.value(0), (float)v.value(1), (float)v.value(2));
+        }
+
+        public static Vector3 ToNumericsVector3(XsVector3 v)
+        {
+            return new Vector3((float)v.value(0), (float)v.value(1), (float)v.value(2));
         }
      
     }

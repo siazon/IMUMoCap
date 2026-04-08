@@ -1,8 +1,6 @@
-﻿using GaitTraining.Gait;
-using GaitTraining.Imu;
-using IMUMoCap.AHRS;
+﻿using IMUMoCap.AHRS;
 using IMUMoCap.Methods;
-using IMUMoCap.Vide;
+using IMUMoCap.Model;
 using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
@@ -31,6 +29,7 @@ using static System.Net.Mime.MediaTypeNames;
 using Application = System.Windows.Application;
 using MeshGeometry3D = System.Windows.Media.Media3D.MeshGeometry3D;
 using Quaternion = System.Windows.Media.Media3D.Quaternion;
+using System.IO;
 
 namespace IMUMoCap
 {
@@ -51,9 +50,6 @@ namespace IMUMoCap
         BlockingCollection<RecoredData> ImuDataQueue = new BlockingCollection<RecoredData>(new ConcurrentQueue<RecoredData>(), 2000);
         string imuPelvis = "imuPelvis", imuL = "imuL", imuR = "imuR";
         private readonly bool _useConjugateForHeading = true; // 你想用哪套就统一哪套
-        ImuFrameAggregator aggregator;
-        GaitPipeline pipeline;
-        private readonly BaselineTracker _baselineTracker = new(5);
         private const double TrainingStatusThresholdDeg = 10.0;
         private TestState _sessionState = TestState.Launching;
 
@@ -63,11 +59,8 @@ namespace IMUMoCap
 
         // Data recording configuration
         private int _sampleRateHz = 100; // Default 10 Hz
-        private int _sampleCounter = 0;
-        private int _samplesPerFrame; // Calculated based on IMU update rate and desired sample rate
-
-
-
+        private readonly List<ImuSampleFrame> _imuSamples = new();
+        private readonly ImuFrameCollector _imuFrameCollector = new();
         public MainWindow()
         {
             InitializeComponent();
@@ -84,22 +77,12 @@ namespace IMUMoCap
             };
             _wsServer.OnClientConnected += (id, remote) =>
             {
-                GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { };
-                SyncIdleSessionState();
-                PushToClient(result, _sessionState);
+                //PushToClient(result, _sessionState); TODO: 连接时同步当前
             };
             _content.StatusLabel = "Ready to calibration";
             _imuRotTf = new RotateTransform3D(_imuRot);
+            _imuFrameCollector.SampleRateHz = _sampleRateHz;
 
-            BuildAxes(AxesVisual);
-            BuildImuBox(ImuVisual);
-
-            BuildAxes(AxesVisual1);
-            BuildImuBox(ImuVisual1);
-
-
-            BuildAxes(AxesVisual12);
-            BuildImuBox(ImuVisual12);
             //Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43D12, Role = ImuRole.Pelvis });
             Imus.Add(new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual, DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis });
             Imus.Add(new ImuViewModel(imuL) { IMUDodel = ImuVisual1, DeviceId = 0x10B41904, Role = ImuRole.Left });
@@ -107,174 +90,6 @@ namespace IMUMoCap
 
             // Initialize IMU status indicators
             UpdateImuStatusIndicators();
-
-
-
-            // 你已有的 stance 判定（用 packetId 同步）
-            stanceLeftDet = new FootStanceDetector(fs: 100, windowMs: 100, minEnterMs: 80, minExitMs: 40);
-            stanceRightDet = new FootStanceDetector(fs: 100, windowMs: 100, minEnterMs: 80, minExitMs: 40);
-
-
-            StanceDetector detectorL = new StanceDetector();
-            StanceDetector detectorR = new StanceDetector();
-            QualityGate qualityGate = new QualityGate(new QualityGateConfig() { EnableAll = false });
-
-            aggregator = new ImuFrameAggregator();
-            StandingCalibrator calibrator = new StandingCalibrator();
-
-
-            // 初始化
-            pipeline = new GaitPipeline();
-
-            // 优化 Baseline / 正常步速步行：
-            // 1) 放宽 stance 进入条件，减少必须刻意“踩死/抬后跟”才进支撑期；
-            // 2) FPA 允许利用 Entering/Exiting 过渡段，缩短单步所需稳定帧数。
-            pipeline.StanceL.Config.EnterGyrThresh = 1.4f;
-            pipeline.StanceL.Config.EnterAccDevThresh = 1.8f;
-            pipeline.StanceL.Config.MinEnterMs = 25;
-            pipeline.StanceL.Config.MinExitMs = 20;
-            pipeline.StanceL.Config.MedianWindowMs = 50;
-
-            pipeline.StanceR.Config.EnterGyrThresh = 1.4f;
-            pipeline.StanceR.Config.EnterAccDevThresh = 1.8f;
-            pipeline.StanceR.Config.MinEnterMs = 25;
-            pipeline.StanceR.Config.MinExitMs = 20;
-            pipeline.StanceR.Config.MedianWindowMs = 50;
-
-            // 转弯后更快恢复 progDir / FPA 输出
-            pipeline.ProgDir.Config.TurnExitStableFrames = 20;
-            pipeline.ProgDir.Config.MinReadyFrames = 60;
-            pipeline.ProgDir.Config.MinReadyFramesAfterTurn = 20;
-
-            pipeline.FpaL.Config.IncludeTransitionFrames = true;
-            pipeline.FpaL.Config.MinStanceFrames = 12;
-            pipeline.FpaL.Config.BestWindowFrames = 10;
-
-            pipeline.FpaR.Config.IncludeTransitionFrames = true;
-            pipeline.FpaR.Config.MinStanceFrames = 12;
-            pipeline.FpaR.Config.BestWindowFrames = 10;
-
-            // 步态输出：每步一次，直接打日志
-            pipeline.OnStepFpa += result =>
-                Dispatcher.Invoke(() =>
-                {
-                    _content.ProgDirDeg = result.ProgDirDeg;
-                    if (result.Foot == ImuRole.Left)
-                    {
-                        _content.LeftFpaDeg = result.FpaDeg;
-                    }
-                    else if (result.Foot == ImuRole.Right)
-                    {
-                        _content.RightFpaDeg = result.FpaDeg;
-                    }
-                    log("Step: " + result.ToString());
-
-                    if (_sessionState == TestState.Baseline)
-                    {
-                        if (_baselineTracker.TryAddStep(result))
-                        {
-                            _content.StatusLabel =
-                                $"Collecting baseline: L {_baselineTracker.LeftCount}/{_baselineTracker.RequiredStepsPerFoot}, " +
-                                $"R {_baselineTracker.RightCount}/{_baselineTracker.RequiredStepsPerFoot}";
-                            PushToClient(result, TestState.Baseline);
-                            if (_baselineTracker.IsComplete)
-                            {
-                                _content.StatusLabel = "Baseline completed. Formal training started.";
-                                TransitionSessionState(TestState.Step);
-                            }
-                        }
-                    }
-                    else if (_sessionState == TestState.Step)
-                    {
-                        PushToClient(result, TestState.Step);
-                    }
-                });
-
-            pipeline.OnCalibrationStateChanged += state =>
-                Dispatcher.Invoke(() =>
-                {
-                    GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { };
-                    switch (state)
-                    {
-                        case CalibrationState.Idle:
-                            break;
-                        case CalibrationState.Waiting:
-                            break;
-                        case CalibrationState.Collecting:
-                            TransitionSessionState(TestState.Calibrating);
-                            PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrating);
-                            break;
-                        case CalibrationState.Computing:
-                            break;
-                        case CalibrationState.Done:
-                            break;
-                        case CalibrationState.Failed:
-                            TransitionSessionState(TestState.Connected);
-                            _content.CalibrationState = "Not calibrated";
-                            break;
-                        default:
-                            break;
-                    }
-
-                    _content.StatusLabel = state switch
-                    {
-                        CalibrationState.Waiting => "Stand up straight, ready to begin...",
-                        CalibrationState.Collecting => "Data collection in progress. Please remain still.",
-                        CalibrationState.Done => "Calibration completed",
-                        CalibrationState.Failed => "Calibration failed. Please try again.",
-                        _ => ""
-                    };
-                });
-
-            pipeline.OnCalibrationFailed += (_, msg) =>
-                Dispatcher.Invoke(() => log("Calibration failed：" + msg));
-
-            pipeline.OnSanityWarning += (_, msg) =>
-                Dispatcher.Invoke(() => log("Calibration Warning：" + msg));
-
-            pipeline.OnCalibrationDone += result =>
-                Dispatcher.Invoke(() =>
-                {
-                    _content.CalibrationState = "Calibrated";
-                    log("Calibration completed: " + result.ToString());
-                    TransitionSessionState(TestState.Calibrated);
-                    PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrated, getMsgStr(TestState.Baseline));//通知客户端进入 Baseline 阶段
-                    _content.StatusLabel = "Calibration completed. Collecting baseline.";
-                    _baselineTracker.Reset();
-                    TransitionSessionState(TestState.Baseline);
-                });
-
-            pipeline.OnStanceStatusChanged += status =>
-            {
-                if (_sessionState == TestState.Step)
-                {
-                    if (_stanceL != status.LeftInStance)
-                    {
-                        var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Left, inStance = status.LeftInStance, FpaDeg = _content.LeftFpaDeg };
-                        PushToClient(result, TestState.Step);
-                    }
-                    if (_stanceR != status.RightInStance)
-                    {
-                        var result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Right, inStance = status.RightInStance, FpaDeg = _content.RightFpaDeg };
-                        PushToClient(result, TestState.Step);
-                    }
-                }
-                // Update fields only in the callback thread; do not touch the UI.
-                _stanceL = status.LeftInStance;
-                _stanceR = status.RightInStance;
-            };
-
-            _uiTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(100)  // 10Hz
-            };
-            _uiTimer.Tick += (_, _) =>
-            {
-                _content.StanceSummary = $"L:{_stanceL} R:{_stanceR}";
-            };
-            _uiTimer.Start();
-
-
 
             _measuringMtws = new Dictionary<XsDevice, MyMtwCallback>();
             _connectedMtwData = new Dictionary<uint, ConnectedMTwData>();
@@ -331,7 +146,6 @@ namespace IMUMoCap
                         Dispatcher.Invoke(() =>
                         {
                             log("WS: start");
-                            StartSession();
                         });
                         break;
 
@@ -340,7 +154,6 @@ namespace IMUMoCap
                         Dispatcher.Invoke(() =>
                         {
                             log("WS: stop");
-                            StopSession();
                         });
                         break;
 
@@ -355,149 +168,6 @@ namespace IMUMoCap
             }
         }
 
-
-
-        private void PushToClient(GaitTraining.Gait.StepFpaResult result, TestState state, string? msg = "")
-        {
-            if (string.IsNullOrEmpty(msg))
-                msg = getMsgStr(state);
-            var color = ComputePayloadStatus(result, state, out double? targetFpa, out double? deltaFromTarget);
-            // 发送给 AR 眼镜的 payload（只推“结果”，不推原始IMU）
-            var payload = new ArStepPayload
-            {
-                CMD = state.ToString(),
-                Foot = result.Foot.ToString(),     // "Left"/"Right"/...
-                FpaDegree = result.FpaDeg,         // double
-                IsStance = result.inStance,        // bool
-                status = color,//TODO
-                Msg = msg ?? ""
-
-            };
-            log("-----: " + payload.ToString());
-            // 广播（后台线程，不阻塞 UI）
-            _ = _wsServer?.BroadcastJsonAsync(payload);
-
-        }
-
-        private string ComputePayloadStatus(
-            GaitTraining.Gait.StepFpaResult result,
-            TestState state,
-            out double? targetFpaDegree,
-            out double? deltaFromTarget)
-        {
-            targetFpaDegree = null;
-            deltaFromTarget = null;
-
-            if (state == TestState.Baseline)
-                return "CollectingBaseline";
-
-            if (state != TestState.Step)
-                return state.ToString();
-
-            if (!_baselineTracker.TryGetMean(result.Foot, out double target))
-                return "NoBaseline";
-
-            targetFpaDegree = target;
-            deltaFromTarget = result.FpaDeg - target;
-            return Math.Abs(deltaFromTarget.Value) > TrainingStatusThresholdDeg ? "Red" : "Green";
-        }
-
-        private void TransitionSessionState(TestState next)
-        {
-            _sessionState = next;
-        }
-
-        private void SyncIdleSessionState()
-        {
-            if (_sessionState == TestState.Calibrating ||
-                _sessionState == TestState.Calibrated ||
-                _sessionState == TestState.Baseline ||
-                _sessionState == TestState.Step)
-                return;
-
-            _sessionState = AreAllRequiredImusConnected()
-                ? TestState.Connected
-                : TestState.Launching;
-        }
-
-        private bool AreAllRequiredImusConnected()
-            => Imus.All(a => a.IsConnected);
-
-        private void ResetSessionData()
-        {
-            _baselineTracker.Reset();
-            _stanceL = false;
-            _stanceR = false;
-            _content.LeftFpaDeg = 0;
-            _content.RightFpaDeg = 0;
-            _content.ProgDirDeg = 0;
-            _content.CalibrationState = "Not calibrated";
-            datas.Clear(); // Clear recorded data
-            _sampleCounter = 0; // Reset sample counter
-        }
-
-        private void StartSession()
-        {
-            if (!AreAllRequiredImusConnected())
-            {
-                log("Cannot start session: IMUs are not fully connected.");
-                SyncIdleSessionState();
-                PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
-                return;
-            }
-
-            ResetSessionData();
-            pipeline.Reset();
-            _content.StatusLabel = "Starting calibration...";
-            TransitionSessionState(TestState.Calibrating);
-
-            PushToClient(new GaitTraining.Gait.StepFpaResult(), TestState.Calibrating);
-            StartMeasurementInternal();
-        }
-
-        private void StopSession()
-        {
-            if (_content.DeviceState == States.MEASURING)
-                StopMeasurementInternal();
-
-            pipeline.Reset();
-            ResetSessionData();
-            SyncIdleSessionState();
-            _content.StatusLabel = "Session stopped.";
-            PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
-        }
-
-        /// <summary>
-        /// 重启整个流程（保持IMU和AR连接），重新开始标定和步态检测
-        /// </summary>
-        private void RestartSession()
-        {
-            // 1. 停止当前测量（如果正在进行）
-            //if (_content.DeviceState == States.MEASURING)
-            //    StopMeasurementInternal();
-
-            // 2. 重置会话数据
-            ResetSessionData();
-            
-            // 3. 重置pipeline（清除标定结果，需要重新标定）
-            pipeline.Reset();
-            
-            // 4. 重置会话状态
-            TransitionSessionState(TestState.Connected);
-            
-            // 5. 更新UI状态
-            _content.StatusLabel = "Ready to restart. Please stand up straight and wait for footstep detection.";
-            _content.CalibrationState = "Not calibrated";
-
-            // 6. 通知客户端重启
-            PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
-
-            // 7. 自动开始新的测量流程
-            //log("Session restarted. Waiting for footstep detection to begin calibration.");
-            //StartMeasurementInternal();
-        }
-
-        QuaternionHelper quaternionHelper = new QuaternionHelper();
         private CancellationTokenSource? _imuLoopCts;
         private void InitDevice()
         {
@@ -700,10 +370,6 @@ namespace IMUMoCap
                         log("All 3 IMUs connected. Auto-starting measurement with footstep detection...");
 
                         StartMeasurementInternal();
-
-                        GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { };
-                        SyncIdleSessionState();
-                        PushToClient(result, _sessionState);
                     }
                     log(string.Format("Connected MTw list ({0}):{1}", _content.ConnectedMtws.Count, mtwIdStr));
                 }
@@ -731,15 +397,6 @@ namespace IMUMoCap
 
                 // Update IMU status indicators
                 UpdateImuStatusIndicators();
-
-                if (!AreAllRequiredImusConnected())
-                {
-                    pipeline.Reset();
-                    ResetSessionData();
-                    _sessionState = TestState.Launching;
-                    _content.StatusLabel = "IMU disconnected. Session stopped.";
-                    PushToClient(new GaitTraining.Gait.StepFpaResult(), _sessionState);
-                }
             });
         }
         void _callbackHandler_MeasurementStarted(object? sender, DeviceIdArg e)
@@ -913,8 +570,7 @@ namespace IMUMoCap
 
                 if (!e.Packet.containsSdiData())
                 {
-                    log(string.Format("Packet received of an MTw {0} not containing data.", mtwIdStr));
-                    return;
+                    log(string.Format("Packet received of an MTw {0} not containing SDI data.", mtwIdStr));
                 }
                 if (e.Packet.containsCalibratedAcceleration())
                 {
@@ -932,19 +588,21 @@ namespace IMUMoCap
                 {
                     var mag = e.Packet.correctedMagneticField;
                 }
-                // Getting SDI data.
-                XsSdiData sdiData = e.Packet.sdiData();
-
                 uint deviceId = e.Device.deviceId().legacyDeviceId();
                 ImuViewModel imuViewModel = GetOrAssignSlot(deviceId);
 
                 string devices = imuViewModel.SlotName;
 
-                _connectedMtwData[deviceId].XsQuaternion = sdiData.orientationIncrement(); //xsQuaternion;
+                if (e.Packet.containsSdiData())
+                {
+                    XsSdiData sdiData = e.Packet.sdiData();
+                    _connectedMtwData[deviceId].XsQuaternion = sdiData.orientationIncrement();
+                }
 
-                _connectedMtwData[deviceId]._rssi = e.Packet.rssi();
+                if (e.Packet.containsRssi())
+                    _connectedMtwData[deviceId]._rssi = e.Packet.rssi();
 
-                OnXsensData(imuViewModel.Role, e.Packet);
+                OnXsensData(imuViewModel.Role, deviceId, e.Packet);
                 if (e.Packet.containsOrientation())
                 {
                     var quat = e.Packet.orientationQuaternion();
@@ -1100,210 +758,8 @@ namespace IMUMoCap
             // UI线程更新
             Dispatcher.BeginInvoke(() =>
             {
-                //Imu3D.Transform = new IMUUIUpdater().CreateTransform(qImu, applyConjugate: true); // 你之前验证 Conjugate 会更接近正确，所以先保持 true
-                // 1) 原本的姿态 transform（你已有）
-                var baseTf = new IMUUIUpdater().CreateTransform(qImu, applyConjugate: true);
-
-                // 2) 选择对应的标定 yaw 修正角（弧度->度）
-                float deltaRad = Imu3D.Role switch
-                {
-                    ImuRole.Left => _deltaLeftRad,
-                    ImuRole.Right => _deltaRightRad,
-                    _ => 0f
-                };
-                double deltaDeg = deltaRad * 180.0 / Math.PI;
-
-                // 3) 绕 UI 的 Up 轴做一个 yaw 修正旋转
-                //    假设 UI: Y up
-                var yawFix = new RotateTransform3D(
-                    new AxisAngleRotation3D(new Vector3D(0, 1, 0), deltaDeg));
-
-                // 4) 合成 transform：base + yawFix
-                var group = new Transform3DGroup();
-                group.Children.Add(baseTf);
-                group.Children.Add(yawFix);
-
-                Imu3D.IMUDodel.Transform = group;
+              
             });
-        }
-
-
-
-        private void BuildImuBox(ModelVisual3D IMUmodelVisual3D)
-        {
-            // 盒子尺寸（随便设个比例：X前、Y上、Z侧）
-            double lx = 0.30;
-            double ly = 0.08;
-            double lz = 0.18;
-
-            var mesh = CreateBoxMesh(lx, ly, lz);
-
-            var mat = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(210, 210, 210)));
-            var backMat = new DiffuseMaterial(new SolidColorBrush(Color.FromRgb(190, 190, 190)));
-
-            var model = new GeometryModel3D
-            {
-                Geometry = mesh,
-                Material = mat,
-                BackMaterial = backMat
-            };
-
-            // 给盒子加一个“前向标记”（小三角/小杆），方便你判断X轴朝向
-            var forward = new GeometryModel3D
-            {
-                Geometry = CreateArrowMesh(), // 一个小箭头
-                Material = new DiffuseMaterial(Brushes.Orange),
-                BackMaterial = new DiffuseMaterial(Brushes.Orange)
-            };
-
-            var group = new Model3DGroup();
-            group.Children.Add(model);
-            group.Children.Add(forward);
-
-            var mv = new ModelVisual3D
-            {
-                Content = group,
-                Transform = _imuRotTf
-            };
-
-            IMUmodelVisual3D.Children.Add(mv);
-        }
-
-        private void BuildAxes(ModelVisual3D modelVisual3D)
-        {
-            double len = 1.0;        // 轴长度
-            double t = 0.0035;       // 轴粗细（改这个！越小越细）
-
-            var gx = new GeometryModel3D
-            {
-                Geometry = CreateBoxMesh(len, t, t, new Point3D(len / 2, 0, 0)),
-                Material = new DiffuseMaterial(Brushes.Red),
-                BackMaterial = new DiffuseMaterial(Brushes.Red)
-            };
-
-            var gy = new GeometryModel3D
-            {
-                Geometry = CreateBoxMesh(t, len, t, new Point3D(0, len / 2, 0)),
-                Material = new DiffuseMaterial(Brushes.LimeGreen),
-                BackMaterial = new DiffuseMaterial(Brushes.LimeGreen)
-            };
-
-            var gz = new GeometryModel3D
-            {
-                Geometry = CreateBoxMesh(t, t, len, new Point3D(0, 0, len / 2)),
-                Material = new DiffuseMaterial(Brushes.DodgerBlue),
-                BackMaterial = new DiffuseMaterial(Brushes.DodgerBlue)
-            };
-
-            var group = new Model3DGroup();
-            group.Children.Add(gx);
-            group.Children.Add(gy);
-            group.Children.Add(gz);
-
-            modelVisual3D.Children.Add(new ModelVisual3D { Content = group });
-        }
-
-        // ------------------------------
-        // Mesh helpers
-        // ------------------------------
-
-        private System.Windows.Media.Media3D.MeshGeometry3D CreateBoxMesh(double lx, double ly, double lz, Point3D? center = null)
-        {
-            var c = center ?? new Point3D(0, 0, 0);
-            double x0 = c.X - lx / 2, x1 = c.X + lx / 2;
-            double y0 = c.Y - ly / 2, y1 = c.Y + ly / 2;
-            double z0 = c.Z - lz / 2, z1 = c.Z + lz / 2;
-
-            var mesh = new MeshGeometry3D();
-
-            // 8 vertices
-            var p000 = new Point3D(x0, y0, z0);
-            var p001 = new Point3D(x0, y0, z1);
-            var p010 = new Point3D(x0, y1, z0);
-            var p011 = new Point3D(x0, y1, z1);
-            var p100 = new Point3D(x1, y0, z0);
-            var p101 = new Point3D(x1, y0, z1);
-            var p110 = new Point3D(x1, y1, z0);
-            var p111 = new Point3D(x1, y1, z1);
-
-            // Add 6 faces (each face: 2 triangles). We duplicate vertices per face for correct normals.
-            AddFace(mesh, p101, p100, p110, p111); // +X
-            AddFace(mesh, p000, p001, p011, p010); // -X
-            AddFace(mesh, p010, p011, p111, p110); // +Y
-            AddFace(mesh, p100, p101, p001, p000); // -Y
-            AddFace(mesh, p001, p101, p111, p011); // +Z
-            AddFace(mesh, p100, p000, p010, p110); // -Z
-
-            return mesh;
-        }
-
-        private void AddFace(MeshGeometry3D mesh, Point3D p0, Point3D p1, Point3D p2, Point3D p3)
-        {
-            int i0 = mesh.Positions.Count;
-            mesh.Positions.Add(p0);
-            mesh.Positions.Add(p1);
-            mesh.Positions.Add(p2);
-            mesh.Positions.Add(p3);
-
-            // two triangles
-            mesh.TriangleIndices.Add(i0);
-            mesh.TriangleIndices.Add(i0 + 1);
-            mesh.TriangleIndices.Add(i0 + 2);
-
-            mesh.TriangleIndices.Add(i0);
-            mesh.TriangleIndices.Add(i0 + 2);
-            mesh.TriangleIndices.Add(i0 + 3);
-
-            // simple normal (face normal)
-            Vector3D n = Vector3D.CrossProduct(p1 - p0, p2 - p0);
-            n.Normalize();
-            mesh.Normals.Add(n);
-            mesh.Normals.Add(n);
-            mesh.Normals.Add(n);
-            mesh.Normals.Add(n);
-        }
-
-        private MeshGeometry3D CreateArrowMesh()
-        {
-            // 一个很简单的小“前向箭头”：沿 +X 方向放一个小三角楔子
-            // 放在盒子前端附近：x≈+0.18，y=0，z=0
-            var mesh = new MeshGeometry3D();
-
-            var p0 = new Point3D(0.18, 0.00, 0.00); // tip
-            var p1 = new Point3D(0.10, 0.03, 0.03);
-            var p2 = new Point3D(0.10, -0.03, 0.03);
-            var p3 = new Point3D(0.10, -0.03, -0.03);
-            var p4 = new Point3D(0.10, 0.03, -0.03);
-
-            // 4 side faces around tip (triangles)
-            AddTri(mesh, p0, p1, p2);
-            AddTri(mesh, p0, p2, p3);
-            AddTri(mesh, p0, p3, p4);
-            AddTri(mesh, p0, p4, p1);
-
-            // base (two triangles)
-            AddTri(mesh, p1, p4, p3);
-            AddTri(mesh, p1, p3, p2);
-
-            return mesh;
-        }
-
-        private void AddTri(MeshGeometry3D mesh, Point3D a, Point3D b, Point3D c)
-        {
-            int i0 = mesh.Positions.Count;
-            mesh.Positions.Add(a);
-            mesh.Positions.Add(b);
-            mesh.Positions.Add(c);
-
-            mesh.TriangleIndices.Add(i0);
-            mesh.TriangleIndices.Add(i0 + 1);
-            mesh.TriangleIndices.Add(i0 + 2);
-
-            Vector3D n = Vector3D.CrossProduct(b - a, c - a);
-            if (n.Length > 1e-9) n.Normalize();
-            mesh.Normals.Add(n);
-            mesh.Normals.Add(n);
-            mesh.Normals.Add(n);
         }
 
         #endregion
@@ -1503,18 +959,25 @@ namespace IMUMoCap
             }
         }
 
-        private void Button_Click(object sender, RoutedEventArgs e)
+        private void StopMeasurementInternal()
         {
-            if (_content.DeviceState == States.ENABLED || _content.DeviceState == States.OPERATIONAL)
+            switch (_content.DeviceState)
             {
-                StartSession();
-                return;
-            }
-
-            if (_content.DeviceState == States.MEASURING)
-            {
-                StopSession();
-                return;
+                case States.MEASURING:
+                    {
+                        if (_MyWirelessMasterDevice?.gotoConfig() == true)
+                        {
+                            //ICC
+                            //_MyWirelessMasterDevice.setDeviceOptionFlags(XsDeviceOptionFlag.XDOF_EnableInrunCompassCalibration, XsDeviceOptionFlag.XDOF_None);
+                        }
+                        else
+                        {
+                            log(string.Format("Failed to stop measurement. ID: {0}", _MyWirelessMasterDevice?.deviceId().toXsString().toString()));
+                        }
+                    }
+                    break;
+                default:
+                    break;
             }
 
             setWidgetsStates();
@@ -1571,17 +1034,6 @@ namespace IMUMoCap
 
                     }
                     break;
-                default:
-                    break;
-
-            }
-            setWidgetsStates();
-        }
-
-        private void StopMeasurementInternal()
-        {
-            switch (_content.DeviceState)
-            {
                 case States.MEASURING:
                     {
                         if (_MyWirelessMasterDevice?.gotoConfig() == true)
@@ -1597,96 +1049,21 @@ namespace IMUMoCap
                     break;
                 default:
                     break;
-            }
 
+            }
             setWidgetsStates();
         }
+
+      
         private void btnClear(object sender, EventArgs e)
         {
             _content.LogList = "";
         }
         float _deltaLeftRad = 0, _deltaRightRad = 0;
-        private void Button_Click_1(object sender, RoutedEventArgs e)
-        {
-
-            float fpa = new Random().Next(-45, 45);
-            GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { Foot = ImuRole.Right, FpaDeg = fpa, };
-            TestState state = TestState.Launching;
-            if (this.txtParams.Text == "1")
-                PushToClient(result, TestState.Launching);
-            else if (this.txtParams.Text == "2")
-                PushToClient(result, TestState.Connected);
-            else if (this.txtParams.Text == "3")
-                PushToClient(result, TestState.Calibrating);
-            else if (this.txtParams.Text == "4")
-                PushToClient(result, TestState.Calibrated);
-            else if (this.txtParams.Text == "5")
-                PushToClient(result, TestState.Baseline);
-            else if (this.txtParams.Text == "6")
-                PushToClient(result, TestState.Step);
-
-            return;
-            Task.Run(() =>
-            {
-                for (int i = 0; i < 1000; i++)
-                {
-                    float fpa = new Random().Next(-45, 45);
-                    GaitTraining.Gait.StepFpaResult result = new GaitTraining.Gait.StepFpaResult() { Foot = i % 2 == 0 ? ImuRole.Left : ImuRole.Right, FpaDeg = fpa, };
-                    PushToClient(result, TestState.Step);
-
-                    Thread.Sleep(1000);
-                }
-
-            });
-
-           
-        }
-        public void SvaeCVSTofile()
-        {
-            new CvsUntil().WriteCVS("D:\\SourceCode\\IMUData\\", "IMUDataNewR.csv", datas);
-        }
-        FootStanceDetector stanceLeftDet, stanceRightDet;
-
-
+    
 
         private long _lastLogTicks = 0;
         private static readonly long OneSecondTicks = TimeSpan.FromSeconds(1).Ticks;
-
-
-
-        public void TestStance()
-        {
-            var det = new ImuGaitEventDetector
-            {
-                Fs = 100.0,
-                MinStepIntervalSec = 0.35,
-
-                // 你的新数据有 FreeAcc_*，HS 阈值建议先用 1.0~2.0 m/s^2 之间试
-                HSThreshold = 1.2,
-
-                TO_SearchStartSec = 0.10,
-                PitchRateThreshold = 1.5
-            };
-
-            var samples = det.LoadCsv("D:\\SourceCode\\IMUData\\IMUData.csv");
-            var evs = det.Detect(samples);
-
-            log($"Samples: {samples.Count}");
-            log($"HeelStrikes (HS): {evs.HeelStrikes.Count}  => StepCount≈{evs.StepCount}");
-            log($"ToeOffs (TO): {evs.ToeOffs.Count}");
-
-            for (int i = 0; i < evs.HeelStrikes.Count; i++)
-            {
-                int hs = evs.HeelStrikes[i];
-                log($"HS[{i}_{hs}] t={samples[hs].T:F3}s dynAccMag={samples[hs].DynAccMag:F3}");
-
-                if (i < evs.ToeOffs.Count)
-                {
-                    int to = evs.ToeOffs[i];
-                    log($"  TO[{i}_{hs}] t={samples[to].T:F3}s pitchRate={samples[to].PitchRate:F3} rad/s");
-                }
-            }
-        }
 
 
         private string getMsgStr(TestState sessionState)
@@ -1717,16 +1094,25 @@ namespace IMUMoCap
         }
 
         long currentPacketId = 0;
+
+        private void BtnMeasure_Click(object sender, RoutedEventArgs e)
+        {
+            StartMeasurementInternal();
+        }
+
+        private void BtnTest_Click(object sender, RoutedEventArgs e)
+        {
+
+        }
+
         private void btnCalibration_click(object sender, RoutedEventArgs e)
         {
-            _content.CalibrationState = "Calibrating";
-            pipeline.BeginCalibration();
+        
         }
 
         private void Button_Restart(object sender, RoutedEventArgs e)
         {
-            log("Restarting session...");
-            RestartSession();
+         
         }
 
         private void Button_SaveData(object sender, RoutedEventArgs e)
@@ -1737,6 +1123,7 @@ namespace IMUMoCap
                 if (int.TryParse(this.txtSampleRate.Text, out int newSampleRate) && newSampleRate > 0)
                 {
                     _sampleRateHz = newSampleRate;
+                    _imuFrameCollector.SampleRateHz = _sampleRateHz;
                     log($"Sample rate updated to {_sampleRateHz} Hz");
                 }
                 else
@@ -1744,39 +1131,23 @@ namespace IMUMoCap
                     log("Invalid sample rate. Using current rate.");
                 }
 
-                if (datas.Count == 0)
+                if (_imuSamples.Count == 0)
                 {
                     log("No data to save.");
                     return;
                 }
-                SvaeCVSTofile();
-                return;
-                // Create save dialog
                 var saveFileDialog = new Microsoft.Win32.SaveFileDialog
                 {
                     Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
                     DefaultExt = ".csv",
-                    FileName = $"IMU_Data_{DateTime.Now:yyyyMMdd_HHmmss}_{_sampleRateHz}Hz.csv"
+                    FileName = $"ImuSamples_{DateTime.Now:yyyyMMdd_HHmmss}.csv"
                 };
 
-                if (saveFileDialog.ShowDialog() == true)
-                {
-                    string? filePath = System.IO.Path.GetDirectoryName(saveFileDialog.FileName);
-                    string? fileName = System.IO.Path.GetFileName(saveFileDialog.FileName);
+                if (saveFileDialog.ShowDialog() != true)
+                    return;
 
-                    if (!string.IsNullOrEmpty(filePath) && !string.IsNullOrEmpty(fileName))
-                    {
-                        // Use existing WriteCVS method
-                        var cvsUtil = new IMUMoCap.AHRS.CvsUntil();
-                        cvsUtil.WriteCVS(filePath, fileName, datas);
-
-                        log($"Data saved to {saveFileDialog.FileName} ({datas.Count} samples at {_sampleRateHz} Hz)");
-                    }
-                    else
-                    {
-                        log("Invalid file path.");
-                    }
-                }
+                var csvUtil = new CsvUtil();
+                csvUtil.WriteImuSamplesCsv(saveFileDialog.FileName, _imuSamples);
             }
             catch (Exception ex)
             {
@@ -1784,41 +1155,12 @@ namespace IMUMoCap
             }
         }
 
-        List<RecoredData> datas = new List<RecoredData>();
-        // 在 Xsens 的 OnDataAvailable 回调中
-        void OnXsensData(ImuRole sensor, XsDataPacket packet)
+        void OnXsensData(ImuRole sensor, uint deviceId, XsDataPacket packet)
         {
-            // Update samples per frame calculation (assuming 100Hz IMU rate)
-            int imuRateHz = 100; // Xsens default rate
-            _samplesPerFrame = Math.Max(1, imuRateHz / _sampleRateHz);
-
-            _sampleCounter++;
-            
-            // Only record data at the configured sample rate
-            if (_sampleCounter >= _samplesPerFrame)
-            {
-                var rawData = new RecoredData()
-                {
-                    PackageId = packet.packetId().ToString(),
-                    quaternion = Utils.ToNumericsQuaternion(packet.orientationQuaternion()),
-                    Accelerate = Utils.ToNumericsVector3(packet.calibratedAcceleration()),
-                    Orientation = Utils.ToNumericsVector3(packet.calibratedGyroscopeData()),
-                    MadgwickAHRS = Utils.ToNumericsVector3(packet.calibratedMagneticField())
-                };
-                datas.Add(rawData);
-                _sampleCounter = 0; // Reset counter
-            }
-
-            var raw = new ImuRawData(
-                Utils.ToNumericsQuaternion(packet.orientationQuaternion()),
-                Utils.ToNumericsVector3(packet.calibratedAcceleration()),
-                Utils.ToNumericsVector3(packet.calibratedGyroscopeData()),
-                Utils.ToNumericsVector3(packet.calibratedMagneticField()));
-            pipeline.OnImuData(sensor, packet.packetId(), raw);
-
-            //aggregator.OnImuData(sensor, packet.packetId(), raw);
+            // One callback packet becomes a single-IMU sample, then a synchronized 3-IMU frame.
+            var (sample, _) = _imuFrameCollector.Process(sensor, deviceId, packet);
+            _imuSamples.Add(sample);
         }
-
 
     }
 }

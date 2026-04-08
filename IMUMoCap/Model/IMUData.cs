@@ -5,7 +5,7 @@ using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace IMUMoCap.AHRS
+namespace IMUMoCap.Model
 {
     public class IMUData
     {

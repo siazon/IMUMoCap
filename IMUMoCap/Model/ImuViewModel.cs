@@ -1,4 +1,5 @@
-﻿using IMUMoCap.Methods;
+﻿using IMUMoCap;
+using IMUMoCap.Methods;
 using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;

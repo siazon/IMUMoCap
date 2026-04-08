@@ -25,15 +25,15 @@
             <RowDefinition />
         </Grid.RowDefinitions>
         <StackPanel Orientation="Horizontal" Grid.ColumnSpan="10">
-            <Button Click="Button_Click">Measure</Button>
+            <Button Click="BtnMeasure_Click">Measure</Button>
             <Button Click="btnCalibration_click" Margin="10">Calibration</Button>
             <Button Click="Button_Restart" Margin="10">Restart Session</Button>
             <Button Click="Button_SaveData" Margin="10">Save Data</Button>
-            <Button Click="Button_Click_1">Test</Button>
             <StackPanel Orientation="Horizontal" Margin="10 0 0 0" VerticalAlignment="Center">
                 <TextBlock Text="Sample Rate (Hz):" VerticalAlignment="Center" Margin="0 0 5 0"/>
                 <TextBox x:Name="txtSampleRate" Width="60" Height="25" Text="10" VerticalAlignment="Center"/>
             </StackPanel>
+            <Button Click="BtnTest_Click">Test</Button>
             <TextBox x:Name="txtParams" Width="100" Height="30" Margin="10 0 0 0"></TextBox>
         </StackPanel>
         <!-- Row 1: Status + Left/Right FPA -->
