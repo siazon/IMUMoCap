@@ -30,10 +30,10 @@ namespace IMUMoCap.Services
         private readonly Dictionary<XsDevice, MyMtwCallback> _measuringMtws = new();
         private readonly object _measuringMtwsLock = new();
         private Dictionary<XsDevice, MyMtwCallback>.Enumerator _nextBatteryRequest;
+        private bool _batteryEnumeratorInitialized = false;
 
-        // ── Internal connected-device tracking (mirrors old ConnectedMtws list) ──
-        private readonly List<string> _connectedMtwIdStrs = new();
-        private readonly object _connectedMtwsLock = new();
+        // ── Per-device locks for cross-thread data mutations ───────────────────
+        private readonly ConcurrentDictionary<uint, object> _mtwLocks = new();
 
         // ── Events (fired on SDK/background threads — callers must marshal to UI) ──
         public event Action<string>? Log;
@@ -45,7 +45,7 @@ namespace IMUMoCap.Services
         public event Action<BatteryEvent>? BatteryLevelChanged;
 
         // ── State ──────────────────────────────────────────────────────────────
-        private States _state = States.DETECTING;
+        private volatile States _state = States.DETECTING;
         public States State
         {
             get => _state;
@@ -182,6 +182,15 @@ namespace IMUMoCap.Services
 
             ClearMeasuringMtws();
 
+            _callbackHandler.MtwWireless            -= OnMtwWireless;
+            _callbackHandler.MtwDisconnected        -= OnMtwDisconnected;
+            _callbackHandler.MeasurementStarted     -= OnMeasurementStarted;
+            _callbackHandler.MeasurementStopped     -= OnMeasurementStopped;
+            _callbackHandler.DeviceError            -= OnDeviceError;
+            _callbackHandler.WaitingForRecordingStart -= OnWaitingForRecordingStart;
+            _callbackHandler.RecordingStarted       -= OnRecordingStarted;
+            _callbackHandler.ProgressUpdate         -= OnProgressUpdate;
+
             _myxda.WirelessMasterDetected -= OnWirelessMasterDetected;
             _myxda.DockedMtwDetected -= OnDockedMtwDetected;
             _myxda.MtwUndocked -= OnMtwUndocked;
@@ -300,16 +309,7 @@ namespace IMUMoCap.Services
             uint id = e.DeviceId.legacyDeviceId();
             string mtwIdStr = e.DeviceId.toXsString().toString();
 
-            bool isNew;
-            int totalConnected;
-            lock (_connectedMtwsLock)
-            {
-                isNew = !_connectedMtwIdStrs.Contains(mtwIdStr);
-                if (isNew)
-                    _connectedMtwIdStrs.Add(mtwIdStr);
-                totalConnected = _connectedMtwIdStrs.Count;
-            }
-
+            bool isNew = !_mtwData.ContainsKey(id);
             if (isNew)
             {
                 var connectedMtwData = new ConnectedMTwData
@@ -319,6 +319,7 @@ namespace IMUMoCap.Services
                 };
                 _mtwData[id] = connectedMtwData;
 
+                int totalConnected = _mtwData.Count;
                 Log?.Invoke(string.Format("Connected MTw list ({0}):{1}", totalConnected, mtwIdStr));
                 MtwConnected?.Invoke(new MtwConnectedEvent(id, mtwIdStr, totalConnected));
             }
@@ -329,17 +330,11 @@ namespace IMUMoCap.Services
             uint id = e.DeviceId.legacyDeviceId();
             string mtwIdStr = e.DeviceId.toXsString().toString();
 
-            bool wasPresent;
-            int totalConnected;
-            lock (_connectedMtwsLock)
-            {
-                wasPresent = _connectedMtwIdStrs.Remove(mtwIdStr);
-                totalConnected = _connectedMtwIdStrs.Count;
-            }
-
+            bool wasPresent = _mtwData.TryRemove(id, out _);
             if (wasPresent)
             {
-                _mtwData.TryRemove(id, out _);
+                _mtwLocks.TryRemove(id, out _);
+                int totalConnected = _mtwData.Count;
                 Log?.Invoke(string.Format("MTw Disconnected. ID: {0}", mtwIdStr));
                 Log?.Invoke(string.Format("Connected MTw list ({0}):", totalConnected));
                 MtwDisconnected?.Invoke(new MtwDisconnectedEvent(id, mtwIdStr, totalConnected));
@@ -376,6 +371,7 @@ namespace IMUMoCap.Services
                                 }
                             }
                             _nextBatteryRequest = _measuringMtws.GetEnumerator();
+                            _batteryEnumeratorInitialized = true;
                         }
                         State = States.MEASURING;
                     }
@@ -455,13 +451,7 @@ namespace IMUMoCap.Services
             uint deviceId = e.Device.deviceId().legacyDeviceId();
             string mtwIdStr = e.Device.deviceId().toXsString().toString();
 
-            // Check the device is still in the connected list
-            bool isKnown;
-            lock (_connectedMtwsLock)
-            {
-                isKnown = _connectedMtwIdStrs.Contains(mtwIdStr);
-            }
-            if (!isKnown)
+            if (!_mtwData.TryGetValue(deviceId, out var mtwData))
             {
                 Log?.Invoke(string.Format("Obsolete data received of an MTw {0} that's no longer in the list.", mtwIdStr));
                 return;
@@ -472,46 +462,47 @@ namespace IMUMoCap.Services
                 Log?.Invoke(string.Format("Packet received of an MTw {0} not containing SDI data.", mtwIdStr));
             }
 
-            if (!_mtwData.TryGetValue(deviceId, out var mtwData))
-                return;
-
-            if (e.Packet.containsSdiData())
+            var mtwLock = _mtwLocks.GetOrAdd(deviceId, _ => new object());
+            lock (mtwLock)
             {
-                XsSdiData sdiData = e.Packet.sdiData();
-                mtwData.XsQuaternion = sdiData.orientationIncrement();
-            }
+                if (e.Packet.containsSdiData())
+                {
+                    XsSdiData sdiData = e.Packet.sdiData();
+                    mtwData.XsQuaternion = sdiData.orientationIncrement();
+                }
 
-            if (e.Packet.containsRssi())
-                mtwData._rssi = e.Packet.rssi();
+                if (e.Packet.containsRssi())
+                    mtwData._rssi = e.Packet.rssi();
 
-            if (e.Packet.containsOrientation())
-            {
-                XsEuler oriEuler = e.Packet.orientationEuler();
-                mtwData._orientation = oriEuler;
-            }
+                if (e.Packet.containsOrientation())
+                {
+                    XsEuler oriEuler = e.Packet.orientationEuler();
+                    mtwData._orientation = oriEuler;
+                }
 
-            // Determine effective update rate percentage
-            int frameSkips;
-            if (e.Packet.frameRange().last() > e.Packet.frameRange().first())
-            {
-                frameSkips = e.Packet.frameRange().last() - e.Packet.frameRange().first() - 1;
-            }
-            else
-            {
-                // Rollover (internal framecounter is unsigned 16 bits integer)
-                frameSkips = 65535 + e.Packet.frameRange().last() - e.Packet.frameRange().first() - 1;
-            }
+                // Determine effective update rate percentage
+                int frameSkips;
+                if (e.Packet.frameRange().last() > e.Packet.frameRange().first())
+                {
+                    frameSkips = e.Packet.frameRange().last() - e.Packet.frameRange().first() - 1;
+                }
+                else
+                {
+                    // Rollover (internal framecounter is unsigned 16 bits integer)
+                    frameSkips = 65535 + e.Packet.frameRange().last() - e.Packet.frameRange().first() - 1;
+                }
 
-            mtwData._frameSkipsList.Add(frameSkips);
-            mtwData._sumFrameSkips = mtwData._sumFrameSkips + (uint)frameSkips;
-            mtwData._effectiveUpdateRate = (int)(100 * (1 - (float)mtwData._sumFrameSkips /
-                (float)(mtwData._frameSkipsList.Count + mtwData._sumFrameSkips)));
+                mtwData._frameSkipsList.Add(frameSkips);
+                mtwData._sumFrameSkips = mtwData._sumFrameSkips + (uint)frameSkips;
+                mtwData._effectiveUpdateRate = (int)(100 * (1 - (float)mtwData._sumFrameSkips /
+                    (float)(mtwData._frameSkipsList.Count + mtwData._sumFrameSkips)));
 
-            while (mtwData._frameSkipsList.Count + mtwData._sumFrameSkips > 99 &&
-                   mtwData._frameSkipsList.Count > 0)
-            {
-                mtwData._sumFrameSkips = mtwData._sumFrameSkips - (uint)mtwData._frameSkipsList[0];
-                mtwData._frameSkipsList.RemoveAt(0);
+                while (mtwData._frameSkipsList.Count + mtwData._sumFrameSkips > 99 &&
+                       mtwData._frameSkipsList.Count > 0)
+                {
+                    mtwData._sumFrameSkips = mtwData._sumFrameSkips - (uint)mtwData._frameSkipsList[0];
+                    mtwData._frameSkipsList.RemoveAt(0);
+                }
             }
 
             ImuViewModel slot = _registry.GetOrAssign(deviceId);
@@ -523,22 +514,13 @@ namespace IMUMoCap.Services
             uint id = e.DeviceId.legacyDeviceId();
             string mtwIdStr = e.DeviceId.toXsString().toString();
 
-            bool isKnown;
-            lock (_connectedMtwsLock)
-            {
-                isKnown = _connectedMtwIdStrs.Contains(mtwIdStr);
-            }
-            if (!isKnown)
+            if (!_mtwData.TryGetValue(id, out var data))
             {
                 Log?.Invoke(string.Format("Obsolete data received of an MTw {0} that's no longer in the list.", mtwIdStr));
                 return;
             }
 
-            if (_mtwData.TryGetValue(id, out var data))
-            {
-                data._batteryLevel = e.Level;
-            }
-
+            data._batteryLevel = e.Level;
             BatteryLevelChanged?.Invoke(new BatteryEvent(id, e.Level));
         }
 
@@ -553,7 +535,11 @@ namespace IMUMoCap.Services
                     item.Key.clearCallbackHandlers();
                 }
                 _measuringMtws.Clear();
-                try { _nextBatteryRequest.Dispose(); } catch { }
+                if (_batteryEnumeratorInitialized)
+                {
+                    _nextBatteryRequest.Dispose();
+                    _batteryEnumeratorInitialized = false;
+                }
             }
         }
 
