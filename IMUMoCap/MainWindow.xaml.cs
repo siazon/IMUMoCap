@@ -157,8 +157,8 @@ namespace IMUMoCap
 
         private void OnDataPacket(DataPacketEvent ev)
         {
-            var mtwData = _deviceManager.GetMtwData(ev.DeviceId);
-            if (mtwData == null) return;
+            var snap = _deviceManager.GetMtwDataSnapshot(ev.DeviceId);
+            if (snap == null) return;
 
             if (ev.Packet.containsOrientation())
             {
@@ -171,24 +171,27 @@ namespace IMUMoCap
                 _content.SelectedMtw < _content.ConnectedMtws.Count &&
                 _content.ConnectedMtws[_content.SelectedMtw] == mtwIdStr)
             {
-                _content.XsTime = $"{mtwIdStr} | {mtwData._orientation.x().RoundTwo()}, " +
-                                  $"{mtwData._orientation.y().RoundTwo()}, {mtwData._orientation.z().RoundTwo()}";
+                _content.XsTime = $"{mtwIdStr} | {snap.Orientation.x().RoundTwo()}, " +
+                                  $"{snap.Orientation.y().RoundTwo()}, {snap.Orientation.z().RoundTwo()}";
 
                 if (_content.RotationByDegree)
                     actionQueue.Enqueue([
-                        mtwData._orientation.x().DegreesToRadians(),
-                        mtwData._orientation.y().DegreesToRadians(),
-                        mtwData._orientation.z().DegreesToRadians(), 1]);
+                        snap.Orientation.x().DegreesToRadians(),
+                        snap.Orientation.y().DegreesToRadians(),
+                        snap.Orientation.z().DegreesToRadians(), 1]);
                 else
                     actionQueue.Enqueue([
-                        mtwData.XsQuaternion.x(), mtwData.XsQuaternion.y(),
-                        mtwData.XsQuaternion.z(), mtwData.XsQuaternion.w()]);
+                        snap.Quaternion.x(), snap.Quaternion.y(),
+                        snap.Quaternion.z(), snap.Quaternion.w()]);
             }
 
             OnXsensData(ev.Slot.Role, ev.DeviceId, ev.Packet);
         }
 
-        private void OnBattery(BatteryEvent ev) { }
+        private void OnBattery(BatteryEvent ev)
+        {
+            // Battery UI display not implemented; extend here to show battery level per slot.
+        }
 
         protected override void OnClosed(EventArgs e)
         {

@@ -12,6 +12,7 @@ namespace IMUMoCap.Services
     public record DataPacketEvent(uint DeviceId, ImuViewModel Slot, XsDataPacket Packet);
     public record BatteryEvent(uint DeviceId, int Level);
     public record UpdateRatesEvent(List<string> Rates, int SelectedIndex);
+    public record MtwDataSnapshot(XsEuler Orientation, XsQuaternion Quaternion, int Rssi, int EffectiveUpdateRate);
 
     public sealed class ImuDeviceManager : IDisposable
     {
@@ -170,6 +171,16 @@ namespace IMUMoCap.Services
         {
             _mtwData.TryGetValue(deviceId, out var data);
             return data;
+        }
+
+        public MtwDataSnapshot? GetMtwDataSnapshot(uint deviceId)
+        {
+            if (!_mtwData.TryGetValue(deviceId, out var d)) return null;
+            var lockObj = _mtwLocks.GetOrAdd(deviceId, _ => new object());
+            lock (lockObj)
+            {
+                return new MtwDataSnapshot(d._orientation, d.XsQuaternion, d._rssi, d._effectiveUpdateRate);
+            }
         }
 
         public void Dispose()
