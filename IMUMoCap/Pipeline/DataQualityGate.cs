@@ -17,8 +17,8 @@ namespace IMUMoCap.Pipeline
     public sealed class DataQualityGate
     {
         // 可调参数（实验前根据环境设定，不需要运行时动态修改）
-        public int   RssiThresholdDbm        { get; set; } = -85;
-        public float AccDeltaThreshold_ms2   { get; set; } = 50f;   // m/s²
+        public int   RssiThresholdDbm        { get; set; } = -90;
+        public float AccDeltaThreshold_ms2   { get; set; } = 100f;  // m/s²  (raised: stomp delta ~70 m/s²)
         public float GyroDeltaThreshold_rads { get; set; } = 20f;   // rad/s
 
         private ImuSampleFrame? _prevPelvis;

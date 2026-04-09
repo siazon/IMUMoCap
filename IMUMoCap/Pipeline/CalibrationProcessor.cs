@@ -167,13 +167,13 @@ namespace IMUMoCap.Pipeline
                 && f.RightFoot.RateOfTurn.LengthSquared() < gyroThSq;
         }
 
-        /// <summary>垂直加速度 = 自由加速度的 Y 分量绝对值（Xsens 世界系 Y 轴朝上）</summary>
+        /// <summary>垂直加速度 = 自由加速度的 Z 分量绝对值（Xsens 世界系 Z 轴朝上）</summary>
         private static float GetVerticalAcceleration(ImuSampleFrame f)
         {
             if (f.HasFreeAcceleration)
-                return MathF.Abs(f.FreeAcceleration.Y);
+                return MathF.Abs(f.FreeAcceleration.Z);
             if (f.HasAcceleration)
-                return MathF.Abs(f.Acceleration.Y - 9.81f);
+                return MathF.Abs(f.Acceleration.Z - 9.81f);
             return 0f;
         }
 
