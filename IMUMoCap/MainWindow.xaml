@@ -1,4 +1,4 @@
-﻿<Window
+<Window
     x:Class="IMUMoCap.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -6,234 +6,260 @@
     xmlns:local="clr-namespace:IMUMoCap"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Title="IMUMoCap"
-    Width="800"
-    Height="450"
+    Width="1280"
+    Height="800"
     Style="{StaticResource MaterialDesignWindow}"
     WindowState="Maximized"
     mc:Ignorable="d">
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="8*" />
-            <ColumnDefinition Width="8*" />
-            <ColumnDefinition Width="8*" />
-            <ColumnDefinition Width="Auto" />
-            <ColumnDefinition Width="4*" />
-        </Grid.ColumnDefinitions>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition />
-            <RowDefinition />
-        </Grid.RowDefinitions>
-        <StackPanel Orientation="Horizontal" Grid.ColumnSpan="10">
-            <Button Click="BtnMeasure_Click">Measure</Button>
-            <Button Click="btnCalibration_click" Margin="10">Calibration</Button>
-            <Button Click="Button_Restart" Margin="10">Restart Session</Button>
-            <Button Click="Button_SaveData" Margin="10">Save Data</Button>
-            <StackPanel Orientation="Horizontal" Margin="10 0 0 0" VerticalAlignment="Center">
-                <TextBlock Text="Sample Rate (Hz):" VerticalAlignment="Center" Margin="0 0 5 0"/>
-                <TextBox x:Name="txtSampleRate" Width="60" Height="25" Text="10" VerticalAlignment="Center"/>
-            </StackPanel>
-            <Button Click="BtnTest_Click">Test</Button>
-            <TextBox x:Name="txtParams" Width="100" Height="30" Margin="10 0 0 0"></TextBox>
-        </StackPanel>
-        <!-- Row 1: Status + Left/Right FPA -->
-        <Grid Grid.Row="1" Grid.ColumnSpan="3" Margin="12,6">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="8*" />
-                <ColumnDefinition Width="8*" />
-                <ColumnDefinition Width="8*" />
-            </Grid.ColumnDefinitions>
 
-            <!-- Col 0: device & system status -->
-            <Border Grid.Column="0" Padding="12" CornerRadius="8" Background="#11000000">
-                <StackPanel>
-                    <TextBlock Text="{Binding DeviceState}" FontSize="18" FontWeight="SemiBold"/>
-                    <TextBlock Text="{Binding StatusLabel}" FontSize="24" FontWeight="Bold" Margin="0,6,0,12"/>
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </Window.Resources>
 
-                    <!-- 推荐加的状态信息（你在 ViewModel 里补对应属性即可） -->
-                    <UniformGrid Columns="2" Rows="3">
-                        <TextBlock Text="Calib:" Opacity="0.7"/>
-                        <TextBlock Text="{Binding CalibrationState}"/>
+    <!-- Root: right panel (fixed 270px) | left panel (flex) -->
+    <DockPanel LastChildFill="True">
 
-                        <TextBlock Text="ProgDir:" Opacity="0.7"/>
-                        <TextBlock Text="{Binding ProgDirDeg, StringFormat={}{0:F1}°}"/>
+        <!-- ── RIGHT PANEL ──────────────────────────────────────────────────── -->
+        <Border DockPanel.Dock="Right" Width="270"
+                BorderBrush="#22000000" BorderThickness="1,0,0,0"
+                Background="#F5F5F5">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="12">
 
-                        <TextBlock Text="Gate Reject:" Opacity="0.7"/>
-                        <TextBlock Text="{Binding PelvisRejectStreak}"/>
-                    </UniformGrid>
+                    <!-- Toggle params -->
+                    <Button x:Name="BtnToggleParams" Click="BtnToggleParams_Click"
+                            Margin="0,0,0,6" HorizontalAlignment="Stretch">隐藏参数</Button>
 
-                    <UniformGrid Columns="2" Rows="2" Margin="0,8,0,0">
-                        <TextBlock Text="Stance L/R:" Opacity="0.7"/>
-                        <TextBlock Text="{Binding StanceSummary}"/>
+                    <!-- Params section (collapsible) -->
+                    <StackPanel x:Name="ParamsPanel"
+                                Visibility="{Binding ParamsPanelVisible, Converter={StaticResource BoolToVis}}">
 
-                        <!--<TextBlock Text="PacketId:" Opacity="0.7"/>
-                        <TextBlock Text="{Binding PacketId}"/>-->
-                    </UniformGrid>
+                        <TextBlock Text="参数调节" FontWeight="Bold" Margin="0,0,0,8"/>
+
+                        <!-- 1. Stomp threshold -->
+                        <TextBlock Text="{Binding StompThreshold, StringFormat='跺脚阈值: {0:F0} m/s²'}" FontSize="11"/>
+                        <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
+                                Value="{Binding StompThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                        <!-- 2. Static gyro threshold -->
+                        <TextBlock Text="{Binding StaticGyroThreshold, StringFormat='静止陀螺仪阈值: {0:F2} rad/s'}" FontSize="11"/>
+                        <Slider Minimum="0.05" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                Value="{Binding StaticGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                        <!-- 3. Stance free-acc threshold -->
+                        <TextBlock Text="{Binding StanceFreeAccThreshold, StringFormat='支撑相加速度阈值: {0:F1} m/s²'}" FontSize="11"/>
+                        <Slider Minimum="0.5" Maximum="5.0" SmallChange="0.1" LargeChange="0.5"
+                                Value="{Binding StanceFreeAccThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                        <!-- 4. Stance gyro threshold -->
+                        <TextBlock Text="{Binding StanceGyroThreshold, StringFormat='支撑相陀螺仪阈值: {0:F1} rad/s'}" FontSize="11"/>
+                        <Slider Minimum="0.1" Maximum="3.0" SmallChange="0.05" LargeChange="0.2"
+                                Value="{Binding StanceGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                        <!-- 5. PD confidence threshold -->
+                        <TextBlock Text="{Binding PdConfidenceThreshold, StringFormat='PD置信度阈值: {0:F2}'}" FontSize="11"/>
+                        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                Value="{Binding PdConfidenceThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                        <!-- 6. PD stability threshold -->
+                        <TextBlock Text="{Binding PdStabilityThreshold, StringFormat='PD稳定度阈值: {0:F2}'}" FontSize="11"/>
+                        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                Value="{Binding PdStabilityThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                        <!-- 7. Min baseline steps -->
+                        <TextBlock Text="{Binding MinBaselineSteps, StringFormat='最少Baseline步数: {0}'}" FontSize="11"/>
+                        <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
+                                IsSnapToTickEnabled="True" TickFrequency="1"
+                                Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,12"/>
+
+                    </StackPanel>
+
+                    <Separator Margin="0,4,0,8"/>
+
+                    <!-- Action buttons -->
+                    <Button x:Name="BtnRestartCal" Click="BtnRestartCal_Click"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            ToolTip="重置流水线并重新等待跺脚触发校准">
+                        重新开始校准
+                    </Button>
+
+                    <Button x:Name="BtnSaveDiagnostics" Click="BtnSaveDiagnostics_Click"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            ToolTip="将当前诊断数据导出为 CSV，供 AI 分析">
+                        保存诊断数据 (CSV)
+                    </Button>
+
+                    <Separator Margin="0,4,0,8"/>
+
+                    <!-- Legacy controls -->
+                    <Button Click="BtnMeasure_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Measure</Button>
+                    <Button Click="BtnTest_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Test</Button>
+                    <Button Click="btnClear" HorizontalAlignment="Stretch" Margin="0,0,0,4">Clear Log</Button>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <TextBlock Text="Sample Hz:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"/>
+                        <TextBox x:Name="txtSampleRate" Width="50" Height="24" Text="10"/>
+                    </StackPanel>
+                    <Button Click="Button_SaveData" HorizontalAlignment="Stretch" Margin="0,4,0,0">Save IMU Samples</Button>
+
                 </StackPanel>
-            </Border>
+            </ScrollViewer>
+        </Border>
 
-            <!-- Col 1: Left FPA -->
-            <Border Grid.Column="1" Padding="12" CornerRadius="8" Background="#11000000" Margin="8,0">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <TextBlock Text="Left FPA" FontSize="18" Opacity="0.75" HorizontalAlignment="Center"/>
-                    <TextBlock Text="{Binding LeftFpaDeg, StringFormat={}{0:F1}°}"
-                       FontSize="54" FontWeight="Bold" HorizontalAlignment="Center"/>
-                    <TextBlock Text="{Binding LeftFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
-                </StackPanel>
-            </Border>
+        <!-- ── LEFT PANEL ───────────────────────────────────────────────────── -->
+        <DockPanel LastChildFill="True">
 
-            <!-- Col 2: Right FPA -->
-            <Border Grid.Column="2" Padding="12" CornerRadius="8" Background="#11000000" Margin="8,0">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <TextBlock Text="Right FPA" FontSize="18" Opacity="0.75" HorizontalAlignment="Center"/>
-                    <TextBlock Text="{Binding RightFpaDeg, StringFormat={}{0:F1}°}"
-                       FontSize="54" FontWeight="Bold" HorizontalAlignment="Center"/>
-                    <TextBlock Text="{Binding RightFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
-                </StackPanel>
-            </Border>
-        </Grid>
-        <GridSplitter
-            Grid.RowSpan="5"
-            Grid.Column="3"
-            Width="3"
-            HorizontalAlignment="Stretch"
-            VerticalAlignment="Stretch"
-            ShowsPreview="True" />
-        <StackPanel Grid.Column="4"  Orientation="Horizontal">
-            <CheckBox Grid.Column="2" IsChecked="{Binding IsScollerToEnd}">Scroll To End</CheckBox>
-            <Button Grid.Column="2"  Click="btnClear" Margin="20">Clear</Button>
-        </StackPanel>
-  
-        <TextBox
-            x:Name="LogBox"
-            Grid.Row="1"
-            Grid.RowSpan="10"
-            Grid.Column="4"
-            AcceptsReturn="True"
-            IsReadOnly="True"
-            Text="{Binding LogList}"
-            TextWrapping="Wrap" />
+            <!-- Status grid (top, always visible) -->
+            <Grid DockPanel.Dock="Top" Margin="8,6,8,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
 
-        <Grid Grid.Row="2" >
-            <Viewport3D   Grid.Column="1">
+                <!-- Col 0: System status -->
+                <Border Grid.Column="0" Padding="10" CornerRadius="6" Background="#11000000" Margin="0,0,4,0">
+                    <StackPanel>
+                        <TextBlock Text="{Binding DeviceState}" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding StatusLabel}" FontSize="16" FontWeight="Bold"
+                                   Margin="0,4,0,8" TextWrapping="Wrap"/>
+                        <UniformGrid Columns="2">
+                            <TextBlock Text="校准状态:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="{Binding CalibrationState}" FontSize="11"/>
+                            <TextBlock Text="行进方向:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="{Binding ProgDirDeg, StringFormat={}{0:F1}°}" FontSize="11"/>
+                            <TextBlock Text="帧拒绝:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="{Binding PelvisRejectStreak}" FontSize="11"/>
+                            <TextBlock Text="步态:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="{Binding StanceSummary}" FontSize="11" TextWrapping="Wrap"/>
+                        </UniformGrid>
 
-                <!-- Camera -->
-                <Viewport3D.Camera>
-                    <PerspectiveCamera  
-                                   Position="2,1.2,2"
-                                   LookDirection="-2,-1.2,-2"
-                                   UpDirection="0,1,0"
-                                   FieldOfView="45"/>
-                </Viewport3D.Camera>
+                        <!-- IMU connection indicators -->
+                        <StackPanel Margin="0,8,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse x:Name="PelvisStatusDot" Width="10" Height="10" Fill="Gray"
+                                         Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="PelvisStatusText" Text="Pelvis: --" FontSize="11"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                <Ellipse x:Name="LeftStatusDot" Width="10" Height="10" Fill="Gray"
+                                         Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="LeftStatusText" Text="Left: --" FontSize="11"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
+                                <Ellipse x:Name="RightStatusDot" Width="10" Height="10" Fill="Gray"
+                                         Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="RightStatusText" Text="Right: --" FontSize="11"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
 
-                <!-- Light -->
-                <ModelVisual3D>
-                    <ModelVisual3D.Content>
-                        <Model3DGroup>
-                            <AmbientLight Color="#666666"/>
-                            <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
-                            <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
-                        </Model3DGroup>
-                    </ModelVisual3D.Content>
-                </ModelVisual3D>
+                <!-- Col 1: Left FPA -->
+                <Border Grid.Column="1" Padding="10" CornerRadius="6" Background="#11000000" Margin="4,0">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock Text="Left FPA" FontSize="14" Opacity="0.75" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding LeftFpaDeg, StringFormat={}{0:F1}°}"
+                                   FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding LeftFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
 
-                <!-- World axes (simple lines) -->
-                <ModelVisual3D x:Name="AxesVisual"/>
+                <!-- Col 2: Right FPA -->
+                <Border Grid.Column="2" Padding="10" CornerRadius="6" Background="#11000000" Margin="4,0,0,0">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock Text="Right FPA" FontSize="14" Opacity="0.75" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding RightFpaDeg, StringFormat={}{0:F1}°}"
+                                   FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding RightFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
 
-                <!-- IMU model -->
-                <ModelVisual3D x:Name="ImuVisual"/>
+            <!-- Log toggle + log panel (bottom) -->
+            <Button x:Name="BtnToggleLog" DockPanel.Dock="Bottom"
+                    Click="BtnToggleLog_Click"
+                    HorizontalAlignment="Left" Margin="8,2,8,2" Padding="8,2">隐藏日志</Button>
 
-            </Viewport3D>
+            <TextBox
+                x:Name="LogBox"
+                DockPanel.Dock="Bottom"
+                Height="160"
+                AcceptsReturn="True"
+                IsReadOnly="True"
+                Text="{Binding LogList}"
+                TextWrapping="Wrap"
+                VerticalScrollBarVisibility="Auto"
+                Margin="8,0,8,2"
+                Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
 
-            <!-- IMU Status Indicator -->
-            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
-                Background="#AA000000" Padding="8" CornerRadius="4">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Ellipse x:Name="PelvisStatusDot" Width="12" Height="12" Fill="Gray" Margin="0,0,6,0"/>
-                    <TextBlock x:Name="PelvisStatusText" Text="Pelvis: Disconnected" Foreground="White" FontSize="12"/>
-                </StackPanel>
-            </Border>
-        </Grid>
-        <Grid Grid.Row="2" Grid.Column="1">
-            <Viewport3D   Grid.Column="1">
+            <!-- 3D viewports (fill remaining space) -->
+            <UniformGrid Rows="1" Columns="3">
 
-                <!-- Camera -->
-                <Viewport3D.Camera>
-                    <PerspectiveCamera  
-                                   Position="2,1.2,2"
-                                   LookDirection="-2,-1.2,-2"
-                                   UpDirection="0,1,0"
-                                   FieldOfView="45"/>
-                </Viewport3D.Camera>
+                <!-- Pelvis viewport -->
+                <Grid>
+                    <Viewport3D>
+                        <Viewport3D.Camera>
+                            <PerspectiveCamera Position="2,1.2,2" LookDirection="-2,-1.2,-2"
+                                               UpDirection="0,1,0" FieldOfView="45"/>
+                        </Viewport3D.Camera>
+                        <ModelVisual3D>
+                            <ModelVisual3D.Content>
+                                <Model3DGroup>
+                                    <AmbientLight Color="#666666"/>
+                                    <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
+                                    <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
+                                </Model3DGroup>
+                            </ModelVisual3D.Content>
+                        </ModelVisual3D>
+                        <ModelVisual3D x:Name="AxesVisual"/>
+                        <ModelVisual3D x:Name="ImuVisual"/>
+                    </Viewport3D>
+                </Grid>
 
-                <!-- Light -->
-                <ModelVisual3D>
-                    <ModelVisual3D.Content>
-                        <Model3DGroup>
-                            <AmbientLight Color="#666666"/>
-                            <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
-                            <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
-                        </Model3DGroup>
-                    </ModelVisual3D.Content>
-                </ModelVisual3D>
+                <!-- Left foot viewport -->
+                <Grid>
+                    <Viewport3D>
+                        <Viewport3D.Camera>
+                            <PerspectiveCamera Position="2,1.2,2" LookDirection="-2,-1.2,-2"
+                                               UpDirection="0,1,0" FieldOfView="45"/>
+                        </Viewport3D.Camera>
+                        <ModelVisual3D>
+                            <ModelVisual3D.Content>
+                                <Model3DGroup>
+                                    <AmbientLight Color="#666666"/>
+                                    <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
+                                    <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
+                                </Model3DGroup>
+                            </ModelVisual3D.Content>
+                        </ModelVisual3D>
+                        <ModelVisual3D x:Name="AxesVisual1"/>
+                        <ModelVisual3D x:Name="ImuVisual1"/>
+                    </Viewport3D>
+                </Grid>
 
-                <!-- World axes (simple lines) -->
-                <ModelVisual3D x:Name="AxesVisual1"/>
+                <!-- Right foot viewport -->
+                <Grid>
+                    <Viewport3D>
+                        <Viewport3D.Camera>
+                            <PerspectiveCamera Position="2,1.2,2" LookDirection="-2,-1.2,-2"
+                                               UpDirection="0,1,0" FieldOfView="45"/>
+                        </Viewport3D.Camera>
+                        <ModelVisual3D>
+                            <ModelVisual3D.Content>
+                                <Model3DGroup>
+                                    <AmbientLight Color="#666666"/>
+                                    <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
+                                    <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
+                                </Model3DGroup>
+                            </ModelVisual3D.Content>
+                        </ModelVisual3D>
+                        <ModelVisual3D x:Name="AxesVisual12"/>
+                        <ModelVisual3D x:Name="ImuVisual12"/>
+                    </Viewport3D>
+                </Grid>
 
-                <!-- IMU model -->
-                <ModelVisual3D x:Name="ImuVisual1"/>
+            </UniformGrid>
 
-            </Viewport3D>
-
-            <!-- IMU Status Indicator -->
-            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
-                Background="#AA000000" Padding="8" CornerRadius="4">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Ellipse x:Name="LeftStatusDot" Width="12" Height="12" Fill="Gray" Margin="0,0,6,0"/>
-                    <TextBlock x:Name="LeftStatusText" Text="Left: Disconnected" Foreground="White" FontSize="12"/>
-                </StackPanel>
-            </Border>
-        </Grid>
-        <Grid Grid.Row="2" Grid.Column="2">
-            <Viewport3D   Grid.Column="1">
-
-                <!-- Camera -->
-                <Viewport3D.Camera>
-                    <PerspectiveCamera  
-                            Position="2,1.2,2"
-                            LookDirection="-2,-1.2,-2"
-                            UpDirection="0,1,0"
-                            FieldOfView="45"/>
-                </Viewport3D.Camera>
-
-                <!-- Light -->
-                <ModelVisual3D>
-                    <ModelVisual3D.Content>
-                        <Model3DGroup>
-                            <AmbientLight Color="#666666"/>
-                            <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
-                            <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
-                        </Model3DGroup>
-                    </ModelVisual3D.Content>
-                </ModelVisual3D>
-
-                <!-- World axes (simple lines) -->
-                <ModelVisual3D x:Name="AxesVisual12"/>
-
-                <!-- IMU model -->
-                <ModelVisual3D x:Name="ImuVisual12"/>
-
-            </Viewport3D>
-
-            <!-- IMU Status Indicator -->
-            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12"
-                Background="#AA000000" Padding="8" CornerRadius="4">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Ellipse x:Name="RightStatusDot" Width="12" Height="12" Fill="Gray" Margin="0,0,6,0"/>
-                    <TextBlock x:Name="RightStatusText" Text="Right: Disconnected" Foreground="White" FontSize="12"/>
-                </StackPanel>
-            </Border>
-        </Grid>
-
-    </Grid>
+        </DockPanel>
+    </DockPanel>
 </Window>

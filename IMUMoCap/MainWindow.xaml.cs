@@ -102,6 +102,9 @@ namespace IMUMoCap
                 log($"Baseline: L={l} steps, R={r} steps"));
             _pipeline.OnFpaResult += result => Dispatcher.BeginInvoke(() => OnFpaResult(result));
 
+            // 参数同步：VM 属性变化时推入 pipeline
+            _content.PropertyChanged += (_, e) => SyncParamToPipeline(e.PropertyName);
+
             StartScanAsync();
         }
 
@@ -534,6 +537,89 @@ namespace IMUMoCap
                 $"R={profile.Target_R:F1}° ({profile.Direction_R})";
             _pipeline.StartTraining();
             BroadcastArState("training");
+        }
+
+        // ── 参数同步 ──────────────────────────────────────────────────────────
+
+        private void SyncParamToPipeline(string? propName)
+        {
+            switch (propName)
+            {
+                case nameof(MainPageVM.StompThreshold):
+                    _pipeline.Params.StompThreshold_ms2 = _content.StompThreshold; break;
+                case nameof(MainPageVM.StaticGyroThreshold):
+                    _pipeline.Params.StaticGyroThreshold = _content.StaticGyroThreshold; break;
+                case nameof(MainPageVM.StanceFreeAccThreshold):
+                    _pipeline.Params.StanceFreeAccThreshold = _content.StanceFreeAccThreshold; break;
+                case nameof(MainPageVM.StanceGyroThreshold):
+                    _pipeline.Params.StanceGyroThreshold = _content.StanceGyroThreshold; break;
+                case nameof(MainPageVM.PdConfidenceThreshold):
+                    _pipeline.Params.PdConfidenceThreshold = _content.PdConfidenceThreshold; break;
+                case nameof(MainPageVM.PdStabilityThreshold):
+                    _pipeline.Params.PdStabilityThreshold = _content.PdStabilityThreshold; break;
+                case nameof(MainPageVM.MinBaselineSteps):
+                    _pipeline.Params.MinBaselineSteps = _content.MinBaselineSteps; break;
+            }
+        }
+
+        // ── 新增按钮处理器 ────────────────────────────────────────────────────
+
+        private void BtnRestartCal_Click(object sender, RoutedEventArgs e)
+        {
+            _baselineTimer?.Stop();
+            _baselineTimer = null;
+            _pipeline.Reset();
+            _content.StatusLabel = "Calibration reset. Stomp left foot to begin.";
+            _sessionState = TestState.Launching;
+            BroadcastArState("waiting");
+            log("Calibration restarted by user.");
+        }
+
+        private void BtnSaveDiagnostics_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var rows = _pipeline.GetDiagnosticsSnapshot();
+                if (rows.Count == 0)
+                {
+                    log("No diagnostics data to save.");
+                    return;
+                }
+
+                var dlg = new Microsoft.Win32.SaveFileDialog
+                {
+                    Filter     = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                    DefaultExt = ".csv",
+                    FileName   = $"Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.csv",
+                };
+                if (dlg.ShowDialog() != true) return;
+
+                using var sw = new System.IO.StreamWriter(dlg.FileName, append: false,
+                    encoding: System.Text.Encoding.UTF8);
+                sw.WriteLine(Pipeline.Models.DiagnosticsRow.CsvHeader);
+                foreach (var row in rows)
+                    sw.WriteLine(row.ToCsvRow());
+
+                log($"Diagnostics saved: {rows.Count} rows → {dlg.FileName}");
+            }
+            catch (Exception ex)
+            {
+                log($"Error saving diagnostics: {ex.Message}");
+            }
+        }
+
+        private void BtnToggleLog_Click(object sender, RoutedEventArgs e)
+        {
+            _content.LogPanelVisible = !_content.LogPanelVisible;
+            if (BtnToggleLog != null)
+                BtnToggleLog.Content = _content.LogPanelVisible ? "隐藏日志" : "显示日志";
+        }
+
+        private void BtnToggleParams_Click(object sender, RoutedEventArgs e)
+        {
+            _content.ParamsPanelVisible = !_content.ParamsPanelVisible;
+            if (BtnToggleParams != null)
+                BtnToggleParams.Content = _content.ParamsPanelVisible ? "隐藏参数" : "显示参数";
         }
 
         private void OnFpaResult(FpaResult result)
