@@ -1,5 +1,6 @@
 // IMUMoCap/Pipeline/GaitPipeline.cs
 using System;
+using System.Collections.Generic;
 using IMUMoCap.Methods;
 using IMUMoCap.Pipeline.Models;
 using XDA;
@@ -27,6 +28,12 @@ namespace IMUMoCap.Pipeline
         private readonly BaselineProcessor       _baseline       = new();
         private readonly FpaEngine               _fpa            = new();
 
+        // ── 可调参数（UI 实时更新）──────────────────────────────────────────────
+        public PipelineParams Params { get; } = new();
+
+        // ── 诊断数据缓冲区 ────────────────────────────────────────────────────
+        private readonly List<DiagnosticsRow> _diagnosticsBuffer = new();
+
         // ── 事件 ──────────────────────────────────────────────────────────────
         public event Action<FpaResult>?        OnFpaResult;
         public event Action<CalibrationState>? OnCalibrationStateChanged;
@@ -49,8 +56,28 @@ namespace IMUMoCap.Pipeline
                 Process(bundle);
         }
 
+        private void SyncParams()
+        {
+            // CalibrationProcessor
+            _calibration.StompAccThreshold_ms2 = Params.StompThreshold_ms2;
+            _calibration.StaticGyroThreshold   = Params.StaticGyroThreshold;
+
+            // GaitEventDetector
+            _gait.FreeAccStanceThreshold = Params.StanceFreeAccThreshold;
+            _gait.GyroThreshold          = Params.StanceGyroThreshold;
+
+            // FpaEngine
+            _fpa.ContextConfidenceThreshold = Params.PdConfidenceThreshold;
+            _fpa.PdStabilityThreshold       = Params.PdStabilityThreshold;
+
+            // BaselineProcessor
+            _baseline.MinValidSteps = Params.MinBaselineSteps;
+        }
+
         private void Process(ImuFrameBundle bundle)
         {
+            SyncParams();
+
             // Step 1: DataQualityGate
             var validFrame = _gate.Evaluate(bundle);
             if (validFrame == null) return;
@@ -86,6 +113,36 @@ namespace IMUMoCap.Pipeline
             // Step 6: FpaEngine
             var fpaResult = _fpa.Process(validFrame, gaitEvent, motionCtx, pdEstimate);
 
+            // ── 诊断数据采集（每帧一行，FPA 可为 null）────────────────────────
+            _diagnosticsBuffer.Add(new DiagnosticsRow
+            {
+                Timestamp         = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                PacketId          = validFrame.PacketId,
+                PelvisAcc         = validFrame.Pelvis.HasAcceleration  ? validFrame.Pelvis.Acceleration  : System.Numerics.Vector3.Zero,
+                PelvisGyr         = validFrame.Pelvis.HasRateOfTurn     ? validFrame.Pelvis.RateOfTurn     : System.Numerics.Vector3.Zero,
+                PelvisQuat        = validFrame.Pelvis.HasQuaternion     ? validFrame.Pelvis.Quaternion     : System.Numerics.Quaternion.Identity,
+                LeftAcc           = validFrame.LeftFoot.HasAcceleration ? validFrame.LeftFoot.Acceleration : System.Numerics.Vector3.Zero,
+                LeftGyr           = validFrame.LeftFoot.HasRateOfTurn    ? validFrame.LeftFoot.RateOfTurn    : System.Numerics.Vector3.Zero,
+                LeftQuat          = validFrame.LeftFoot.HasQuaternion    ? validFrame.LeftFoot.Quaternion    : System.Numerics.Quaternion.Identity,
+                RightAcc          = validFrame.RightFoot.HasAcceleration? validFrame.RightFoot.Acceleration: System.Numerics.Vector3.Zero,
+                RightGyr          = validFrame.RightFoot.HasRateOfTurn   ? validFrame.RightFoot.RateOfTurn   : System.Numerics.Vector3.Zero,
+                RightQuat         = validFrame.RightFoot.HasQuaternion   ? validFrame.RightFoot.Quaternion   : System.Numerics.Quaternion.Identity,
+                LeftStance        = gaitEvent.LeftStance,
+                RightStance       = gaitEvent.RightStance,
+                IsWalking         = gaitEvent.IsWalking,
+                MotionState       = motionCtx.State,
+                MotionConfidence  = motionCtx.Confidence,
+                PdDirectionDeg    = pdEstimate.DirectionRad * (180f / MathF.PI),
+                PdStability       = pdEstimate.Stability,
+                PdIsValid         = pdEstimate.IsValid,
+                FpaLeft_Deg       = fpaResult?.Fpa_L      ?? float.NaN,
+                FpaLeft_Error     = fpaResult?.Error_L    ?? float.NaN,
+                FpaLeft_OnTarget  = fpaResult?.OnTarget_L ?? false,
+                FpaRight_Deg      = fpaResult?.Fpa_R      ?? float.NaN,
+                FpaRight_Error    = fpaResult?.Error_R    ?? float.NaN,
+                FpaRight_OnTarget = fpaResult?.OnTarget_R ?? false,
+            });
+
             if (fpaResult == null) return;
 
             // Baseline 阶段：收集步级 FPA
@@ -101,6 +158,10 @@ namespace IMUMoCap.Pipeline
             if (InTraining)
                 OnFpaResult?.Invoke(fpaResult);
         }
+
+        /// <summary>返回诊断数据快照（副本），用于 CSV 导出。不清空缓冲区。</summary>
+        public List<DiagnosticsRow> GetDiagnosticsSnapshot()
+            => new List<DiagnosticsRow>(_diagnosticsBuffer);
 
         // ── 阶段控制（由 MainWindow 的状态机调用）────────────────────────────
 
@@ -150,6 +211,7 @@ namespace IMUMoCap.Pipeline
             _fpa.Reset();
             BaselineProfile = null;
             InBaseline = InTraining = false;
+            _diagnosticsBuffer.Clear();
         }
     }
 }
