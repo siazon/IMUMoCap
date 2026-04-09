@@ -28,46 +28,46 @@
 
                     <!-- Toggle params -->
                     <Button x:Name="BtnToggleParams" Click="BtnToggleParams_Click"
-                            Margin="0,0,0,6" HorizontalAlignment="Stretch">隐藏参数</Button>
+                            Margin="0,0,0,6" HorizontalAlignment="Stretch">Hide Params</Button>
 
                     <!-- Params section (collapsible) -->
                     <StackPanel x:Name="ParamsPanel"
                                 Visibility="{Binding ParamsPanelVisible, Converter={StaticResource BoolToVis}}">
 
-                        <TextBlock Text="参数调节" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <TextBlock Text="Parameters" FontWeight="Bold" Margin="0,0,0,8"/>
 
                         <!-- 1. Stomp threshold -->
-                        <TextBlock Text="{Binding StompThreshold, StringFormat='跺脚阈值: {0:F0} m/s²'}" FontSize="11"/>
+                        <TextBlock Text="{Binding StompThreshold, StringFormat='Stomp Threshold: {0:F0} m/s²'}" FontSize="11"/>
                         <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
                                 Value="{Binding StompThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
 
                         <!-- 2. Static gyro threshold -->
-                        <TextBlock Text="{Binding StaticGyroThreshold, StringFormat='静止陀螺仪阈值: {0:F2} rad/s'}" FontSize="11"/>
+                        <TextBlock Text="{Binding StaticGyroThreshold, StringFormat='Static Gyro Threshold: {0:F2} rad/s'}" FontSize="11"/>
                         <Slider Minimum="0.05" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
                                 Value="{Binding StaticGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
 
                         <!-- 3. Stance free-acc threshold -->
-                        <TextBlock Text="{Binding StanceFreeAccThreshold, StringFormat='支撑相加速度阈值: {0:F1} m/s²'}" FontSize="11"/>
+                        <TextBlock Text="{Binding StanceFreeAccThreshold, StringFormat='Stance Acc Threshold: {0:F1} m/s²'}" FontSize="11"/>
                         <Slider Minimum="0.5" Maximum="5.0" SmallChange="0.1" LargeChange="0.5"
                                 Value="{Binding StanceFreeAccThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
 
                         <!-- 4. Stance gyro threshold -->
-                        <TextBlock Text="{Binding StanceGyroThreshold, StringFormat='支撑相陀螺仪阈值: {0:F1} rad/s'}" FontSize="11"/>
+                        <TextBlock Text="{Binding StanceGyroThreshold, StringFormat='Stance Gyro Threshold: {0:F1} rad/s'}" FontSize="11"/>
                         <Slider Minimum="0.1" Maximum="3.0" SmallChange="0.05" LargeChange="0.2"
                                 Value="{Binding StanceGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
 
                         <!-- 5. PD confidence threshold -->
-                        <TextBlock Text="{Binding PdConfidenceThreshold, StringFormat='PD置信度阈值: {0:F2}'}" FontSize="11"/>
+                        <TextBlock Text="{Binding PdConfidenceThreshold, StringFormat='PD Confidence Threshold: {0:F2}'}" FontSize="11"/>
                         <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
                                 Value="{Binding PdConfidenceThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
 
                         <!-- 6. PD stability threshold -->
-                        <TextBlock Text="{Binding PdStabilityThreshold, StringFormat='PD稳定度阈值: {0:F2}'}" FontSize="11"/>
+                        <TextBlock Text="{Binding PdStabilityThreshold, StringFormat='PD Stability Threshold: {0:F2}'}" FontSize="11"/>
                         <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
                                 Value="{Binding PdStabilityThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
 
                         <!-- 7. Min baseline steps -->
-                        <TextBlock Text="{Binding MinBaselineSteps, StringFormat='最少Baseline步数: {0}'}" FontSize="11"/>
+                        <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="11"/>
                         <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
                                 IsSnapToTickEnabled="True" TickFrequency="1"
                                 Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,12"/>
@@ -79,14 +79,14 @@
                     <!-- Action buttons -->
                     <Button x:Name="BtnRestartCal" Click="BtnRestartCal_Click"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            ToolTip="重置流水线并重新等待跺脚触发校准">
-                        重新开始校准
+                            ToolTip="Reset pipeline and wait for stomp to re-calibrate">
+                        Restart Calibration
                     </Button>
 
                     <Button x:Name="BtnSaveDiagnostics" Click="BtnSaveDiagnostics_Click"
                             HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            ToolTip="将当前诊断数据导出为 CSV，供 AI 分析">
-                        保存诊断数据 (CSV)
+                            ToolTip="Export diagnostics to CSV for AI analysis">
+                        Save Diagnostics (CSV)
                     </Button>
 
                     <Separator Margin="0,4,0,8"/>
@@ -105,11 +105,18 @@
             </ScrollViewer>
         </Border>
 
-        <!-- ── LEFT PANEL ───────────────────────────────────────────────────── -->
-        <DockPanel LastChildFill="True">
+        <!-- ── LEFT PANEL — Grid with resizable log row ─────────────────────── -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>             <!-- Row 0: status grid -->
+                <RowDefinition Height="*" MinHeight="80"/> <!-- Row 1: 3D viewports -->
+                <RowDefinition x:Name="SplitterRow" Height="5"/>          <!-- Row 2: drag handle -->
+                <RowDefinition x:Name="LogRow" Height="160" MinHeight="60"/> <!-- Row 3: log -->
+                <RowDefinition Height="Auto"/>             <!-- Row 4: log toggle button -->
+            </Grid.RowDefinitions>
 
-            <!-- Status grid (top, always visible) -->
-            <Grid DockPanel.Dock="Top" Margin="8,6,8,4">
+            <!-- Row 0: Status grid -->
+            <Grid Grid.Row="0" Margin="8,6,8,4">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
@@ -123,13 +130,13 @@
                         <TextBlock Text="{Binding StatusLabel}" FontSize="16" FontWeight="Bold"
                                    Margin="0,4,0,8" TextWrapping="Wrap"/>
                         <UniformGrid Columns="2">
-                            <TextBlock Text="校准状态:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="Calib State:" Opacity="0.7" FontSize="11"/>
                             <TextBlock Text="{Binding CalibrationState}" FontSize="11"/>
-                            <TextBlock Text="行进方向:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="Prog Dir:" Opacity="0.7" FontSize="11"/>
                             <TextBlock Text="{Binding ProgDirDeg, StringFormat={}{0:F1}°}" FontSize="11"/>
-                            <TextBlock Text="帧拒绝:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="Gate Reject:" Opacity="0.7" FontSize="11"/>
                             <TextBlock Text="{Binding PelvisRejectStreak}" FontSize="11"/>
-                            <TextBlock Text="步态:" Opacity="0.7" FontSize="11"/>
+                            <TextBlock Text="Gait:" Opacity="0.7" FontSize="11"/>
                             <TextBlock Text="{Binding StanceSummary}" FontSize="11" TextWrapping="Wrap"/>
                         </UniformGrid>
 
@@ -175,27 +182,8 @@
                 </Border>
             </Grid>
 
-            <!-- Log toggle + log panel (bottom) -->
-            <Button x:Name="BtnToggleLog" DockPanel.Dock="Bottom"
-                    Click="BtnToggleLog_Click"
-                    HorizontalAlignment="Left" Margin="8,2,8,2" Padding="8,2">隐藏日志</Button>
-
-            <TextBox
-                x:Name="LogBox"
-                DockPanel.Dock="Bottom"
-                Height="160"
-                AcceptsReturn="True"
-                IsReadOnly="True"
-                Text="{Binding LogList}"
-                TextWrapping="Wrap"
-                VerticalScrollBarVisibility="Auto"
-                Margin="8,0,8,2"
-                Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
-
-            <!-- 3D viewports (fill remaining space) -->
-            <UniformGrid Rows="1" Columns="3">
-
-                <!-- Pelvis viewport -->
+            <!-- Row 1: 3D viewports -->
+            <UniformGrid Grid.Row="1" Rows="1" Columns="3">
                 <Grid>
                     <Viewport3D>
                         <Viewport3D.Camera>
@@ -216,7 +204,6 @@
                     </Viewport3D>
                 </Grid>
 
-                <!-- Left foot viewport -->
                 <Grid>
                     <Viewport3D>
                         <Viewport3D.Camera>
@@ -237,7 +224,6 @@
                     </Viewport3D>
                 </Grid>
 
-                <!-- Right foot viewport -->
                 <Grid>
                     <Viewport3D>
                         <Viewport3D.Camera>
@@ -257,9 +243,39 @@
                         <ModelVisual3D x:Name="ImuVisual12"/>
                     </Viewport3D>
                 </Grid>
-
             </UniformGrid>
 
-        </DockPanel>
+            <!-- Row 2: GridSplitter — drag up/down to resize log -->
+            <GridSplitter Grid.Row="2"
+                          Height="5"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Stretch"
+                          Background="#33000000"
+                          ShowsPreview="True"
+                          ResizeDirection="Rows"
+                          ResizeBehavior="PreviousAndNext"
+                          Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
+
+            <!-- Row 3: Log TextBox -->
+            <TextBox
+                x:Name="LogBox"
+                Grid.Row="3"
+                AcceptsReturn="True"
+                IsReadOnly="True"
+                Text="{Binding LogList}"
+                TextWrapping="Wrap"
+                VerticalScrollBarVisibility="Auto"
+                Margin="8,0,8,2"
+                Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
+
+            <!-- Row 4: Log toggle button -->
+            <Button x:Name="BtnToggleLog"
+                    Grid.Row="4"
+                    Click="BtnToggleLog_Click"
+                    HorizontalAlignment="Left"
+                    Margin="8,2,8,4"
+                    Padding="8,2">Hide Log</Button>
+
+        </Grid>
     </DockPanel>
 </Window>

@@ -611,15 +611,19 @@ namespace IMUMoCap
         private void BtnToggleLog_Click(object sender, RoutedEventArgs e)
         {
             _content.LogPanelVisible = !_content.LogPanelVisible;
+            bool visible = _content.LogPanelVisible;
             if (BtnToggleLog != null)
-                BtnToggleLog.Content = _content.LogPanelVisible ? "隐藏日志" : "显示日志";
+                BtnToggleLog.Content = visible ? "Hide Log" : "Show Log";
+            // Collapse/restore the log row height so the splitter takes no space when hidden
+            LogRow.Height    = visible ? new GridLength(160, GridUnitType.Pixel) : new GridLength(0);
+            SplitterRow.Height = visible ? new GridLength(5,   GridUnitType.Pixel) : new GridLength(0);
         }
 
         private void BtnToggleParams_Click(object sender, RoutedEventArgs e)
         {
             _content.ParamsPanelVisible = !_content.ParamsPanelVisible;
             if (BtnToggleParams != null)
-                BtnToggleParams.Content = _content.ParamsPanelVisible ? "隐藏参数" : "显示参数";
+                BtnToggleParams.Content = _content.ParamsPanelVisible ? "Hide Params" : "Show Params";
         }
 
         private void OnFpaResult(FpaResult result)
