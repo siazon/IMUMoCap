@@ -1,6 +1,8 @@
 using IMUMoCap.AHRS;
 using IMUMoCap.Methods;
 using IMUMoCap.Model;
+using IMUMoCap.Pipeline;
+using IMUMoCap.Pipeline.Models;
 using IMUMoCap.Services;
 using System.Collections.Concurrent;
 using System.Data;
@@ -42,6 +44,7 @@ namespace IMUMoCap
         private MainPageVM _content = new MainPageVM();
         private ImuDeviceManager _deviceManager = null!;
         private ImuSlotRegistry _slotRegistry = null!;
+        private readonly GaitPipeline _pipeline = new();
         public WebSocketBroadcastServer? _wsServer;
         ConcurrentQueue<double[]> actionQueue = new ConcurrentQueue<double[]>();
         BlockingCollection<RecoredData> ImuDataQueue = new BlockingCollection<RecoredData>(new ConcurrentQueue<RecoredData>(), 2000);
@@ -91,6 +94,13 @@ namespace IMUMoCap
             _imuRotTf = new RotateTransform3D(_imuRot);
             _imuFrameCollector.SampleRateHz = _sampleRateHz;
             UpdateImuStatusIndicators();
+
+            // 流水线事件订阅
+            _pipeline.OnLog += msg => Dispatcher.BeginInvoke(() => log(msg));
+            _pipeline.OnCalibrationStateChanged += s => Dispatcher.BeginInvoke(() => OnCalibrationStateChanged(s));
+            _pipeline.OnBaselineProgress += (l, r) => Dispatcher.BeginInvoke(() =>
+                log($"Baseline: L={l} steps, R={r} steps"));
+            _pipeline.OnFpaResult += result => Dispatcher.BeginInvoke(() => OnFpaResult(result));
 
             StartScanAsync();
         }
@@ -196,6 +206,7 @@ namespace IMUMoCap
         protected override void OnClosed(EventArgs e)
         {
             _imuLoopCts?.Cancel();
+            _baselineTimer?.Stop();
             ImuDataQueue?.CompleteAdding();
             _deviceManager.Dispose();
             if (_wsServer != null)
@@ -339,121 +350,8 @@ namespace IMUMoCap
         private void setWidgetsStates()
         {
             switch (_content.DeviceState)
-            {
-                case States.DETECTING:
-                    {
-
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.connected;
-                    }
-                    break;
-
-                case States.CONNECTING:
-                    {
-                        //btnEnable.Enabled = false;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.connecting;
-                        log("Scanning for station.");
-                        //btnRecord.Enabled = false;
-                    }
-                    break;
-
-                case States.CONNECTED:
-                    {
-                        //btnMeasure.Enabled = false;
-                        //labelChannel.Enabled = true;
-                        //comboBoxChannel.Enabled = true;
-                        //btnEnable.Enabled = true;
-                        //btnEnable.Text = "Enable";
-                        //labelUpdateRate.Enabled = false;
-                        //comboBoxUpdateRate.Enabled = false;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.connected;
-                        //btnRecord.Enabled = false;
-                    }
-                    break;
-
-                case States.ENABLED:
-                    {
-                        //btnMeasure.Enabled = connectedMtwList.Items.Count > 0;
-                        //btnMeasure.Text = "Start Measurement";
-                        //btnEnable.Text = "Disable";
-                        //btnEnable.Enabled = true;
-                        //labelChannel.Enabled = false;
-                        //comboBoxChannel.Enabled = false;
-                        //labelUpdateRate.Enabled = true;
-                        //comboBoxUpdateRate.Enabled = true;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.enabled;
-                        //btnRecord.Enabled = false;
-                    }
-                    break;
-
-                case States.OPERATIONAL:
-                    {
-                        //btnMeasure.Enabled = connectedMtwList.Items.Count > 0;
-                        //btnMeasure.Text = "Start Measurement";
-                        //btnEnable.Text = "Disable";
-                        //btnEnable.Enabled = true;
-                        //labelChannel.Enabled = false;
-                        //comboBoxChannel.Enabled = false;
-                        //labelUpdateRate.Enabled = true;
-                        //comboBoxUpdateRate.Enabled = true;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.operational;
-                        //btnRecord.Enabled = false;
-                    }
-                    break;
-
-                case States.AWAIT_MEASUREMENT_START:
-                case States.AWAIT_RECORDING_START:
-                    {
-                        //btnEnable.Enabled = false;
-                        //btnMeasure.Text = "Waiting for start...";
-                        //btnMeasure.Enabled = false;
-                        //labelUpdateRate.Enabled = false;
-                        //comboBoxUpdateRate.Enabled = false;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.await_measurement_start;
-                        //btnRecord.Enabled = false;
-                    }
-                    break;
-
-                case States.MEASURING:
-                    {
-                        //btnEnable.Enabled = false;
-                        //btnMeasure.Text = "Stop measuring";
-                        //btnMeasure.Enabled = true;
-                        //labelUpdateRate.Enabled = false;
-                        //comboBoxUpdateRate.Enabled = false;
-                        //btnRecord.Text = "Start recording";
-                        //btnRecord.Enabled = true;
-                        //labelFilename.Enabled = true;
-                        //textBoxFilename.Enabled = true;
-                        //labelFlushing.Enabled = false;
-                        //progressBarFlushing.Enabled = false;
-                        //progressBarFlushing.Value = 0;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.measuring;
-                    }
-                    break;
-
-                case States.RECORDING:
-                    {
-                        //btnRecord.Enabled = true;
-                        //btnRecord.Text = "Stop recording";
-                        //labelFilename.Enabled = false;
-                        //textBoxFilename.Enabled = false;
-                        //btnMeasure.Enabled = false;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.recording;
-                    }
-                    break;
-
-                case States.FLUSHING:
-                    {
-                        //btnRecord.Enabled = false;
-                        //btnRecord.Text = "Flushing";
-                        //labelFlushing.Enabled = true;
-                        //progressBarFlushing.Enabled = true;
-                        //pictureBoxStateDiagram.Image = global::awindamonitor.Properties.Resources.flushing;
-                    }
-                    break;
-
-                default:
-                    break;
+            {   
+                    
             }
         }
 
@@ -565,6 +463,82 @@ namespace IMUMoCap
             // One callback packet becomes a single-IMU sample, then a synchronized 3-IMU frame.
             var (sample, _) = _imuFrameCollector.Process(sensor, deviceId, packet);
             _imuSamples.Add(sample);
+            _pipeline.ProcessPacket(sensor, deviceId, packet);
+        }
+
+        // ── 流水线状态机 ──────────────────────────────────────────────────────
+
+        private DispatcherTimer? _baselineTimer;
+
+        private void OnCalibrationStateChanged(CalibrationState state)
+        {
+            switch (state)
+            {
+                case CalibrationState.CollectingStaticPose:
+                    _content.StatusLabel = "Calibrating... Stand still.";
+                    _sessionState = TestState.Calibrating;
+                    break;
+
+                case CalibrationState.Completed:
+                    _content.StatusLabel = "Calibration done. Starting baseline walk.";
+                    _content.CalibrationState = "Calibrated";
+                    _sessionState = TestState.Calibrated;
+                    // 自动开始 Baseline
+                    _pipeline.StartBaseline();
+                    _baselineTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(3) };
+                    _baselineTimer.Tick += (_, _) => { _baselineTimer.Stop(); FinalizeBaseline(); };
+                    _baselineTimer.Start();
+                    _sessionState = TestState.Baseline;
+                    _content.StatusLabel = "Baseline: Walk naturally for 3 minutes.";
+                    break;
+
+                case CalibrationState.Failed:
+                    _content.StatusLabel = "Calibration failed. Please restart the application.";
+                    _sessionState = TestState.Launching;
+                    break;
+            }
+        }
+
+        private void FinalizeBaseline()
+        {
+            var profile = _pipeline.FinalizeBaseline();
+            if (profile == null)
+            {
+                _content.StatusLabel = "Baseline insufficient (< 20 valid steps). Please restart.";
+                return;
+            }
+            _sessionState = TestState.Step;
+            _content.StatusLabel =
+                $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
+                $"R={profile.Target_R:F1}° ({profile.Direction_R})";
+            _pipeline.StartTraining();
+        }
+
+        private void OnFpaResult(FpaResult result)
+        {
+            if (!float.IsNaN(result.Fpa_L))
+                _content.LeftFpaDeg = result.Fpa_L;
+            if (!float.IsNaN(result.Fpa_R))
+                _content.RightFpaDeg = result.Fpa_R;
+
+            _content.StanceSummary =
+                $"L: {result.Fpa_L:F1}° {(result.OnTarget_L ? "✓" : $"err={result.Error_L:+0.0;-0.0}°")}  " +
+                $"R: {result.Fpa_R:F1}° {(result.OnTarget_R ? "✓" : $"err={result.Error_R:+0.0;-0.0}°")}";
+
+            if (_wsServer != null)
+            {
+                _ = _wsServer.BroadcastJsonAsync(new
+                {
+                    type      = "fpa",
+                    packetId  = result.PacketId,
+                    fpaL      = result.Fpa_L,
+                    fpaR      = result.Fpa_R,
+                    onTargetL = result.OnTarget_L,
+                    onTargetR = result.OnTarget_R,
+                    errorL    = result.Error_L,
+                    errorR    = result.Error_R,
+                });
+            }
         }
 
     }
