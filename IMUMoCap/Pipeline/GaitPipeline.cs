@@ -90,7 +90,9 @@ namespace IMUMoCap.Pipeline
                 if (stateChanged)
                 {
                     OnCalibrationStateChanged?.Invoke(_calibration.State);
-                    if (_calibration.State == CalibrationState.Completed)
+                    if (_calibration.State == CalibrationState.CollectingStaticPose)
+                        OnLog?.Invoke("Stomp detected — collecting static pose...");
+                    else if (_calibration.State == CalibrationState.Completed)
                         OnLog?.Invoke("Calibration completed.");
                     else if (_calibration.State == CalibrationState.Failed)
                         OnLog?.Invoke("Calibration failed — please restart.");
