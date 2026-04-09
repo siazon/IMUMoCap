@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using IMUMoCap.Pipeline.Models;
 using XDA;
 
 namespace IMUMoCap.Methods
@@ -12,6 +13,13 @@ namespace IMUMoCap.Methods
 
         public int SampleRateHz { get; set; } = 100;
         public int MaxPendingPacketLag { get; set; } = 16;
+
+        // ── Gap 统计字段 ──────────────────────────────────────────────────────
+        private int _totalFramesSeen    = 0;
+        private int _completedFrames    = 0;
+        private int _pelvisGapFrames    = 0;
+        private int _leftFootGapFrames  = 0;
+        private int _rightFootGapFrames = 0;
 
         public (ImuSampleFrame Sample, ImuFrameBundle? CompletedBundle) Process(ImuRole sensor, uint deviceId, XsDataPacket packet)
         {
@@ -98,6 +106,11 @@ namespace IMUMoCap.Methods
 
             foreach (var stalePacketId in stalePacketIds)
             {
+                var staleBundle = _frameBundles[stalePacketId];
+                if (staleBundle.Pelvis    == null) _pelvisGapFrames++;
+                if (staleBundle.LeftFoot  == null) _leftFootGapFrames++;
+                if (staleBundle.RightFoot == null) _rightFootGapFrames++;
+                _totalFramesSeen++;
                 _frameBundles.Remove(stalePacketId);
             }
         }
@@ -121,7 +134,20 @@ namespace IMUMoCap.Methods
 
             _frameBundles.Remove(sample.PacketId);
             _lastCompletedPacketId = sample.PacketId;
+            _completedFrames++;
             return bundle;
+        }
+
+        public FrameQualityReport GenerateReport()
+        {
+            return new FrameQualityReport
+            {
+                TotalFrames        = _totalFramesSeen + _completedFrames,
+                CompletedFrames    = _completedFrames,
+                PelvisGapFrames    = _pelvisGapFrames,
+                LeftFootGapFrames  = _leftFootGapFrames,
+                RightFootGapFrames = _rightFootGapFrames,
+            };
         }
     }
 }
