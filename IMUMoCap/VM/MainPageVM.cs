@@ -268,6 +268,87 @@ namespace IMUMoCap
         }
 
 
+        private string _LeftFpaNote = "";
+        public string LeftFpaNote
+        {
+            get { return _LeftFpaNote; }
+            set { _LeftFpaNote = value; OnPropertyChanged(nameof(LeftFpaNote)); }
+        }
+
+        private string _RightFpaNote = "";
+        public string RightFpaNote
+        {
+            get { return _RightFpaNote; }
+            set { _RightFpaNote = value; OnPropertyChanged(nameof(RightFpaNote)); }
+        }
+
+        // ── Pipeline tunable parameters (bound to right-panel sliders) ────────
+
+        private float _stompThreshold = 25f;
+        public float StompThreshold
+        {
+            get { return _stompThreshold; }
+            set { _stompThreshold = value; OnPropertyChanged(nameof(StompThreshold)); }
+        }
+
+        private float _staticGyroThreshold = 0.3f;
+        public float StaticGyroThreshold
+        {
+            get { return _staticGyroThreshold; }
+            set { _staticGyroThreshold = value; OnPropertyChanged(nameof(StaticGyroThreshold)); }
+        }
+
+        private float _stanceFreeAccThreshold = 2.5f;
+        public float StanceFreeAccThreshold
+        {
+            get { return _stanceFreeAccThreshold; }
+            set { _stanceFreeAccThreshold = value; OnPropertyChanged(nameof(StanceFreeAccThreshold)); }
+        }
+
+        private float _stanceGyroThreshold = 1.0f;
+        public float StanceGyroThreshold
+        {
+            get { return _stanceGyroThreshold; }
+            set { _stanceGyroThreshold = value; OnPropertyChanged(nameof(StanceGyroThreshold)); }
+        }
+
+        private float _pdConfidenceThreshold = 0.7f;
+        public float PdConfidenceThreshold
+        {
+            get { return _pdConfidenceThreshold; }
+            set { _pdConfidenceThreshold = value; OnPropertyChanged(nameof(PdConfidenceThreshold)); }
+        }
+
+        private float _pdStabilityThreshold = 0.7f;
+        public float PdStabilityThreshold
+        {
+            get { return _pdStabilityThreshold; }
+            set { _pdStabilityThreshold = value; OnPropertyChanged(nameof(PdStabilityThreshold)); }
+        }
+
+        private int _minBaselineSteps = 20;
+        public int MinBaselineSteps
+        {
+            get { return _minBaselineSteps; }
+            set { _minBaselineSteps = value; OnPropertyChanged(nameof(MinBaselineSteps)); }
+        }
+
+        // ── Panel visibility ──────────────────────────────────────────────────
+
+        private bool _logPanelVisible = true;
+        public bool LogPanelVisible
+        {
+            get { return _logPanelVisible; }
+            set { _logPanelVisible = value; OnPropertyChanged(nameof(LogPanelVisible)); }
+        }
+
+        private bool _paramsPanelVisible = true;
+        public bool ParamsPanelVisible
+        {
+            get { return _paramsPanelVisible; }
+            set { _paramsPanelVisible = value; OnPropertyChanged(nameof(ParamsPanelVisible)); }
+        }
+
         private bool _RotationByDegree = true;
 
         public bool RotationByDegree
