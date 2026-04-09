@@ -142,9 +142,17 @@ namespace IMUMoCap
             _content.ConnectedMtws.Add(ev.DeviceIdStr);
             _content.DeviceModels.Add(new DeviceModel { DeviceName = ev.DeviceIdStr });
             _content.SelectedMtw = _content.ConnectedMtws.Count - 1;
+            foreach (var item in _slotRegistry.Imus)
+            {
+                if(item.DeviceId==ev.DeviceId)
+                {
+                    item.IsConnected = true;
+                }
+            }
+            var vm = _slotRegistry.Imus.FirstOrDefault(a => a.DeviceId == ev.DeviceId);
+            if (vm != null) vm.IsConnected = true;
 
-            if (_slotRegistry.TryGet(ev.DeviceId) is { } vm)
-                vm.IsConnected = true;
+           
             UpdateImuStatusIndicators();
 
             bool allConnected = _slotRegistry.Imus.All(i => i.IsConnected);
@@ -470,21 +478,32 @@ namespace IMUMoCap
 
         private DispatcherTimer? _baselineTimer;
 
+        private void BroadcastArState(string state)
+        {
+            if (_wsServer == null) return;
+            _ = _wsServer.BroadcastJsonAsync(new { type = "state", state });
+        }
+
         private void OnCalibrationStateChanged(CalibrationState state)
         {
             switch (state)
             {
+                case CalibrationState.WaitingForStart:
+                    BroadcastArState("waiting");
+                    break;
+
                 case CalibrationState.CollectingStaticPose:
                     _content.StatusLabel = "Calibrating... Stand still.";
                     _sessionState = TestState.Calibrating;
+                    BroadcastArState("calibrating");
                     break;
 
                 case CalibrationState.Completed:
                     _content.StatusLabel = "Calibration done. Starting baseline walk.";
                     _content.CalibrationState = "Calibrated";
                     _sessionState = TestState.Calibrated;
-                    // 自动开始 Baseline
                     _pipeline.StartBaseline();
+                    BroadcastArState("baseline");
                     _baselineTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(3) };
                     _baselineTimer.Tick += (_, _) => { _baselineTimer.Stop(); FinalizeBaseline(); };
                     _baselineTimer.Start();
@@ -495,6 +514,7 @@ namespace IMUMoCap
                 case CalibrationState.Failed:
                     _content.StatusLabel = "Calibration failed. Please restart the application.";
                     _sessionState = TestState.Launching;
+                    BroadcastArState("error");
                     break;
             }
         }
@@ -505,6 +525,7 @@ namespace IMUMoCap
             if (profile == null)
             {
                 _content.StatusLabel = "Baseline insufficient (< 20 valid steps). Please restart.";
+                BroadcastArState("error");
                 return;
             }
             _sessionState = TestState.Step;
@@ -512,6 +533,7 @@ namespace IMUMoCap
                 $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
                 $"R={profile.Target_R:F1}° ({profile.Direction_R})";
             _pipeline.StartTraining();
+            BroadcastArState("training");
         }
 
         private void OnFpaResult(FpaResult result)
