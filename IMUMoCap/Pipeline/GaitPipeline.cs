@@ -78,11 +78,24 @@ namespace IMUMoCap.Pipeline
         {
             SyncParams();
 
-            // Step 1: DataQualityGate
+            // Step 1 (pre-gate): Stomp detection for calibration trigger.
+            // Stomp frames have StatusWord with all axes clipping + OrientationValid=0,
+            // which DataQualityGate rejects. Stomp detection must run on the raw bundle.
+            if (_calibration.State == CalibrationState.WaitingForStart)
+            {
+                bool stompDetected = _calibration.ProcessPreGate(bundle);
+                if (stompDetected)
+                {
+                    OnCalibrationStateChanged?.Invoke(_calibration.State);
+                    OnLog?.Invoke("Stomp detected — collecting static pose...");
+                }
+            }
+
+            // Step 2: DataQualityGate
             var validFrame = _gate.Evaluate(bundle);
             if (validFrame == null) return;
 
-            // Step 2: CalibrationProcessor（仅在未完成校准时运行）
+            // Step 3: CalibrationProcessor — static pose collection (post-gate only)
             if (_calibration.State != CalibrationState.Completed &&
                 _calibration.State != CalibrationState.Failed)
             {
@@ -90,9 +103,7 @@ namespace IMUMoCap.Pipeline
                 if (stateChanged)
                 {
                     OnCalibrationStateChanged?.Invoke(_calibration.State);
-                    if (_calibration.State == CalibrationState.CollectingStaticPose)
-                        OnLog?.Invoke("Stomp detected — collecting static pose...");
-                    else if (_calibration.State == CalibrationState.Completed)
+                    if (_calibration.State == CalibrationState.Completed)
                         OnLog?.Invoke("Calibration completed.");
                     else if (_calibration.State == CalibrationState.Failed)
                         OnLog?.Invoke("Calibration failed — please restart.");
@@ -103,16 +114,16 @@ namespace IMUMoCap.Pipeline
 
             var profile = _calibration.Profile!;
 
-            // Step 3: GaitEventDetector
+            // Step 4: GaitEventDetector
             var gaitEvent = _gait.Detect(validFrame, profile);
 
-            // Step 4: MotionContextDetector
+            // Step 5: MotionContextDetector
             var motionCtx = _motion.Detect(validFrame, gaitEvent);
 
-            // Step 5: ProgressionDirEstimator
+            // Step 6: ProgressionDirEstimator
             var pdEstimate = _pd.Update(validFrame, gaitEvent, motionCtx, _motion);
 
-            // Step 6: FpaEngine
+            // Step 7: FpaEngine
             var fpaResult = _fpa.Process(validFrame, gaitEvent, motionCtx, pdEstimate);
 
             // ── 诊断数据采集（每帧一行，FPA 可为 null）────────────────────────

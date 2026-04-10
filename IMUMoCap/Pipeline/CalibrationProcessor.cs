@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using IMUMoCap.Pipeline.Models;
+using IMUMoCap;
 
 namespace IMUMoCap.Pipeline
 {
@@ -47,14 +48,58 @@ namespace IMUMoCap.Pipeline
         private readonly List<Quaternion> _rightBuf     = new();
 
         /// <summary>
-        /// 输入一帧 ValidFrame，推进校准状态机。
+        /// 在 DataQualityGate 之前调用，仅处理跺脚检测。
+        /// 跺脚帧的 StatusWord 包含 ClippingDetected + OrientationValid=0，会被 Gate 拒绝，
+        /// 因此跺脚检测必须在 Gate 之前在原始 bundle 上运行。
+        /// 返回 true 表示状态变化（WaitingForStart → CollectingStaticPose）。
+        /// </summary>
+        public bool ProcessPreGate(ImuFrameBundle bundle)
+        {
+            if (State != CalibrationState.WaitingForStart) return false;
+            if (!bundle.IsComplete) return false;
+
+            float leftVertAcc = GetVerticalAccelerationRaw(bundle.LeftFoot!);
+
+            if (!_stompPeakSeen)
+            {
+                if (leftVertAcc > StompAccThreshold_ms2)
+                {
+                    _stompPeakSeen   = true;
+                    _stompFrameCount = 1;
+                }
+            }
+            else
+            {
+                _stompFrameCount++;
+                if (leftVertAcc < StompAccThreshold_ms2 * 0.4f)
+                {
+                    if (_stompFrameCount <= StompMaxFrames)
+                    {
+                        State            = CalibrationState.CollectingStaticPose;
+                        _stompPeakSeen   = false;
+                        _stompFrameCount = 0;
+                        return true;
+                    }
+                    _stompPeakSeen   = false;
+                    _stompFrameCount = 0;
+                }
+                else if (_stompFrameCount > StompMaxFrames)
+                {
+                    _stompPeakSeen   = false;
+                    _stompFrameCount = 0;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 输入一帧 ValidFrame，推进校准状态机（跺脚检测已移至 ProcessPreGate）。
         /// 返回 true 表示本帧触发了状态变化（供调用方记录日志）。
         /// </summary>
         public bool Process(ValidFrame frame)
         {
             return State switch
             {
-                CalibrationState.WaitingForStart      => ProcessWaiting(frame),
                 CalibrationState.CollectingStaticPose => ProcessCollecting(frame),
                 _ => false
             };
@@ -69,46 +114,6 @@ namespace IMUMoCap.Pipeline
             _staticConsecutive    = 0;
             _staticTimeoutCounter = 0;
             _pelvisBuf.Clear(); _leftBuf.Clear(); _rightBuf.Clear();
-        }
-
-        // ── WaitingForStart ───────────────────────────────────────────────────
-
-        private bool ProcessWaiting(ValidFrame frame)
-        {
-            float leftVertAcc = GetVerticalAcceleration(frame.LeftFoot);
-
-            if (!_stompPeakSeen)
-            {
-                if (leftVertAcc > StompAccThreshold_ms2)
-                {
-                    _stompPeakSeen   = true;
-                    _stompFrameCount = 1;
-                }
-            }
-            else
-            {
-                _stompFrameCount++;
-                // 峰值结束后（加速度回落），确认为 stomp
-                if (leftVertAcc < StompAccThreshold_ms2 * 0.4f)
-                {
-                    if (_stompFrameCount <= StompMaxFrames)
-                    {
-                        State = CalibrationState.CollectingStaticPose;
-                        _stompPeakSeen   = false;
-                        _stompFrameCount = 0;
-                        return true;  // 状态变化
-                    }
-                    // 持续太久不像 stomp，重置
-                    _stompPeakSeen   = false;
-                    _stompFrameCount = 0;
-                }
-                else if (_stompFrameCount > StompMaxFrames)
-                {
-                    _stompPeakSeen   = false;
-                    _stompFrameCount = 0;
-                }
-            }
-            return false;
         }
 
         // ── CollectingStaticPose ──────────────────────────────────────────────
@@ -168,7 +173,7 @@ namespace IMUMoCap.Pipeline
         }
 
         /// <summary>垂直加速度 = 自由加速度的 Z 分量绝对值（Xsens 世界系 Z 轴朝上）</summary>
-        private static float GetVerticalAcceleration(ImuSampleFrame f)
+        private static float GetVerticalAccelerationRaw(ImuSampleFrame f)
         {
             if (f.HasFreeAcceleration)
                 return MathF.Abs(f.FreeAcceleration.Z);
