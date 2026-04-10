@@ -80,11 +80,11 @@ namespace IMUMoCap.Pipeline
             if (f.StatusWord == null) return false;
             uint s = f.StatusWord.Value;
 
-            // bit 1 = OrientationValid: 0 means filter not yet converged → reject
-            if ((s & 0x02u) == 0) return true;
+            // OrientationValid = 0 → filter not yet converged → reject
+            if ((s & (uint)XDA.XsStatusFlag.XSF_OrientationValid) == 0) return true;
 
-            // bit 8–13 = per-axis clip flags (sensor saturation) → reject
-            if ((s & 0x3F00u) != 0) return true;
+            // XSF_ClippingDetected: set when any acc/gyro/mag axis is saturated → reject
+            if ((s & (uint)XDA.XsStatusFlag.XSF_ClippingDetected) != 0) return true;
 
             return false;
         }
