@@ -121,10 +121,10 @@ namespace IMUMoCap.Pipeline
             var motionCtx = _motion.Detect(validFrame, gaitEvent);
 
             // Step 6: ProgressionDirEstimator
-            var pdEstimate = _pd.Update(validFrame, gaitEvent, motionCtx, _motion);
+            var pdEstimate = _pd.Update(validFrame, gaitEvent, motionCtx, _motion, profile);
 
             // Step 7: FpaEngine
-            var fpaResult = _fpa.Process(validFrame, gaitEvent, motionCtx, pdEstimate);
+            var fpaResult = _fpa.Process(validFrame, gaitEvent, motionCtx, pdEstimate, profile);
 
             // ── 诊断数据采集（每帧一行，FPA 可为 null）────────────────────────
             _diagnosticsBuffer.Add(new DiagnosticsRow

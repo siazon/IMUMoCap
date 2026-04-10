@@ -51,16 +51,17 @@ namespace IMUMoCap.Pipeline
         private float _lastRightYaw     = 0f;
 
         public PdEstimate Update(ValidFrame frame, GaitEvent gait,
-                                 MotionContext context, MotionContextDetector contextDetector)
+                                 MotionContext context, MotionContextDetector contextDetector,
+                                 CalibrationProfile? calibration = null)
         {
             if (context.State != ContextState.Straight && context.State != ContextState.ReacquiringPd)
                 return BuildEstimate();
 
             float pelvisYaw = frame.Pelvis.HasQuaternion
-                ? ExtractYaw(frame.Pelvis.Quaternion)
+                ? ExtractYaw(CalibrateQuaternion(frame.Pelvis.Quaternion, calibration?.PelvisRef))
                 : _currentPd;
 
-            TrackStanceYaw(frame, gait);
+            TrackStanceYaw(frame, gait, calibration);
 
             if (!TryConsumeStep(out float leftYaw, out float rightYaw))
                 return BuildEstimate();
@@ -97,12 +98,12 @@ namespace IMUMoCap.Pipeline
 
         // ── 私有方法 ──────────────────────────────────────────────────────────
 
-        private void TrackStanceYaw(ValidFrame frame, GaitEvent gait)
+        private void TrackStanceYaw(ValidFrame frame, GaitEvent gait, CalibrationProfile? calibration)
         {
             if (gait.LeftStance)
             {
                 if (!_leftInStance) { _leftInStance = true; _leftStanceYaw = 0f; _leftStanceFrames = 0; }
-                _leftStanceYaw += ExtractYaw(frame.LeftFoot.Quaternion);
+                _leftStanceYaw += ExtractYaw(CalibrateQuaternion(frame.LeftFoot.Quaternion, calibration?.LeftFootRef));
                 _leftStanceFrames++;
             }
             else if (_leftInStance)
@@ -115,7 +116,7 @@ namespace IMUMoCap.Pipeline
             if (gait.RightStance)
             {
                 if (!_rightInStance) { _rightInStance = true; _rightStanceYaw = 0f; _rightStanceFrames = 0; }
-                _rightStanceYaw += ExtractYaw(frame.RightFoot.Quaternion);
+                _rightStanceYaw += ExtractYaw(CalibrateQuaternion(frame.RightFoot.Quaternion, calibration?.RightFootRef));
                 _rightStanceFrames++;
             }
             else if (_rightInStance)
@@ -188,5 +189,16 @@ namespace IMUMoCap.Pipeline
         private static float ExtractYaw(System.Numerics.Quaternion q)
             => MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y),
                            1f - 2f * (q.Y * q.Y + q.Z * q.Z));
+
+        /// <summary>
+        /// 用校准参考四元数修正测量四元数。
+        /// 返回相对参考姿态的相对旋转：q_corrected = Inverse(q_ref) * q_measured
+        /// </summary>
+        private static System.Numerics.Quaternion CalibrateQuaternion(System.Numerics.Quaternion measured,
+                                                                       System.Numerics.Quaternion? reference)
+        {
+            if (!reference.HasValue) return measured;
+            return System.Numerics.Quaternion.Multiply(System.Numerics.Quaternion.Inverse(reference.Value), measured);
+        }
     }
 }

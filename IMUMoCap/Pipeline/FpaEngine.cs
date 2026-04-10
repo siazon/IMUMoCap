@@ -42,7 +42,8 @@ namespace IMUMoCap.Pipeline
         private StanceSampler _rightSampler = new();
 
         public FpaResult? Process(ValidFrame frame, GaitEvent gait,
-                                  MotionContext context, PdEstimate pd)
+                                  MotionContext context, PdEstimate pd,
+                                  CalibrationProfile? calibration = null)
         {
             // 门控 3 & 4：上下文和 PD
             bool contextOk = context.State == ContextState.Straight
@@ -66,12 +67,12 @@ namespace IMUMoCap.Pipeline
 
             // 采样
             if (gait.LeftStance)
-                _leftSampler.AddFrame(ExtractYaw(frame.LeftFoot.Quaternion));
+                _leftSampler.AddFrame(ExtractYaw(CalibrateQuaternion(frame.LeftFoot.Quaternion, calibration?.LeftFootRef)));
             else
                 _leftSampler.MarkSwing();
 
             if (gait.RightStance)
-                _rightSampler.AddFrame(ExtractYaw(frame.RightFoot.Quaternion));
+                _rightSampler.AddFrame(ExtractYaw(CalibrateQuaternion(frame.RightFoot.Quaternion, calibration?.RightFootRef)));
             else
                 _rightSampler.MarkSwing();
 
@@ -140,6 +141,17 @@ namespace IMUMoCap.Pipeline
         }
 
         private static float RadToDeg(float rad) => rad * (180f / MathF.PI);
+
+        /// <summary>
+        /// 用校准参考四元数修正测量四元数。
+        /// 返回相对参考姿态的相对旋转：q_corrected = Inverse(q_ref) * q_measured
+        /// </summary>
+        private static System.Numerics.Quaternion CalibrateQuaternion(System.Numerics.Quaternion measured,
+                                                                       System.Numerics.Quaternion? reference)
+        {
+            if (!reference.HasValue) return measured;
+            return System.Numerics.Quaternion.Multiply(System.Numerics.Quaternion.Inverse(reference.Value), measured);
+        }
 
         // ── StanceSampler（内嵌私有类）────────────────────────────────────────
         // 追踪单脚在 stance 期间的 yaw 样本，实现早-稳结算逻辑
