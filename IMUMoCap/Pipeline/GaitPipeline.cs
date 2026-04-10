@@ -164,6 +164,13 @@ namespace IMUMoCap.Pipeline
                 _baseline.AddStep(fpaResult);
                 OnBaselineProgress?.Invoke(_baseline.CollectedSteps_L, _baseline.CollectedSteps_R);
                 OnFpaResult?.Invoke(fpaResult);  // UI 可选显示
+
+                // 自动检查完成条件：两脚均达阈值时自动结束
+                if (_baseline.IsReady)
+                {
+                    FinalizeBaseline();
+                    OnLog?.Invoke("Baseline auto-finalized.");
+                }
                 return;
             }
 
