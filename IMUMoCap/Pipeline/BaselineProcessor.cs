@@ -21,7 +21,11 @@ namespace IMUMoCap.Pipeline
 
         public int CollectedSteps_L => _fpaL.Count;
         public int CollectedSteps_R => _fpaR.Count;
-        public bool IsReady => _fpaL.Count >= MinValidSteps && _fpaR.Count >= MinValidSteps;
+        // 主条件：两脚都达到阈值（正常情况）
+        // 兜底条件：领先脚超过 2× 阈值时也视为完成，防止单脚长期采不到导致永久卡住
+        public bool IsReady =>
+            (_fpaL.Count >= MinValidSteps && _fpaR.Count >= MinValidSteps) ||
+            Math.Max(_fpaL.Count, _fpaR.Count) >= MinValidSteps * 2;
 
         /// <summary>每次 FpaEngine 输出一个 FpaResult 时调用。</summary>
         public void AddStep(FpaResult result)

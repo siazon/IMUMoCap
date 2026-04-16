@@ -112,7 +112,9 @@ namespace IMUMoCap.Pipeline
                 float conf = 1f - (float)_turningFrames / TurningConfirmFrames;
                 return new MotionContext { State = ContextState.Straight, Confidence = conf };
             }
-            _turningFrames = 0;
+            // 直行时重置累积量，防止 deltaQYaw 随时间无限积累后永久触发 turningSignal
+            _turningFrames  = 0;
+            _deltaQYawAccum = 0f;
             return new MotionContext { State = ContextState.Straight, Confidence = 1f };
         }
 

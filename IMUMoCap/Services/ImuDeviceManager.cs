@@ -413,7 +413,7 @@ namespace IMUMoCap.Services
 
         private void OnDeviceError(object? sender, DeviceErrorArgs e)
         {
-            Log?.Invoke(string.Format("ERROR. ID: {0}", e.DeviceId.toXsString().toString()));
+            Log?.Invoke(string.Format("ERROR. ID: {0}. {1}", e.DeviceId.toXsString().toString(),e.Result));
             switch (State)
             {
                 case States.AWAIT_MEASUREMENT_START:

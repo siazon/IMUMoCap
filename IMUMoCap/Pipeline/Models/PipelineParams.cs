@@ -14,6 +14,7 @@ namespace IMUMoCap.Pipeline.Models
         // GaitEventDetector
         public float StanceFreeAccThreshold  { get; set; } = 2.5f;  // 0.5–5.0
         public float StanceGyroThreshold     { get; set; } = 1.0f;  // 0.1–3.0
+        public float StanceFootPitchThreshold { get; set; } = 0.175f; // rad，~10°，与校准参考 X 轴偏转上限
 
         // FpaEngine gate thresholds
         public float PdConfidenceThreshold   { get; set; } = 0.7f;  // 0.3–1.0

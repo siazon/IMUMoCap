@@ -172,11 +172,13 @@ namespace IMUMoCap.Pipeline
                 && f.RightFoot.RateOfTurn.LengthSquared() < gyroThSq;
         }
 
-        /// <summary>垂直加速度 = 自由加速度的 Z 分量绝对值（Xsens 世界系 Z 轴朝上）</summary>
+        /// <summary>
+        /// 垂直加速度 = 传感器系 Z 轴减去重力。
+        /// FreeAcceleration（世界系）在冲击后出现大幅负值弹跳，导致"平静"条件延迟，
+        /// 使用原始 Acceleration.Z - g 更可靠：落地后 Az ≈ 9.81，差值趋近 0，立刻满足平静条件。
+        /// </summary>
         private static float GetVerticalAccelerationRaw(ImuSampleFrame f)
         {
-            if (f.HasFreeAcceleration)
-                return MathF.Abs(f.FreeAcceleration.Z);
             if (f.HasAcceleration)
                 return MathF.Abs(f.Acceleration.Z - 9.81f);
             return 0f;

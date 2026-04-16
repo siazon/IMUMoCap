@@ -6,21 +6,15 @@ using IMUMoCap.Pipeline.Models;
 namespace IMUMoCap.Pipeline
 {
     /// <summary>
-    /// 四重门控 + 早-稳结算，输出步级 FpaResult。
+    /// 门控 + 落地稳定后结算，输出步级 FpaResult。
     ///
-    /// 四重门控（全部满足才进入结算）：
-    ///   1. 帧有效（ValidFrame，已由 DataQualityGate 保证）
-    ///   2. 步有效：GaitEvent 显示完整 stance 周期（左脚或右脚处于 stance）
-    ///   3. 上下文允许：MotionContext.State == Straight 且 Confidence >= ContextConfidenceThreshold
-    ///   4. PD 有效：PdEstimate.IsValid == true 且 Stability >= PdStabilityThreshold
-    ///
-    /// 早-稳结算（per foot，独立）：
-    ///   在 stance 期间持续估计 FPA，监测滑动窗口方差；
-    ///   方差 < VarianceThreshold 时立即结算；
-    ///   超过 StancePhaseUpperLimit（0–1，stance 相位比例）时强制结算。
+    /// 采集与输出分离：
+    ///   采集：只要脚在 stance 就持续采集 yaw，gate 失败不丢弃已采集数据。
+    ///   输出：swing→stance 后累积 MinStanceFramesForSettle 帧 AND 当前帧 gate 全通过
+    ///         → 立即输出 FPA，本 stance 周期不再重复输出。
     ///
     /// FPA 计算：
-    ///   FPA = mean(foot_yaw during stance) - PD.DirectionRad，转换为度
+    ///   FPA = mean(foot_yaw，落地后前 n 帧) - PD.DirectionRad，转换为度
     ///   正值 = toe-out，负值 = toe-in
     /// </summary>
     public sealed class FpaEngine
@@ -29,43 +23,22 @@ namespace IMUMoCap.Pipeline
         public float ContextConfidenceThreshold { get; set; } = 0.7f;
         public float PdStabilityThreshold       { get; set; } = 0.7f;
 
-        // ── 早-稳结算参数 ──────────────────────────────────────────────────────
-        public float VarianceThreshold        { get; set; } = 1.0f;  // rad²，方差收敛阈值
-        public float StancePhaseUpperLimit    { get; set; } = 0.70f; // stance 时长的 70% 强制结算
-        public int   MinStanceFramesForSettle { get; set; } = 5;     // 最少帧数才允许结算
+        // ── 结算参数 ──────────────────────────────────────────────────────────
+        // swing→stance 后累积此帧数再输出 FPA（@100Hz，10帧=100ms）
+        public int MinStanceFramesForSettle { get; set; } = 10;
 
         // ── BaselineProfile（Training 阶段设置，Baseline 阶段为 null）────────
         public BaselineProfile? Baseline { get; set; }
 
         // ── 内部 stance 追踪（per foot）───────────────────────────────────────
-        private StanceSampler _leftSampler  = new();
-        private StanceSampler _rightSampler = new();
+        private readonly StanceSampler _leftSampler  = new();
+        private readonly StanceSampler _rightSampler = new();
 
         public FpaResult? Process(ValidFrame frame, GaitEvent gait,
                                   MotionContext context, PdEstimate pd,
                                   CalibrationProfile? calibration = null)
         {
-            // 门控 3 & 4：上下文和 PD
-            bool contextOk = context.State == ContextState.Straight
-                          && context.Confidence >= ContextConfidenceThreshold;
-            bool pdOk = pd.IsValid && pd.Stability >= PdStabilityThreshold;
-
-            if (!contextOk || !pdOk)
-            {
-                _leftSampler.Reset();
-                _rightSampler.Reset();
-                return null;
-            }
-
-            // 门控 2：step valid（至少一脚在 stance）
-            if (!gait.LeftStance && !gait.RightStance)
-            {
-                _leftSampler.Reset();
-                _rightSampler.Reset();
-                return null;
-            }
-
-            // 采样
+            // ── Step 1: 无条件更新 stance 状态（采集与 gate 无关）────────────────
             if (gait.LeftStance)
                 _leftSampler.AddFrame(ExtractYaw(CalibrateQuaternion(frame.LeftFoot.Quaternion, calibration?.LeftFootRef)));
             else
@@ -76,13 +49,19 @@ namespace IMUMoCap.Pipeline
             else
                 _rightSampler.MarkSwing();
 
-            // 检查是否有脚完成了结算
-            float? fpaL = _leftSampler.TrySettle(VarianceThreshold, StancePhaseUpperLimit,
-                                                   MinStanceFramesForSettle);
-            float? fpaR = _rightSampler.TrySettle(VarianceThreshold, StancePhaseUpperLimit,
-                                                   MinStanceFramesForSettle);
+            // ── Step 2: Gate 检查——仅影响输出，不影响采集 ──────────────────────
+            bool contextOk = context.State == ContextState.Straight
+                          && context.Confidence >= ContextConfidenceThreshold;
+            bool pdOk = pd.IsValid && pd.Stability >= PdStabilityThreshold;
+            if (!contextOk || !pdOk) return null;
 
-            // 只有至少一脚完成结算时才输出结果
+            // 两脚都在 swing（双悬空）时无意义，不输出
+            if (!gait.LeftStance && !gait.RightStance) return null;
+
+            // ── Step 3: 尝试结算：落地后 n 帧已满 + gate 通过 → 输出 ──────────
+            float? fpaL = _leftSampler.TrySettle(MinStanceFramesForSettle);
+            float? fpaR = _rightSampler.TrySettle(MinStanceFramesForSettle);
+
             if (fpaL == null && fpaR == null) return null;
 
             float fpaLDeg = fpaL.HasValue
@@ -142,103 +121,61 @@ namespace IMUMoCap.Pipeline
 
         private static float RadToDeg(float rad) => rad * (180f / MathF.PI);
 
-        /// <summary>
-        /// 用校准参考四元数修正测量四元数。
-        /// 返回相对参考姿态的相对旋转：q_corrected = Inverse(q_ref) * q_measured
-        /// </summary>
-        private static System.Numerics.Quaternion CalibrateQuaternion(System.Numerics.Quaternion measured,
-                                                                       System.Numerics.Quaternion? reference)
+        private static System.Numerics.Quaternion CalibrateQuaternion(
+            System.Numerics.Quaternion measured, System.Numerics.Quaternion? reference)
         {
             if (!reference.HasValue) return measured;
-            return System.Numerics.Quaternion.Multiply(System.Numerics.Quaternion.Inverse(reference.Value), measured);
+            return System.Numerics.Quaternion.Multiply(
+                System.Numerics.Quaternion.Inverse(reference.Value), measured);
         }
 
         // ── StanceSampler（内嵌私有类）────────────────────────────────────────
-        // 追踪单脚在 stance 期间的 yaw 样本，实现早-稳结算逻辑
+        // 单脚状态机：检测 swing→stance 转换，落地后采集 n 帧，输出一次 FPA。
 
         private sealed class StanceSampler
         {
-            private readonly List<float> _yaws = new();
-            private bool  _inStance                   = false;
-            private bool  _settled                    = false;
-            private float _settledYaw                 = 0f;
-            private int   _totalStanceFramesEstimate  = 0; // 用前次 stance 长度估算
+            private readonly List<float> _yaws     = new();
+            private bool _inStance                 = false;
+            private bool _emittedThisStance        = false; // 本 stance 周期已输出过
 
+            /// <summary>脚处于 stance 时每帧调用，首次调用即为 swing→stance 转换。</summary>
             public void AddFrame(float yaw)
             {
                 if (!_inStance)
                 {
-                    _inStance = true;
-                    _settled  = false;
+                    // swing→stance 转换：重置本步采集状态
+                    _inStance          = true;
+                    _emittedThisStance = false;
                     _yaws.Clear();
                 }
                 _yaws.Add(yaw);
             }
 
+            /// <summary>脚处于 swing 时每帧调用。</summary>
             public void MarkSwing()
             {
-                if (_inStance)
-                {
-                    // stance 结束，如果还没结算，记录当前均值
-                    if (!_settled && _yaws.Count > 0)
-                    {
-                        _settledYaw = Mean(_yaws);
-                        _settled    = true;
-                    }
-                    // 更新 stance 长度估计（取最近一次）
-                    if (_yaws.Count > 0)
-                        _totalStanceFramesEstimate = _yaws.Count;
-                    _inStance = false;
-                }
+                _inStance = false;
             }
 
             /// <summary>
-            /// 在 stance 中途尝试提前结算。
-            /// 返回结算值（rad）或 null（尚未结算/上次已消费）。
+            /// 尝试输出本步 FPA（rad）。
+            /// 条件：处于 stance + 已累积 minFrames 帧 + 本 stance 尚未输出。
+            /// 满足则返回均值并标记已输出；否则返回 null。
             /// </summary>
-            public float? TrySettle(float varianceThreshold, float phaseUpperLimit, int minFrames)
+            public float? TrySettle(int minFrames)
             {
-                // 已结算且 stance 刚结束（MarkSwing 触发）：返回结果并消费
-                if (_settled && !_inStance)
-                {
-                    _settled = false;
-                    return _settledYaw;
-                }
+                if (!_inStance || _emittedThisStance)  return null;
+                if (_yaws.Count < minFrames)            return null;
 
-                if (!_inStance || _settled) return null;
-                if (_yaws.Count < minFrames)  return null;
-
-                // 计算当前方差
-                float mean = Mean(_yaws);
-                float var  = Variance(_yaws, mean);
-
-                // 方差收敛
-                if (var < varianceThreshold)
-                {
-                    _settledYaw = mean;
-                    _settled    = true;
-                    return null; // 等 swing 开始后再报告，避免重复
-                }
-
-                // 超过相位上限，强制结算
-                if (_totalStanceFramesEstimate > 0)
-                {
-                    float phase = (float)_yaws.Count / _totalStanceFramesEstimate;
-                    if (phase >= phaseUpperLimit)
-                    {
-                        _settledYaw = mean;
-                        _settled    = true;
-                    }
-                }
-
-                return null;
+                _emittedThisStance = true;
+                return Mean(_yaws);
             }
 
             public void Reset()
             {
                 _yaws.Clear();
-                _inStance = false;
-                _settled  = false;
+                _inStance          = false;
+                _emittedThisStance = false;
             }
 
             private static float Mean(List<float> vs)
@@ -246,13 +183,6 @@ namespace IMUMoCap.Pipeline
                 float sum = 0f;
                 foreach (var v in vs) sum += v;
                 return sum / vs.Count;
-            }
-
-            private static float Variance(List<float> vs, float mean)
-            {
-                float sumSq = 0f;
-                foreach (var v in vs) sumSq += (v - mean) * (v - mean);
-                return sumSq / vs.Count;
             }
         }
     }

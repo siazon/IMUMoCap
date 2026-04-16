@@ -35,9 +35,9 @@ namespace IMUMoCap.Pipeline
         private float  _currentPd       = 0f;
         private bool   _hasEstimate     = false;
         private int    _stepCount       = 0;
-        private readonly Queue<float> _pdHistory = new();
-        private float  _pdHistorySum    = 0f;
-        private float  _pdHistorySumSq  = 0f;
+        private readonly Queue<float> _pdHistory    = new();
+        private float  _pdHistorySumCos = 0f;  // 用于圆形方差（处理角度 ±π 环绕）
+        private float  _pdHistorySumSin = 0f;
 
         private bool  _leftInStance     = false;
         private bool  _rightInStance    = false;
@@ -88,8 +88,8 @@ namespace IMUMoCap.Pipeline
             _hasEstimate = false;
             _stepCount   = 0;
             _pdHistory.Clear();
-            _pdHistorySum   = 0f;
-            _pdHistorySumSq = 0f;
+            _pdHistorySumCos = 0f;
+            _pdHistorySumSin = 0f;
             _leftInStance = _rightInStance = false;
             _leftStanceFrames = _rightStanceFrames = 0;
             _leftYawReady = _rightYawReady = false;
@@ -155,13 +155,13 @@ namespace IMUMoCap.Pipeline
         private void UpdateHistory(float pd)
         {
             _pdHistory.Enqueue(pd);
-            _pdHistorySum   += pd;
-            _pdHistorySumSq += pd * pd;
+            _pdHistorySumCos += MathF.Cos(pd);
+            _pdHistorySumSin += MathF.Sin(pd);
             if (_pdHistory.Count > StabilityWindow)
             {
                 float old = _pdHistory.Dequeue();
-                _pdHistorySum   -= old;
-                _pdHistorySumSq -= old * old;
+                _pdHistorySumCos -= MathF.Cos(old);
+                _pdHistorySumSin -= MathF.Sin(old);
             }
         }
 
@@ -169,10 +169,12 @@ namespace IMUMoCap.Pipeline
         {
             int n = _pdHistory.Count;
             if (n < 2) return 0f;
-            float mean     = _pdHistorySum / n;
-            float variance = _pdHistorySumSq / n - mean * mean;
-            variance = MathF.Max(variance, 0f);
-            return 1f / (1f + variance);
+            // 平均合矢量长度 R̄ ∈ [0,1]：1 = 方向完全一致，0 = 方向随机分布
+            // 圆形方差 = 1 - R̄，代入线性公式保持阈值语义不变
+            float rBar    = MathF.Sqrt(_pdHistorySumCos * _pdHistorySumCos +
+                                       _pdHistorySumSin * _pdHistorySumSin) / n;
+            float circVar = 1f - rBar;
+            return 1f / (1f + circVar);
         }
 
         private PdEstimate BuildEstimate()

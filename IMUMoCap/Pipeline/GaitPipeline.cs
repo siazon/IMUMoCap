@@ -38,6 +38,7 @@ namespace IMUMoCap.Pipeline
         public event Action<FpaResult>?        OnFpaResult;
         public event Action<CalibrationState>? OnCalibrationStateChanged;
         public event Action<int, int>?         OnBaselineProgress;  // (stepsL, stepsR)
+        public event Action<BaselineProfile?>? OnBaselineCompleted; // auto- or manual-finalize
         public event Action<string>?           OnLog;
 
         // ── 状态 ──────────────────────────────────────────────────────────────
@@ -65,6 +66,7 @@ namespace IMUMoCap.Pipeline
             // GaitEventDetector
             _gait.FreeAccStanceThreshold = Params.StanceFreeAccThreshold;
             _gait.GyroThreshold          = Params.StanceGyroThreshold;
+            _gait.FootPitchThreshold     = Params.StanceFootPitchThreshold;
 
             // FpaEngine
             _fpa.ContextConfidenceThreshold = Params.PdConfidenceThreshold;
@@ -206,6 +208,7 @@ namespace IMUMoCap.Pipeline
                 OnLog?.Invoke($"Baseline done. μL={BaselineProfile.MeanFpa_L:F1}° μR={BaselineProfile.MeanFpa_R:F1}°");
             else
                 OnLog?.Invoke("Baseline failed — insufficient valid steps.");
+            OnBaselineCompleted?.Invoke(BaselineProfile);
             return BaselineProfile;
         }
 

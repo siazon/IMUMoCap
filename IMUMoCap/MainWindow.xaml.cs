@@ -75,7 +75,7 @@ namespace IMUMoCap
 
             var imuList = new List<ImuViewModel>
             {
-                new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual,   DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis },
+                new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual,   DeviceId = 0x00B43D0B, Role = ImuRole.Pelvis },
                 new ImuViewModel(imuL)      { IMUDodel = ImuVisual1,  DeviceId = 0x10B41904, Role = ImuRole.Left   },
                 new ImuViewModel(imuR)      { IMUDodel = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.Right  },
             };
@@ -100,6 +100,7 @@ namespace IMUMoCap
             _pipeline.OnCalibrationStateChanged += s => Dispatcher.BeginInvoke(() => OnCalibrationStateChanged(s));
             _pipeline.OnBaselineProgress += (l, r) => Dispatcher.BeginInvoke(() =>
                 log($"Baseline: L={l} steps, R={r} steps"));
+            _pipeline.OnBaselineCompleted += profile => Dispatcher.BeginInvoke(() => HandleBaselineCompleted(profile));
             _pipeline.OnFpaResult += result => Dispatcher.BeginInvoke(() => OnFpaResult(result));
 
             // 参数同步：VM 属性变化时推入 pipeline
@@ -507,11 +508,8 @@ namespace IMUMoCap
                     _sessionState = TestState.Calibrated;
                     _pipeline.StartBaseline();
                     BroadcastArState("baseline");
-                    _baselineTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(3) };
-                    _baselineTimer.Tick += (_, _) => { _baselineTimer.Stop(); FinalizeBaseline(); };
-                    _baselineTimer.Start();
                     _sessionState = TestState.Baseline;
-                    _content.StatusLabel = "Baseline: Walk naturally for 3 minutes.";
+                    _content.StatusLabel = "Baseline: Walk until both feet reach 20 steps.";
                     break;
 
                 case CalibrationState.Failed:
@@ -522,12 +520,15 @@ namespace IMUMoCap
             }
         }
 
-        private void FinalizeBaseline()
+        private void HandleBaselineCompleted(BaselineProfile? profile)
         {
-            var profile = _pipeline.FinalizeBaseline();
-            if (profile == null)
+            _baselineTimer?.Stop();
+            if (profile == null || !profile.IsValid)
             {
-                _content.StatusLabel = "Baseline insufficient (< 20 valid steps). Please restart.";
+                string detail = profile == null
+                    ? "< 20 valid steps"
+                    : $"L={profile.ValidSteps_L} R={profile.ValidSteps_R} steps (need ≥20 each)";
+                _content.StatusLabel = $"Baseline insufficient ({detail}). Please restart.";
                 BroadcastArState("error");
                 return;
             }

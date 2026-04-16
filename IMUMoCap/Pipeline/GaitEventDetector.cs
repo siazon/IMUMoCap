@@ -1,4 +1,5 @@
 // IMUMoCap/Pipeline/GaitEventDetector.cs
+using System.Diagnostics;
 using System.Numerics;
 using IMUMoCap.Pipeline.Models;
 
@@ -7,19 +8,23 @@ namespace IMUMoCap.Pipeline
     /// <summary>
     /// 逐帧判定步态事件：stance/swing、stomp、isWalking。
     ///
-    /// Stance 判定：足部垂直加速度 ≈ 1g（free acc ≈ 0）AND 角速度 < GyroThreshold，
-    /// 且持续 MinStanceFrames 帧以上防抖。
+    /// Stance 判定（三重条件）：
+    ///   1. free acc 模长 &lt; FreeAccStanceThreshold（足部无明显线加速度）
+    ///   2. 角速度 &lt; GyroThreshold（足部无明显旋转）
+    ///   3. 足部 pitch 与校准参考差 &lt; FootPitchThreshold（防慢走时朝向接近但脚仍倾斜）
+    ///   且持续 MinStanceFrames 帧以上防抖。
+    ///
+    /// Pitch 检查：q_rel = Inverse(calRef) * q_current，提取绕 X 轴旋转角；
+    /// 校准参考为 null 或无四元数时跳过此条件。
     ///
     /// IsWalking：左右脚在 WalkingWindowFrames 内都至少有一次 stance 切换。
-    ///
-    /// StompDetected（校准后版本）：左脚垂直加速度峰值 > StompAccThreshold，
-    /// 持续 < StompMaxFrames，此版本比校准前更精确。
     /// </summary>
     public sealed class GaitEventDetector
     {
         // ── 可调参数 ──────────────────────────────────────────────────────────
-        public float FreeAccStanceThreshold { get; set; } = 2.5f;   // m/s²，free acc 模长 < 此值 = stance
+        public float FreeAccStanceThreshold { get; set; } = 2.5f;   // m/s²，free acc 模长
         public float GyroThreshold          { get; set; } = 1.0f;   // rad/s
+        public float FootPitchThreshold     { get; set; } = 0.175f;  // rad，~10°，与校准参考的 X 轴偏转上限
         public int   MinStanceFrames        { get; set; } = 5;
         public float StompAccThreshold_ms2  { get; set; } = 25f;
         public int   StompMaxFrames         { get; set; } = 20;
@@ -30,6 +35,7 @@ namespace IMUMoCap.Pipeline
         private int  _rightStanceCount  = 0;
         private bool _leftStancePrev    = false;
         private bool _rightStancePrev   = false;
+
         private int  _leftTransitions   = 0;   // stance↔swing 切换次数（滑动窗内）
         private int  _rightTransitions  = 0;
         private int  _walkingFrameCount = 0;
@@ -37,13 +43,10 @@ namespace IMUMoCap.Pipeline
         private bool _stompPeakSeen    = false;
         private int  _stompFrameCount  = 0;
 
-        public GaitEvent Detect(ValidFrame frame, CalibrationProfile _)
+        public GaitEvent Detect(ValidFrame frame, CalibrationProfile? calibration)
         {
-            // CalibrationProfile 预留参数，目前 stance 检测在世界系下直接用 free acc，
-            // 不需要安装偏差修正（世界系重力方向固定）
-
-            bool leftStance  = IsStance(frame.LeftFoot);
-            bool rightStance = IsStance(frame.RightFoot);
+            bool leftStance  = IsStance(frame.LeftFoot,  calibration?.LeftFootRef);
+            bool rightStance = IsStance(frame.RightFoot, calibration?.RightFootRef);
 
             // 防抖：需连续 MinStanceFrames 帧才确认
             _leftStanceCount  = leftStance  ? _leftStanceCount  + 1 : 0;
@@ -92,18 +95,27 @@ namespace IMUMoCap.Pipeline
 
         // ── 私有辅助 ──────────────────────────────────────────────────────────
 
-        private bool IsStance(ImuSampleFrame f)
+        private bool IsStance(ImuSampleFrame f, Quaternion? calRef)
         {
             if (!f.HasFreeAcceleration || !f.HasRateOfTurn) return false;
             bool accOk  = f.FreeAcceleration.Length() < FreeAccStanceThreshold;
             bool gyroOk = f.RateOfTurn.Length()       < GyroThreshold;
-            return accOk && gyroOk;
+            bool pitchOk = true;
+            if (calRef.HasValue && f.HasQuaternion)
+            {
+                Quaternion qRel = Quaternion.Multiply(Quaternion.Inverse(calRef.Value), f.Quaternion);
+                float pitch = MathF.Atan2(
+                    2f * (qRel.W * qRel.X + qRel.Y * qRel.Z),
+                    1f - 2f * (qRel.X * qRel.X + qRel.Y * qRel.Y));
+                pitchOk = MathF.Abs(pitch) < FootPitchThreshold;
+            }
+            return accOk && gyroOk && pitchOk;
         }
 
         private bool DetectStomp(ImuSampleFrame leftFoot)
         {
-            float vertAcc = leftFoot.HasFreeAcceleration
-                ? MathF.Abs(leftFoot.FreeAcceleration.Y)
+            float vertAcc = leftFoot.HasAcceleration
+                ? MathF.Abs(leftFoot.Acceleration.Z - 9.81f)
                 : 0f;
 
             if (!_stompPeakSeen)

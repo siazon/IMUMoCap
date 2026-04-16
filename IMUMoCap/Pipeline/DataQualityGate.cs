@@ -1,4 +1,5 @@
 // IMUMoCap/Pipeline/DataQualityGate.cs
+using System.Diagnostics;
 using System.Numerics;
 using IMUMoCap.Pipeline.Models;
 
@@ -34,11 +35,12 @@ namespace IMUMoCap.Pipeline
             var r = bundle.RightFoot!;
 
             // 1. StatusWord 检查
-            //if (HasStatusError(p) || HasStatusError(l) || HasStatusError(r))
-            //{
-            //    UpdatePrev(p, l, r);
-            //    return null;
-            //}
+            if (HasStatusError(p) || HasStatusError(l) || HasStatusError(r))
+            {
+                Debug.WriteLine($"[Gate] SW reject: P=0x{p.StatusWord:X} L=0x{l.StatusWord:X} R=0x{r.StatusWord:X}");
+                UpdatePrev(p, l, r);
+                return null;
+            }
 
             // 2. RSSI 检查
             //if (p.Rssi < RssiThresholdDbm || l.Rssi < RssiThresholdDbm || r.Rssi < RssiThresholdDbm)
