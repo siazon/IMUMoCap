@@ -5,34 +5,13 @@ using IMUMoCap.Pipeline;
 using IMUMoCap.Pipeline.Models;
 using IMUMoCap.Services;
 using System.Collections.Concurrent;
-using System.Data;
-using System.Diagnostics;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
-using System.Net.WebSockets;
-using System.Numerics;
-using System.Reflection.Metadata;
-using System.Runtime.Intrinsics.X86;
-using System.Text;
 using System.Text.Json;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
 using System.Windows.Threading;
 using XDA;
-using static System.Net.Mime.MediaTypeNames;
-using Application = System.Windows.Application;
-using MeshGeometry3D = System.Windows.Media.Media3D.MeshGeometry3D;
 using Quaternion = System.Windows.Media.Media3D.Quaternion;
-using System.IO;
 
 namespace IMUMoCap
 {
