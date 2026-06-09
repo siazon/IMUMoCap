@@ -1,6 +1,7 @@
 // IMUMoCap/Pipeline/GaitPipeline.cs
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using IMUMoCap.Methods;
 using IMUMoCap.Pipeline.Models;
 using XDA;
@@ -35,7 +36,7 @@ namespace IMUMoCap.Pipeline
         private readonly List<DiagnosticsRow> _diagnosticsBuffer = new();
 
         // ── 事件 ──────────────────────────────────────────────────────────────
-        public event Action<FpaResult>?        OnFpaResult;
+        public event Action<FpaResult,bool >?        OnFpaResult;
         public event Action<CalibrationState>? OnCalibrationStateChanged;
         public event Action<int, int>?         OnBaselineProgress;  // (stepsL, stepsR)
         public event Action<BaselineProfile?>? OnBaselineCompleted; // auto- or manual-finalize
@@ -76,7 +77,7 @@ namespace IMUMoCap.Pipeline
             _baseline.MinValidSteps = Params.MinBaselineSteps;
         }
 
-        private void Process(ImuFrameBundle bundle)
+        public void Process(ImuFrameBundle bundle)
         {
             SyncParams();
 
@@ -165,7 +166,7 @@ namespace IMUMoCap.Pipeline
             {
                 _baseline.AddStep(fpaResult);
                 OnBaselineProgress?.Invoke(_baseline.CollectedSteps_L, _baseline.CollectedSteps_R);
-                OnFpaResult?.Invoke(fpaResult);  // UI 可选显示
+                OnFpaResult?.Invoke(fpaResult, false);  // UI 可选显示
 
                 // 自动检查完成条件：两脚均达阈值时自动结束
                 if (_baseline.IsReady)
@@ -178,7 +179,7 @@ namespace IMUMoCap.Pipeline
 
             // Training 阶段：直接输出供 AR 反馈
             if (InTraining)
-                OnFpaResult?.Invoke(fpaResult);
+                OnFpaResult?.Invoke(fpaResult, true);
         }
 
         /// <summary>返回诊断数据快照（副本），用于 CSV 导出。不清空缓冲区。</summary>

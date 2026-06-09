@@ -51,7 +51,8 @@ namespace IMUMoCap.Pipeline
 
             return BaselineProfile.Create(
                 meanL, sdL, _fpaL.Count,
-                meanR, sdR, _fpaR.Count);
+                meanR, sdR, _fpaR.Count,
+                MinValidSteps);
         }
 
         public void Reset()

@@ -24,11 +24,11 @@ namespace IMUMoCap.Pipeline
         // ── 可调参数 ──────────────────────────────────────────────────────────
         public float FreeAccStanceThreshold { get; set; } = 2.5f;   // m/s²，free acc 模长
         public float GyroThreshold          { get; set; } = 1.0f;   // rad/s
-        public float FootPitchThreshold     { get; set; } = 0.175f;  // rad，~10°，与校准参考的 X 轴偏转上限
+        public float FootPitchThreshold     { get; set; } = 0.35f;   // rad，~20°，与校准参考的重力方向偏转上限（10°对转弯后left foot过紧）
         public int   MinStanceFrames        { get; set; } = 5;
         public float StompAccThreshold_ms2  { get; set; } = 25f;
         public int   StompMaxFrames         { get; set; } = 20;
-        public int   WalkingWindowFrames    { get; set; } = 300;     // 3s @100Hz
+        public int   WalkingWindowFrames    { get; set; } = 100;     // 3s @100Hz
 
         // ── 内部状态 ──────────────────────────────────────────────────────────
         private int  _leftStanceCount   = 0;
@@ -39,6 +39,7 @@ namespace IMUMoCap.Pipeline
         private int  _leftTransitions   = 0;   // stance↔swing 切换次数（滑动窗内）
         private int  _rightTransitions  = 0;
         private int  _walkingFrameCount = 0;
+        private bool _isWalking         = false;
 
         private bool _stompPeakSeen    = false;
         private int  _stompFrameCount  = 0;
@@ -60,11 +61,10 @@ namespace IMUMoCap.Pipeline
             if (rightStanceConfirmed != _rightStancePrev) { _rightTransitions++; _rightStancePrev = rightStanceConfirmed; }
 
             _walkingFrameCount++;
-            bool isWalking = false;
             if (_walkingFrameCount >= WalkingWindowFrames)
             {
                 // 3s 窗口内左右各至少有 2 次切换（一个完整 stance-swing 周期）
-                isWalking = _leftTransitions >= 2 && _rightTransitions >= 2;
+                _isWalking         = _leftTransitions >= 2 && _rightTransitions >= 2;
                 _walkingFrameCount = 0;
                 _leftTransitions   = 0;
                 _rightTransitions  = 0;
@@ -79,7 +79,7 @@ namespace IMUMoCap.Pipeline
                 LeftSwing     = !leftStanceConfirmed,
                 RightSwing    = !rightStanceConfirmed,
                 StompDetected = stomp,
-                IsWalking     = isWalking,
+                IsWalking     = _isWalking,
             };
         }
 
@@ -91,6 +91,7 @@ namespace IMUMoCap.Pipeline
             _walkingFrameCount = 0;
             _stompPeakSeen   = false;
             _stompFrameCount = 0;
+            _isWalking       = false;
         }
 
         // ── 私有辅助 ──────────────────────────────────────────────────────────
@@ -103,11 +104,14 @@ namespace IMUMoCap.Pipeline
             bool pitchOk = true;
             if (calRef.HasValue && f.HasQuaternion)
             {
-                Quaternion qRel = Quaternion.Multiply(Quaternion.Inverse(calRef.Value), f.Quaternion);
-                float pitch = MathF.Atan2(
-                    2f * (qRel.W * qRel.X + qRel.Y * qRel.Z),
-                    1f - 2f * (qRel.X * qRel.X + qRel.Y * qRel.Y));
-                pitchOk = MathF.Abs(pitch) < FootPitchThreshold;
+                // Measure tilt as angle between gravity direction in sensor frame now vs. at
+                // calibration. This is yaw-independent: a flat foot at any heading has the
+                // same gravity vector in sensor frame. The old qRel pitch extraction broke
+                // after turns because heading change coupled into the relative pitch angle.
+                var gRef = Vector3.Transform(-Vector3.UnitZ, Quaternion.Inverse(calRef.Value));
+                var gNow = Vector3.Transform(-Vector3.UnitZ, Quaternion.Inverse(f.Quaternion));
+                float cosTilt = Math.Clamp(Vector3.Dot(gRef, gNow), -1f, 1f);
+                pitchOk = MathF.Acos(cosTilt) < FootPitchThreshold;
             }
             return accOk && gyroOk && pitchOk;
         }

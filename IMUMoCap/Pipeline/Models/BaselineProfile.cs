@@ -26,7 +26,8 @@ namespace IMUMoCap.Pipeline.Models
         public TrainingDirection Direction_L { get; init; }
         public TrainingDirection Direction_R { get; init; }
 
-        public bool IsValid => ValidSteps_L >= 20 && ValidSteps_R >= 20;
+        public int  MinRequiredSteps { get; init; }
+        public bool IsValid => ValidSteps_L >= MinRequiredSteps && ValidSteps_R >= MinRequiredSteps;
 
         /// <summary>
         /// 从统计数据计算训练目标，规则：
@@ -35,7 +36,8 @@ namespace IMUMoCap.Pipeline.Models
         /// </summary>
         public static BaselineProfile Create(
             float meanL, float sdL, int stepsL,
-            float meanR, float sdR, int stepsR)
+            float meanR, float sdR, int stepsR,
+            int minRequiredSteps = 20)
         {
             static (float target, TrainingDirection dir) ComputeTarget(float mean)
             {
@@ -45,18 +47,19 @@ namespace IMUMoCap.Pipeline.Models
                     return (mean + 5f, TrainingDirection.ToeOut);
             }
 
-            static float ComputeTolerance(float sd) => Math.Clamp(sd, 2f, 5f);
+            static float ComputeTolerance(float sd) => Math.Clamp(sd, 6f, 10f);
 
             var (tL, dL) = ComputeTarget(meanL);
             var (tR, dR) = ComputeTarget(meanR);
 
             return new BaselineProfile
             {
-                MeanFpa_L   = meanL, SdFpa_L   = sdL, ValidSteps_L = stepsL,
-                MeanFpa_R   = meanR, SdFpa_R   = sdR, ValidSteps_R = stepsR,
-                Asymmetry   = MathF.Abs(meanL - meanR),
-                Target_L    = tL,    Direction_L = dL, Tolerance_L = ComputeTolerance(sdL),
-                Target_R    = tR,    Direction_R = dR, Tolerance_R = ComputeTolerance(sdR),
+                MeanFpa_L       = meanL, SdFpa_L   = sdL, ValidSteps_L = stepsL,
+                MeanFpa_R       = meanR, SdFpa_R   = sdR, ValidSteps_R = stepsR,
+                Asymmetry       = MathF.Abs(meanL - meanR),
+                Target_L        = tL,    Direction_L = dL, Tolerance_L = ComputeTolerance(sdL),
+                Target_R        = tR,    Direction_R = dR, Tolerance_R = ComputeTolerance(sdR),
+                MinRequiredSteps = minRequiredSteps,
             };
         }
     }

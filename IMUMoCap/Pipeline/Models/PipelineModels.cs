@@ -58,6 +58,8 @@ namespace IMUMoCap.Pipeline.Models
         public bool  OnTarget_R  { get; set; }
         public float Error_L     { get; set; }  // FPA - Target，带符号，供AR反馈
         public float Error_R     { get; set; }
+        public float Tolerance_L { get; set; }  // NaN if no baseline
+        public float Tolerance_R { get; set; }
     }
 
     // ── FrameQualityReport ────────────────────────────────────────────────────

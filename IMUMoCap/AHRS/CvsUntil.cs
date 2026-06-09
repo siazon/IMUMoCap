@@ -32,7 +32,7 @@ namespace IMUMoCap.AHRS
                 File.CreateText(path);
             return new StreamReader(path);
         }
-        public void WriteCVS(string path, string fileName, List<RecoredData> data)
+        public void WriteCVS(string path, string fileName, List<RecordedData> data)
         {
             var csv = new StringBuilder();
             var header = string.Format("PacketId,Gyroscope X (deg/s),Gyroscope Y (deg/s),Gyroscope Z (deg/s),Accelerometer X (g),Accelerometer Y (g),Accelerometer Z (g)");

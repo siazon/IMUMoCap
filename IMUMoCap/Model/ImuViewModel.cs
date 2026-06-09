@@ -17,7 +17,7 @@ public class ImuViewModel : INotifyPropertyChanged
         get => _quat;
         set { _quat = value; OnPropertyChanged(); }
     }
-    public ModelVisual3D IMUDodel { get; set; }
+    public ModelVisual3D ImuVisual { get; set; }
     private bool _isConnected;
     public bool IsConnected
     {

@@ -47,7 +47,7 @@ namespace IMUMoCap
         private readonly GaitPipeline _pipeline = new();
         public WebSocketBroadcastServer? _wsServer;
         ConcurrentQueue<double[]> actionQueue = new ConcurrentQueue<double[]>();
-        BlockingCollection<RecoredData> ImuDataQueue = new BlockingCollection<RecoredData>(new ConcurrentQueue<RecoredData>(), 2000);
+        BlockingCollection<RecordedData> ImuDataQueue = new BlockingCollection<RecordedData>(new ConcurrentQueue<RecordedData>(), 2000);
         string imuPelvis = "imuPelvis", imuL = "imuL", imuR = "imuR";
         private readonly bool _useConjugateForHeading = true; // 你想用哪套就统一哪套
         private const double TrainingStatusThresholdDeg = 10.0;
@@ -56,6 +56,7 @@ namespace IMUMoCap
         private volatile bool _stanceL;
         private volatile bool _stanceR;
         private DispatcherTimer _uiTimer;
+        private volatile bool _isReplaying = false;
 
         // Data recording configuration
         private int _sampleRateHz = 100; // Default 10 Hz
@@ -75,20 +76,20 @@ namespace IMUMoCap
 
             var imuList = new List<ImuViewModel>
             {
-                new ImuViewModel(imuPelvis) { IMUDodel = ImuVisual,   DeviceId = 0x00B43D0B, Role = ImuRole.Pelvis },
-                new ImuViewModel(imuL)      { IMUDodel = ImuVisual1,  DeviceId = 0x10B41904, Role = ImuRole.Left   },
-                new ImuViewModel(imuR)      { IMUDodel = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.Right  },
+                new ImuViewModel(imuPelvis) { ImuVisual = ImuVisual,   DeviceId = 0x00B43D0B, Role = ImuRole.Pelvis },
+                new ImuViewModel(imuL)      { ImuVisual = ImuVisual1,  DeviceId = 0x10B41904, Role = ImuRole.Left   },
+                new ImuViewModel(imuR)      { ImuVisual = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.Right  },
             };
             _slotRegistry = new ImuSlotRegistry(imuList);
 
             _deviceManager = new ImuDeviceManager(_slotRegistry);
-            _deviceManager.Log                  += msg => Dispatcher.BeginInvoke(() => log(msg));
-            _deviceManager.StateChanged         += s   => Dispatcher.BeginInvoke(() => OnDeviceStateChanged(s));
-            _deviceManager.UpdateRatesAvailable += ev  => Dispatcher.BeginInvoke(() => OnUpdateRatesAvailable(ev));
-            _deviceManager.MtwConnected         += ev  => Dispatcher.BeginInvoke(() => OnMtwConnected(ev));
-            _deviceManager.MtwDisconnected      += ev  => Dispatcher.BeginInvoke(() => OnMtwDisconnected(ev));
-            _deviceManager.DataPacketReceived   += ev  => Dispatcher.BeginInvoke(() => OnDataPacket(ev));
-            _deviceManager.BatteryLevelChanged  += ev  => Dispatcher.BeginInvoke(() => OnBattery(ev));
+            _deviceManager.Log += msg => Dispatcher.BeginInvoke(() => log(msg));
+            _deviceManager.StateChanged += s => Dispatcher.BeginInvoke(() => OnDeviceStateChanged(s));
+            _deviceManager.UpdateRatesAvailable += ev => Dispatcher.BeginInvoke(() => OnUpdateRatesAvailable(ev));
+            _deviceManager.MtwConnected += ev => Dispatcher.BeginInvoke(() => OnMtwConnected(ev));
+            _deviceManager.MtwDisconnected += ev => Dispatcher.BeginInvoke(() => OnMtwDisconnected(ev));
+            _deviceManager.DataPacketReceived += ev => Dispatcher.BeginInvoke(() => OnDataPacket(ev));
+            _deviceManager.BatteryLevelChanged += ev => Dispatcher.BeginInvoke(() => OnBattery(ev));
 
             _content.StatusLabel = "Ready to calibration";
             _imuRotTf = new RotateTransform3D(_imuRot);
@@ -97,11 +98,17 @@ namespace IMUMoCap
 
             // 流水线事件订阅
             _pipeline.OnLog += msg => Dispatcher.BeginInvoke(() => log(msg));
-            _pipeline.OnCalibrationStateChanged += s => Dispatcher.BeginInvoke(() => OnCalibrationStateChanged(s));
+            _pipeline.OnCalibrationStateChanged += s =>
+            {
+                if (!_isReplaying) Dispatcher.BeginInvoke(() => OnCalibrationStateChanged(s));
+            };
             _pipeline.OnBaselineProgress += (l, r) => Dispatcher.BeginInvoke(() =>
                 log($"Baseline: L={l} steps, R={r} steps"));
-            _pipeline.OnBaselineCompleted += profile => Dispatcher.BeginInvoke(() => HandleBaselineCompleted(profile));
-            _pipeline.OnFpaResult += result => Dispatcher.BeginInvoke(() => OnFpaResult(result));
+            _pipeline.OnBaselineCompleted += profile =>
+            {
+                if (!_isReplaying) Dispatcher.BeginInvoke(() => HandleBaselineCompleted(profile));
+            };
+            _pipeline.OnFpaResult += (result, isTraining) => Dispatcher.BeginInvoke(() => OnFpaResult(result, isTraining));
 
             // 参数同步：VM 属性变化时推入 pipeline
             _content.PropertyChanged += (_, e) => SyncParamToPipeline(e.PropertyName);
@@ -111,20 +118,7 @@ namespace IMUMoCap
 
         private void StartScanAsync()
         {
-            _imuLoopCts = new CancellationTokenSource();
-            var token = _imuLoopCts.Token;
             Task.Run(() => _deviceManager.ScanPorts());
-            Task.Run(async () =>
-            {
-                try
-                {
-                    while (!token.IsCancellationRequested)
-                    {
-                        var info = await Task.Run(() => ImuDataQueue.Take(token), token);
-                    }
-                }
-                catch (OperationCanceledException) { }
-            }, token);
         }
 
         private void OnDeviceStateChanged(States s)
@@ -148,7 +142,7 @@ namespace IMUMoCap
             _content.SelectedMtw = _content.ConnectedMtws.Count - 1;
             foreach (var item in _slotRegistry.Imus)
             {
-                if(item.DeviceId==ev.DeviceId)
+                if (item.DeviceId == ev.DeviceId)
                 {
                     item.IsConnected = true;
                 }
@@ -156,7 +150,7 @@ namespace IMUMoCap
             var vm = _slotRegistry.Imus.FirstOrDefault(a => a.DeviceId == ev.DeviceId);
             if (vm != null) vm.IsConnected = true;
 
-           
+
             UpdateImuStatusIndicators();
 
             bool allConnected = _slotRegistry.Imus.All(i => i.IsConnected);
@@ -242,7 +236,7 @@ namespace IMUMoCap
                 switch (cmd)
                 {
                     case "ping":
-                        _ = _wsServer?.BroadcastJsonAsync(new { type = "pong", t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+                        //_ = _wsServer?.BroadcastJsonAsync(new { type = "pong", t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
                         break;
 
                     case "Start":
@@ -351,7 +345,7 @@ namespace IMUMoCap
                 _content.LogList += (log);
                 _content.LogList += (Environment.NewLine);
 
-                if (_content.IsScollerToEnd)
+                if (_content.IsScrollerToEnd)
                 {
                     LogBox.CaretIndex = LogBox.Text.Length;
                     LogBox.ScrollToEnd();
@@ -362,8 +356,8 @@ namespace IMUMoCap
         private void setWidgetsStates()
         {
             switch (_content.DeviceState)
-            {   
-                    
+            {
+
             }
         }
 
@@ -526,8 +520,8 @@ namespace IMUMoCap
             if (profile == null || !profile.IsValid)
             {
                 string detail = profile == null
-                    ? "< 20 valid steps"
-                    : $"L={profile.ValidSteps_L} R={profile.ValidSteps_R} steps (need ≥20 each)";
+                    ? "insufficient valid steps"
+                    : $"L={profile.ValidSteps_L} R={profile.ValidSteps_R} steps (need ≥{profile.MinRequiredSteps} each)";
                 _content.StatusLabel = $"Baseline insufficient ({detail}). Please restart.";
                 BroadcastArState("error");
                 return;
@@ -536,6 +530,8 @@ namespace IMUMoCap
             _content.StatusLabel =
                 $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
                 $"R={profile.Target_R:F1}° ({profile.Direction_R})";
+            _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.Tolerance_L:F1}° ({profile.Direction_L})";
+            _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.Tolerance_R:F1}° ({profile.Direction_R})";
             _pipeline.StartTraining();
             BroadcastArState("training");
         }
@@ -571,6 +567,12 @@ namespace IMUMoCap
             _baselineTimer = null;
             _pipeline.Reset();
             _content.StatusLabel = "Calibration reset. Stomp left foot to begin.";
+            _content.LeftFpaTarget = "";
+            _content.RightFpaTarget = "";
+            _content.LeftFpaNote = "";
+            _content.RightFpaNote = "";
+            _content.LeftFpaBackground = MainPageVM.DefaultCardBg;
+            _content.RightFpaBackground = MainPageVM.DefaultCardBg;
             _sessionState = TestState.Launching;
             BroadcastArState("waiting");
             log("Calibration restarted by user.");
@@ -589,9 +591,9 @@ namespace IMUMoCap
 
                 var dlg = new Microsoft.Win32.SaveFileDialog
                 {
-                    Filter     = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                    Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*",
                     DefaultExt = ".csv",
-                    FileName   = $"Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.csv",
+                    FileName = $"Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.csv",
                 };
                 if (dlg.ShowDialog() != true) return;
 
@@ -609,6 +611,297 @@ namespace IMUMoCap
             }
         }
 
+        private async void BtnLoadData_Click(object sender, RoutedEventArgs e)
+        {
+
+            Console.WriteLine("BtnLoadData_Click: ");
+
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Load IMU Samples CSV",
+                Filter = "IMU Samples CSV|ImuSamples_*.csv;*.csv",
+                DefaultExt = ".csv",
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            BtnLoadData.IsEnabled = false;
+            log("Loading...");
+
+            // Parse CSV on background thread to avoid blocking the UI.
+            var (samples, bundles) = await Task.Run(() =>
+            {
+                var s = new Methods.CsvUtil().ReadImuSamplesCsv(dlg.FileName);
+                var b = Methods.CsvUtil.GroupIntoBundles(s);
+                return (s, b);
+            });
+
+            if (samples.Count == 0)
+            {
+                log("Load failed: no samples found.");
+                BtnLoadData.IsEnabled = true;
+                return;
+            }
+
+            int completeBundles = bundles.Count(b => b.IsComplete);
+            log($"Loaded {samples.Count} samples → {bundles.Count} bundles ({completeBundles} complete). Replaying...");
+
+            _isReplaying = true;
+            _pipeline.Reset();
+            _sessionState = TestState.Launching;
+
+            void onCalChanged(CalibrationState s)
+            {
+                if (s != CalibrationState.Completed) return;
+                _pipeline.StartBaseline();
+                Dispatcher.BeginInvoke(() =>
+                {
+                    _sessionState = TestState.Baseline;
+                    log("Replay: calibration done — baseline started.");
+                });
+            }
+            void onBaselineDone(BaselineProfile? profile)
+            {
+                if (profile?.IsValid != true) return;
+                _pipeline.StartTraining();
+                Dispatcher.BeginInvoke(() =>
+                {
+                    _sessionState = TestState.Step;
+                    _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.Tolerance_L:F1}° ({profile.Direction_L})";
+                    _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.Tolerance_R:F1}° ({profile.Direction_R})";
+                    _content.StatusLabel =
+                        $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
+                        $"R={profile.Target_R:F1}° ({profile.Direction_R})";
+                    log("Replay: baseline done — training started.");
+                });
+            }
+
+            _pipeline.OnCalibrationStateChanged += onCalChanged;
+            _pipeline.OnBaselineCompleted += onBaselineDone;
+
+            try
+            {
+                await Task.Run(async () =>
+                {
+                    foreach (var bundle in bundles)
+                    {
+                        _pipeline.Process(bundle);
+                        await Task.Delay(10);
+                    }
+                });
+            }
+            finally
+            {
+                _pipeline.OnCalibrationStateChanged -= onCalChanged;
+                _pipeline.OnBaselineCompleted -= onBaselineDone;
+                _isReplaying = false;
+                BtnLoadData.IsEnabled = true;
+            }
+
+            if (_pipeline.InBaseline)
+            {
+                var profile = _pipeline.FinalizeBaseline();
+                if (profile?.IsValid == true)
+                {
+                    _pipeline.StartTraining();
+                    _sessionState = TestState.Step;
+                }
+            }
+
+            log(BuildReplayTimeline(
+                bundles,
+                _pipeline.GetDiagnosticsSnapshot(),
+                _pipeline.Params.StompThreshold_ms2,
+                _pipeline.Params.MinBaselineSteps));
+            log("Replay done. Save diagnostics to inspect results.");
+        }
+
+        private string BuildReplayTimeline(
+            List<ImuFrameBundle> bundles,
+            List<DiagnosticsRow> diag,
+            float stompThreshold,
+            int minBaselineSteps)
+        {
+            const uint XSF_ORIENT = 0x02;
+            var events = new List<(string pid, string desc)>();
+
+            // ── Pre-calibration: scan bundles ─────────────────────────────────
+            long firstPid = -1, stompPid = -1;
+            float stompAz = 0f;
+            long invStart = -1, invEnd = -1, validResumed = -1;
+
+            foreach (var b in bundles)
+            {
+                if (!b.IsComplete) continue;
+                if (firstPid < 0) firstPid = b.PacketId;
+
+                var lf = b.LeftFoot!;
+                if (stompPid < 0 && lf.HasAcceleration)
+                {
+                    float diff = MathF.Abs(lf.Acceleration.Z - 9.81f);
+                    if (diff > stompThreshold) { stompPid = b.PacketId; stompAz = lf.Acceleration.Z; }
+                }
+
+                if (stompPid >= 0 && b.PacketId > stompPid && validResumed < 0)
+                {
+                    var lsw = b.LeftFoot!.StatusWord;
+                    var psw = b.Pelvis!.StatusWord;
+                    var rsw = b.RightFoot!.StatusWord;
+                    bool allOk = lsw.HasValue && (lsw.Value & XSF_ORIENT) != 0
+                              && psw.HasValue && (psw.Value & XSF_ORIENT) != 0
+                              && rsw.HasValue && (rsw.Value & XSF_ORIENT) != 0;
+                    if (!allOk) { if (invStart < 0) invStart = b.PacketId; invEnd = b.PacketId; }
+                    else if (invStart >= 0) validResumed = b.PacketId;
+                }
+            }
+
+            if (firstPid >= 0 && stompPid > firstPid + 5)
+                events.Add(($"{firstPid}–{stompPid - 1}",
+                    $"传感器初始化 + 静止等待（约 {(stompPid - firstPid) / 100f:F1} 秒）"));
+
+            if (stompPid >= 0)
+                events.Add(($"{stompPid}",
+                    $"跺脚触发标定（Az={stompAz:F1}, diff={MathF.Abs(stompAz - 9.81f):F1} > 阈值{stompThreshold:F0} ✓）"));
+            else
+                events.Add(("—", $"未检测到跺脚（所有帧 diff < 阈值{stompThreshold:F0}）"));
+
+            if (invStart >= 0)
+                events.Add(($"{invStart}–{invEnd}",
+                    $"Left 足 SW=0（跺脚后 AHRS 方向短暂失效，约 {(invEnd - invStart + 1) / 100f:F1}s）"));
+
+            if (validResumed >= 0)
+                events.Add(($"{validResumed}", "有效帧恢复，仍在静止"));
+
+            // ── Post-calibration: scan DiagnosticsRows ────────────────────────
+            if (diag.Count == 0)
+            {
+                events.Add(("—", "标定未完成（无诊断数据）"));
+                return FormatTimelineTable(events);
+            }
+
+            long calPid = diag[0].PacketId;
+            events.Add(($"≈{calPid}", "标定完成（静止确认10帧 + 采集50帧）"));
+
+            long standEndPid = calPid;
+            long walkMotionPid = -1, isWalkTruePid = -1;
+            bool prevWalking = false;
+            int fpaL = 0, fpaR = 0;
+            var turningEps = new List<(long s, long e)>();
+            var reacqEps = new List<(long s, long e)>();
+            var prevState = ContextState.Straight;
+            long prevSegStart = -1;
+
+            foreach (var row in diag)
+            {
+                if (!row.IsWalking && row.LeftGyr.Length() < 0.3f) standEndPid = row.PacketId;
+                if (walkMotionPid < 0 && row.LeftGyr.Length() > 0.8f) walkMotionPid = row.PacketId;
+                if (!prevWalking && row.IsWalking && isWalkTruePid < 0) isWalkTruePid = row.PacketId;
+                prevWalking = row.IsWalking;
+                if (!float.IsNaN(row.FpaLeft_Deg)) fpaL++;
+                if (!float.IsNaN(row.FpaRight_Deg)) fpaR++;
+
+                if (row.MotionState != prevState)
+                {
+                    if (prevState == ContextState.Turning) turningEps.Add((prevSegStart, row.PacketId));
+                    if (prevState == ContextState.ReacquiringPd) reacqEps.Add((prevSegStart, row.PacketId));
+                    prevSegStart = row.MotionState != ContextState.Straight ? row.PacketId : -1;
+                }
+                prevState = row.MotionState;
+            }
+            if (prevState == ContextState.Turning && prevSegStart >= 0) turningEps.Add((prevSegStart, diag[^1].PacketId));
+            if (prevState == ContextState.ReacquiringPd && prevSegStart >= 0) reacqEps.Add((prevSegStart, diag[^1].PacketId));
+
+            long turnBarrier = turningEps.Count > 0 ? turningEps[0].s : long.MaxValue;
+            long reacqBarrier = reacqEps.Count > 0 ? reacqEps[^1].e : long.MaxValue;
+            int preL = 0, preR = 0, postL = 0, postR = 0;
+            foreach (var row in diag)
+            {
+                if (!float.IsNaN(row.FpaLeft_Deg))
+                { if (row.PacketId < turnBarrier) preL++; else if (row.PacketId > reacqBarrier) postL++; }
+                if (!float.IsNaN(row.FpaRight_Deg))
+                { if (row.PacketId < turnBarrier) preR++; else if (row.PacketId > reacqBarrier) postR++; }
+            }
+
+            if (standEndPid > calPid + 20)
+                events.Add(($"{calPid}–{standEndPid}",
+                    $"标定后继续站立 ~{(standEndPid - calPid) / 100f:F1}s → IsWalking=False → FPA门控失败"));
+
+            if (walkMotionPid > 0) events.Add(($"≈{walkMotionPid}", "走路开始"));
+            if (isWalkTruePid > 0) events.Add(($"≈{isWalkTruePid}", "IsWalking 第一次变 True（100帧窗口填满）"));
+
+            long fpaWindowStart = isWalkTruePid > 0 ? isWalkTruePid
+                                : walkMotionPid > 0 ? walkMotionPid : calPid;
+
+            if (turningEps.Count > 0)
+            {
+                if (preL > 0 || preR > 0)
+                    events.Add(($"{fpaWindowStart}–{turningEps[0].s}",
+                        $"有效 FPA 计算窗口（约 {preL}步L / {preR}步R）"));
+                foreach (var ep in turningEps)
+                    events.Add(($"{ep.s}–{ep.e}", "转弯检测（yaw rate > 0.70 rad/s），进入 Turning"));
+                foreach (var ep in reacqEps)
+                    events.Add(($"{ep.s}–{ep.e}", "ReacquiringPd：PD 历史清空，等待 2 步重建"));
+                if (postL > 0 || postR > 0)
+                {
+                    long postStart = reacqEps.Count > 0 ? reacqEps[^1].e : turningEps[^1].e;
+                    events.Add(($"{postStart}–{diag[^1].PacketId}",
+                        $"转弯后有效 FPA 计算（约 {postL}步L / {postR}步R）"));
+                }
+            }
+            else if (fpaL > 0 || fpaR > 0)
+            {
+                long fpaFirst = -1, fpaLast = -1;
+                foreach (var row in diag)
+                    if (!float.IsNaN(row.FpaLeft_Deg) || !float.IsNaN(row.FpaRight_Deg))
+                    { if (fpaFirst < 0) fpaFirst = row.PacketId; fpaLast = row.PacketId; }
+                events.Add(($"{fpaFirst}–{fpaLast}", $"有效 FPA 计算（{fpaL}步L / {fpaR}步R）"));
+            }
+            else
+            {
+                events.Add(("—", "无 FPA 输出（门控持续阻断）"));
+            }
+
+            string conclusion = fpaL >= minBaselineSteps && fpaR >= minBaselineSteps
+                ? "Baseline 完成"
+                : "步数不足 → Baseline 未完成 → Training 未启动";
+            events.Add(("合计", $"FPA: L={fpaL}步 / R={fpaR}步，MinBaselineSteps={minBaselineSteps} → {conclusion}"));
+
+            return FormatTimelineTable(events);
+        }
+
+        private static string FormatTimelineTable(List<(string pid, string desc)> events)
+        {
+            const int PidW = 14;
+            int descW = events.Count > 0 ? events.Max(e => DisplayWidth(e.desc)) : 20;
+            descW = Math.Max(descW, 8);
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"┌─{new string('─', PidW)}─┬─{new string('─', descW)}─┐");
+            sb.AppendLine($"│ {PadD("PacketId", PidW)} │ {PadD("事件", descW)} │");
+            foreach (var (pid, desc) in events)
+            {
+                sb.AppendLine($"├─{new string('─', PidW)}─┼─{new string('─', descW)}─┤");
+                sb.AppendLine($"│ {PadD(pid, PidW)} │ {PadD(desc, descW)} │");
+            }
+            sb.AppendLine($"└─{new string('─', PidW)}─┴─{new string('─', descW)}─┘");
+            return sb.ToString();
+        }
+
+        private static int DisplayWidth(string s)
+        {
+            int w = 0;
+            foreach (char c in s)
+                w += (c >= 0x4E00 && c <= 0x9FFF)
+                  || (c >= 0x3000 && c <= 0x303F)
+                  || (c >= 0xFF00 && c <= 0xFF60) ? 2 : 1;
+            return w;
+        }
+
+        private static string PadD(string s, int width)
+        {
+            int dw = DisplayWidth(s);
+            return dw >= width ? s : s + new string(' ', width - dw);
+        }
+
         private void BtnToggleLog_Click(object sender, RoutedEventArgs e)
         {
             _content.LogPanelVisible = !_content.LogPanelVisible;
@@ -616,8 +909,8 @@ namespace IMUMoCap
             if (BtnToggleLog != null)
                 BtnToggleLog.Content = visible ? "Hide Log" : "Show Log";
             // Collapse/restore the log row height so the splitter takes no space when hidden
-            LogRow.Height    = visible ? new GridLength(160, GridUnitType.Pixel) : new GridLength(0);
-            SplitterRow.Height = visible ? new GridLength(5,   GridUnitType.Pixel) : new GridLength(0);
+            LogRow.Height = visible ? new GridLength(160, GridUnitType.Pixel) : new GridLength(0);
+            SplitterRow.Height = visible ? new GridLength(5, GridUnitType.Pixel) : new GridLength(0);
         }
 
         private void BtnToggleParams_Click(object sender, RoutedEventArgs e)
@@ -627,12 +920,31 @@ namespace IMUMoCap
                 BtnToggleParams.Content = _content.ParamsPanelVisible ? "Hide Params" : "Show Params";
         }
 
-        private void OnFpaResult(FpaResult result)
+        private void OnFpaResult(FpaResult result, bool isTraining)
         {
+            bool inTraining = _sessionState == TestState.Step;
+
             if (!float.IsNaN(result.Fpa_L))
+            {
                 _content.LeftFpaDeg = result.Fpa_L;
+                if (inTraining)
+                {
+                    _content.LeftFpaBackground = result.OnTarget_L ? MainPageVM.OnTargetBg : MainPageVM.OffTargetBg;
+                    if (!float.IsNaN(result.Error_L) && !float.IsNaN(result.Tolerance_L))
+                        _content.LeftFpaNote = $"err: {result.Error_L:+0.0;-0.0}° / ±{result.Tolerance_L:F1}°";
+                }
+            }
+
             if (!float.IsNaN(result.Fpa_R))
+            {
                 _content.RightFpaDeg = result.Fpa_R;
+                if (inTraining)
+                {
+                    _content.RightFpaBackground = result.OnTarget_R ? MainPageVM.OnTargetBg : MainPageVM.OffTargetBg;
+                    if (!float.IsNaN(result.Error_R) && !float.IsNaN(result.Tolerance_R))
+                        _content.RightFpaNote = $"err: {result.Error_R:+0.0;-0.0}° / ±{result.Tolerance_R:F1}°";
+                }
+            }
 
             _content.StanceSummary =
                 $"L: {result.Fpa_L:F1}° {(result.OnTarget_L ? "✓" : $"err={result.Error_L:+0.0;-0.0}°")}  " +
@@ -642,14 +954,15 @@ namespace IMUMoCap
             {
                 _ = _wsServer.BroadcastJsonAsync(new
                 {
-                    type      = "fpa",
-                    packetId  = result.PacketId,
-                    fpaL      = result.Fpa_L,
-                    fpaR      = result.Fpa_R,
+                    stage = isTraining ? "training" : "baseline",
+                    type = "fpa",
+                    packetId = result.PacketId,
+                    fpaL = result.Fpa_L,
+                    fpaR = result.Fpa_R,
                     onTargetL = result.OnTarget_L,
                     onTargetR = result.OnTarget_R,
-                    errorL    = result.Error_L,
-                    errorR    = result.Error_R,
+                    errorL = result.Error_L,
+                    errorR = result.Error_R,
                 });
             }
         }

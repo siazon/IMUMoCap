@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Media;
 using System.Windows.Media.Media3D;
 
 namespace IMUMoCap
@@ -70,13 +71,13 @@ namespace IMUMoCap
         }
         private bool _isScrollToEnd = true;
 
-        public bool IsScollerToEnd
+        public bool IsScrollerToEnd
         {
             get { return _isScrollToEnd; }
             set
             {
                 _isScrollToEnd = value;
-                OnPropertyChanged(nameof(IsScollerToEnd));
+                OnPropertyChanged(nameof(IsScrollerToEnd));
             }
         }
 
@@ -152,12 +153,12 @@ namespace IMUMoCap
             }
         }
 
-        private string _btnConncet;
+        private string _btnConnect;
 
-        public string ConnecetBtn
+        public string ConnectBtn
         {
-            get { return _btnConncet; }
-            set { _btnConncet = value; OnPropertyChanged(nameof(ConnecetBtn)); }
+            get { return _btnConnect; }
+            set { _btnConnect = value; OnPropertyChanged(nameof(ConnectBtn)); }
         }
 
         private string _xsTime;
@@ -282,9 +283,49 @@ namespace IMUMoCap
             set { _RightFpaNote = value; OnPropertyChanged(nameof(RightFpaNote)); }
         }
 
+        // ── FPA card target labels & background colors ────────────────────────
+
+        internal static readonly Brush DefaultCardBg  = MakeBrush(0x11, 0x00, 0x00, 0x00);
+        internal static readonly Brush OnTargetBg     = MakeBrush(0x55, 0x00, 0xCC, 0x44);
+        internal static readonly Brush OffTargetBg    = MakeBrush(0x55, 0xCC, 0x22, 0x00);
+        private static Brush MakeBrush(byte a, byte r, byte g, byte b)
+        {
+            var br = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+            br.Freeze();
+            return br;
+        }
+
+        private string _leftFpaTarget = "";
+        public string LeftFpaTarget
+        {
+            get => _leftFpaTarget;
+            set { _leftFpaTarget = value; OnPropertyChanged(nameof(LeftFpaTarget)); }
+        }
+
+        private string _rightFpaTarget = "";
+        public string RightFpaTarget
+        {
+            get => _rightFpaTarget;
+            set { _rightFpaTarget = value; OnPropertyChanged(nameof(RightFpaTarget)); }
+        }
+
+        private Brush _leftFpaBackground = DefaultCardBg;
+        public Brush LeftFpaBackground
+        {
+            get => _leftFpaBackground;
+            set { _leftFpaBackground = value; OnPropertyChanged(nameof(LeftFpaBackground)); }
+        }
+
+        private Brush _rightFpaBackground = DefaultCardBg;
+        public Brush RightFpaBackground
+        {
+            get => _rightFpaBackground;
+            set { _rightFpaBackground = value; OnPropertyChanged(nameof(RightFpaBackground)); }
+        }
+
         // ── Pipeline tunable parameters (bound to right-panel sliders) ────────
 
-        private float _stompThreshold = 25f;
+        private float _stompThreshold = 15f;
         public float StompThreshold
         {
             get { return _stompThreshold; }
@@ -326,7 +367,7 @@ namespace IMUMoCap
             set { _pdStabilityThreshold = value; OnPropertyChanged(nameof(PdStabilityThreshold)); }
         }
 
-        private int _minBaselineSteps = 20;
+        private int _minBaselineSteps = 5;
         public int MinBaselineSteps
         {
             get { return _minBaselineSteps; }
@@ -377,18 +418,18 @@ namespace IMUMoCap
         public List<IMUData> datas { get; set; } = new List<IMUData>();
         #endregion
 
-        public void DataReceived(RecoredData data, int dataSource)
+        public void DataReceived(RecordedData data, int dataSource)
         {
             var d = datas.FirstOrDefault(a => a.PackageId == data.PackageId);
             if (d == null)
             {
                 IMUData imuData = new IMUData() { PackageId = data.PackageId };
-                imuData.RecoredDatas[dataSource] = data;
+                imuData.RecordedDatas[dataSource] = data;
                 datas.Add(imuData);
             }
             else
             {
-                d.RecoredDatas[dataSource] = data;
+                d.RecordedDatas[dataSource] = data;
             }
 
         }

@@ -1,6 +1,7 @@
 // IMUMoCap/Pipeline/FpaEngine.cs
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using IMUMoCap.Pipeline.Models;
 
 namespace IMUMoCap.Pipeline
@@ -21,17 +22,17 @@ namespace IMUMoCap.Pipeline
     {
         // ── 门控阈值 ──────────────────────────────────────────────────────────
         public float ContextConfidenceThreshold { get; set; } = 0.7f;
-        public float PdStabilityThreshold       { get; set; } = 0.7f;
+        public float PdStabilityThreshold { get; set; } = 0.7f;
 
         // ── 结算参数 ──────────────────────────────────────────────────────────
         // swing→stance 后累积此帧数再输出 FPA（@100Hz，10帧=100ms）
-        public int MinStanceFramesForSettle { get; set; } = 10;
+        public int MinStanceFramesForSettle { get; set; } = 5;
 
         // ── BaselineProfile（Training 阶段设置，Baseline 阶段为 null）────────
         public BaselineProfile? Baseline { get; set; }
 
         // ── 内部 stance 追踪（per foot）───────────────────────────────────────
-        private readonly StanceSampler _leftSampler  = new();
+        private readonly StanceSampler _leftSampler = new();
         private readonly StanceSampler _rightSampler = new();
 
         public FpaResult? Process(ValidFrame frame, GaitEvent gait,
@@ -54,7 +55,8 @@ namespace IMUMoCap.Pipeline
                           && context.Confidence >= ContextConfidenceThreshold;
             bool pdOk = pd.IsValid && pd.Stability >= PdStabilityThreshold;
             if (!contextOk || !pdOk) return null;
-
+            if (pd.DirectionRad != 0)
+                Console.WriteLine("DirectionRad: " + pd.DirectionRad);
             // 两脚都在 swing（双悬空）时无意义，不输出
             if (!gait.LeftStance && !gait.RightStance) return null;
 
@@ -78,25 +80,27 @@ namespace IMUMoCap.Pipeline
             {
                 if (!float.IsNaN(fpaLDeg))
                 {
-                    errorL    = fpaLDeg - Baseline.Target_L;
+                    errorL = fpaLDeg - Baseline.Target_L;
                     onTargetL = MathF.Abs(errorL) <= Baseline.Tolerance_L;
                 }
                 if (!float.IsNaN(fpaRDeg))
                 {
-                    errorR    = fpaRDeg - Baseline.Target_R;
+                    errorR = fpaRDeg - Baseline.Target_R;
                     onTargetR = MathF.Abs(errorR) <= Baseline.Tolerance_R;
                 }
             }
 
             return new FpaResult
             {
-                PacketId   = frame.PacketId,
-                Fpa_L      = fpaLDeg,
-                Fpa_R      = fpaRDeg,
+                PacketId = frame.PacketId,
+                Fpa_L = fpaLDeg,
+                Fpa_R = fpaRDeg,
                 OnTarget_L = onTargetL,
                 OnTarget_R = onTargetR,
-                Error_L    = errorL,
-                Error_R    = errorR,
+                Error_L = errorL,
+                Error_R = errorR,
+                Tolerance_L = Baseline?.Tolerance_L ?? float.NaN,
+                Tolerance_R = Baseline?.Tolerance_R ?? float.NaN,
             };
         }
 
@@ -114,7 +118,7 @@ namespace IMUMoCap.Pipeline
 
         private static float NormalizeAngle(float rad)
         {
-            while (rad >  MathF.PI) rad -= 2f * MathF.PI;
+            while (rad > MathF.PI) rad -= 2f * MathF.PI;
             while (rad < -MathF.PI) rad += 2f * MathF.PI;
             return rad;
         }
@@ -122,11 +126,10 @@ namespace IMUMoCap.Pipeline
         private static float RadToDeg(float rad) => rad * (180f / MathF.PI);
 
         private static System.Numerics.Quaternion CalibrateQuaternion(
-            System.Numerics.Quaternion measured, System.Numerics.Quaternion? reference)
+               System.Numerics.Quaternion measured, System.Numerics.Quaternion? reference)
         {
             if (!reference.HasValue) return measured;
-            return System.Numerics.Quaternion.Multiply(
-                System.Numerics.Quaternion.Inverse(reference.Value), measured);
+            return System.Numerics.Quaternion.Multiply(System.Numerics.Quaternion.Inverse(reference.Value), measured);
         }
 
         // ── StanceSampler（内嵌私有类）────────────────────────────────────────
@@ -134,9 +137,9 @@ namespace IMUMoCap.Pipeline
 
         private sealed class StanceSampler
         {
-            private readonly List<float> _yaws     = new();
-            private bool _inStance                 = false;
-            private bool _emittedThisStance        = false; // 本 stance 周期已输出过
+            private readonly List<float> _yaws = new();
+            private bool _inStance = false;
+            private bool _emittedThisStance = false; // 本 stance 周期已输出过
 
             /// <summary>脚处于 stance 时每帧调用，首次调用即为 swing→stance 转换。</summary>
             public void AddFrame(float yaw)
@@ -144,7 +147,7 @@ namespace IMUMoCap.Pipeline
                 if (!_inStance)
                 {
                     // swing→stance 转换：重置本步采集状态
-                    _inStance          = true;
+                    _inStance = true;
                     _emittedThisStance = false;
                     _yaws.Clear();
                 }
@@ -164,8 +167,8 @@ namespace IMUMoCap.Pipeline
             /// </summary>
             public float? TrySettle(int minFrames)
             {
-                if (!_inStance || _emittedThisStance)  return null;
-                if (_yaws.Count < minFrames)            return null;
+                if (!_inStance || _emittedThisStance) return null;
+                if (_yaws.Count < minFrames) return null;
 
                 _emittedThisStance = true;
                 return Mean(_yaws);
@@ -174,7 +177,7 @@ namespace IMUMoCap.Pipeline
             public void Reset()
             {
                 _yaws.Clear();
-                _inStance          = false;
+                _inStance = false;
                 _emittedThisStance = false;
             }
 

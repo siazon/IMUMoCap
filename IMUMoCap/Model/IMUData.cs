@@ -33,9 +33,9 @@ namespace IMUMoCap.Model
         public Quaternion Q4 { get; set; }
         public Quaternion Q5 { get; set; }
         public Quaternion Q6 { get; set; }
-        public RecoredData[] RecoredDatas = new RecoredData[8];
+        public RecordedData[] RecordedDatas = new RecordedData[8];
     }
-    public class RecoredData
+    public class RecordedData
     {
         public string PackageId { get; set; }
         public Quaternion quaternion { get; set; }

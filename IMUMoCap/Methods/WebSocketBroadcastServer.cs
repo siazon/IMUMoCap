@@ -69,11 +69,16 @@ namespace IMUMoCap.Methods
             }
         }
 
+        private static readonly JsonSerializerOptions _jsonOpts = new JsonSerializerOptions
+        {
+            NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals,
+        };
+
         public async Task BroadcastJsonAsync(object payload)
         {
             if (!IsRunning) return;
 
-            string json = JsonSerializer.Serialize(payload);
+            string json = JsonSerializer.Serialize(payload, _jsonOpts);
             var bytes = Encoding.UTF8.GetBytes(json);
             var seg = new ArraySegment<byte>(bytes);
 

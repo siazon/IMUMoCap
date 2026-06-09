@@ -89,12 +89,17 @@
                         Save Diagnostics (CSV)
                     </Button>
 
+                    <Button x:Name="BtnLoadData" Click="BtnLoadData_Click"
+                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
+                            ToolTip="Load IMU samples CSV and replay through pipeline">
+                        Load IMU Samples (CSV)
+                    </Button>
+
                     <Separator Margin="0,4,0,8"/>
 
                     <!-- Legacy controls -->
                     <Button Click="BtnMeasure_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Measure</Button>
                     <Button Click="BtnTest_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Test</Button>
-                    <Button Click="btnClear" HorizontalAlignment="Stretch" Margin="0,0,0,4">Clear Log</Button>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                         <TextBlock Text="Sample Hz:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"/>
                         <TextBox x:Name="txtSampleRate" Width="50" Height="24" Text="10"/>
@@ -111,7 +116,7 @@
                 <RowDefinition Height="Auto"/>             <!-- Row 0: status grid -->
                 <RowDefinition Height="*" MinHeight="80"/> <!-- Row 1: 3D viewports -->
                 <RowDefinition x:Name="SplitterRow" Height="5"/>          <!-- Row 2: drag handle -->
-                <RowDefinition x:Name="LogRow" Height="160" MinHeight="60"/> <!-- Row 3: log -->
+                <RowDefinition x:Name="LogRow" Height="*" MinHeight="60"/> <!-- Row 3: log -->
                 <RowDefinition Height="Auto"/>             <!-- Row 4: log toggle button -->
             </Grid.RowDefinitions>
 
@@ -162,21 +167,25 @@
                 </Border>
 
                 <!-- Col 1: Left FPA -->
-                <Border Grid.Column="1" Padding="10" CornerRadius="6" Background="#11000000" Margin="4,0">
+                <Border Grid.Column="1" Padding="10" CornerRadius="6"
+                        Background="{Binding LeftFpaBackground}" Margin="4,0">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock Text="Left FPA" FontSize="14" Opacity="0.75" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding LeftFpaDeg, StringFormat={}{0:F1}°}"
                                    FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding LeftFpaTarget}" FontSize="12" Opacity="0.8" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding LeftFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
 
                 <!-- Col 2: Right FPA -->
-                <Border Grid.Column="2" Padding="10" CornerRadius="6" Background="#11000000" Margin="4,0,0,0">
+                <Border Grid.Column="2" Padding="10" CornerRadius="6"
+                        Background="{Binding RightFpaBackground}" Margin="4,0,0,0">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock Text="Right FPA" FontSize="14" Opacity="0.75" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding RightFpaDeg, StringFormat={}{0:F1}°}"
                                    FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding RightFpaTarget}" FontSize="12" Opacity="0.8" HorizontalAlignment="Center"/>
                         <TextBlock Text="{Binding RightFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
@@ -263,19 +272,26 @@
                 AcceptsReturn="True"
                 IsReadOnly="True"
                 Text="{Binding LogList}"
-                TextWrapping="Wrap"
+                TextWrapping="NoWrap"
+                FontFamily="Consolas"
+                FontSize="12"
+                HorizontalScrollBarVisibility="Auto"
                 VerticalScrollBarVisibility="Auto"
                 Margin="8,0,8,2"
                 Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
 
             <!-- Row 4: Log toggle button -->
+            <StackPanel Grid.Row="4" Orientation="Horizontal">
             <Button x:Name="BtnToggleLog"
                     Grid.Row="4"
                     Click="BtnToggleLog_Click"
                     HorizontalAlignment="Left"
                     Margin="8,2,8,4"
-                    Padding="8,2">Hide Log</Button>
+                    Padding="8,2">Hide</Button>
 
+            <Button Click="btnClear" HorizontalAlignment="Stretch" 
+                    Margin="0,0,0,4">Clear</Button>
+            </StackPanel>
         </Grid>
     </DockPanel>
 </Window>
