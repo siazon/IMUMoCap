@@ -5,6 +5,7 @@ using IMUMoCap.Pipeline;
 using IMUMoCap.Pipeline.Models;
 using IMUMoCap.Services;
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
