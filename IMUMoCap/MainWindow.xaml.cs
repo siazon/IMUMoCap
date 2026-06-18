@@ -76,9 +76,10 @@ namespace IMUMoCap
 
             var imuList = new List<ImuViewModel>
             {
-                new ImuViewModel(imuPelvis) { ImuVisual = ImuVisual,   DeviceId = 0x00B43D0B, Role = ImuRole.Pelvis },
-                new ImuViewModel(imuL)      { ImuVisual = ImuVisual1,  DeviceId = 0x10B41904, Role = ImuRole.Left   },
-                new ImuViewModel(imuR)      { ImuVisual = ImuVisual12, DeviceId = 0x10b41913, Role = ImuRole.Right  },
+                //new ImuViewModel(imuPelvis) { ImuVisual = ImuVisual,   DeviceId = 0x00B43D0B, Role = ImuRole.Pelvis },
+                new ImuViewModel(imuPelvis) { ImuVisual = ImuVisual,   DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis },
+                new ImuViewModel(imuL)      { ImuVisual = ImuVisual1,  DeviceId = 0x10b41913, Role = ImuRole.Left   },
+                new ImuViewModel(imuR)      { ImuVisual = ImuVisual12, DeviceId = 0x10B41904, Role = ImuRole.Right  },
             };
             _slotRegistry = new ImuSlotRegistry(imuList);
 

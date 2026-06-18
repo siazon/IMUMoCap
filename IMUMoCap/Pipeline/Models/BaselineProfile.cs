@@ -21,8 +21,8 @@ namespace IMUMoCap.Pipeline.Models
         // 训练目标（Δ = 5° 固定）
         public float Target_L    { get; init; }  // T = μ ± 5°
         public float Target_R    { get; init; }
-        public float Tolerance_L { get; init; }  // clamp(SD, 2°, 5°)
-        public float Tolerance_R { get; init; }
+        public float Tolerance_L { get; init; }  // max(4°, SD)
+        public float Tolerance_R { get; init; }  // max(4°, SD)
         public TrainingDirection Direction_L { get; init; }
         public TrainingDirection Direction_R { get; init; }
 
@@ -47,7 +47,7 @@ namespace IMUMoCap.Pipeline.Models
                     return (mean + 5f, TrainingDirection.ToeOut);
             }
 
-            static float ComputeTolerance(float sd) => Math.Clamp(sd, 6f, 10f);
+            static float ComputeTolerance(float sd) => MathF.Max(4f, sd);
 
             var (tL, dL) = ComputeTarget(meanL);
             var (tR, dR) = ComputeTarget(meanR);
