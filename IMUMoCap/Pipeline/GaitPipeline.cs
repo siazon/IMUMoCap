@@ -77,8 +77,12 @@ namespace IMUMoCap.Pipeline
             _baseline.MinValidSteps = Params.MinBaselineSteps;
         }
 
-        public void Process(ImuFrameBundle bundle)
+        // ── 录制器（可选，仅供录制/测试用）─────────────────────────────────────
+        public BundleRecorder? Recorder { get; set; }
+
+        internal void Process(ImuFrameBundle bundle)
         {
+            Recorder?.Record(bundle);
             SyncParams();
 
             // Step 1 (pre-gate): Stomp detection for calibration trigger.
