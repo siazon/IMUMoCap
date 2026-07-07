@@ -32,8 +32,9 @@ namespace IMUMoCap.Pipeline
         // ── 可调参数（UI 实时更新）──────────────────────────────────────────────
         public PipelineParams Params { get; } = new();
 
-        // ── 诊断数据缓冲区 ────────────────────────────────────────────────────
-        private readonly List<DiagnosticsRow> _diagnosticsBuffer = new();
+        // ── 诊断数据缓冲区（滑动窗，最长 20 分钟 @100Hz）────────────────────────
+        private const int DiagnosticsCapacity = 120_000;
+        private readonly Queue<DiagnosticsRow> _diagnosticsBuffer = new();
 
         // ── 事件 ──────────────────────────────────────────────────────────────
         public event Action<FpaResult,bool >?        OnFpaResult;
@@ -41,6 +42,7 @@ namespace IMUMoCap.Pipeline
         public event Action<int, int>?         OnBaselineProgress;  // (stepsL, stepsR)
         public event Action<BaselineProfile?>? OnBaselineCompleted; // auto- or manual-finalize
         public event Action<string>?           OnLog;
+        public event Action<DiagnosticsRow>?   OnDiagnosticsFrame;
 
         // ── 状态 ──────────────────────────────────────────────────────────────
         public CalibrationProfile? CalibrationProfile => _calibration.Profile;
@@ -134,7 +136,7 @@ namespace IMUMoCap.Pipeline
             var fpaResult = _fpa.Process(validFrame, gaitEvent, motionCtx, pdEstimate, profile);
 
             // ── 诊断数据采集（每帧一行，FPA 可为 null）────────────────────────
-            _diagnosticsBuffer.Add(new DiagnosticsRow
+            var diagRow = new DiagnosticsRow
             {
                 Timestamp         = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 PacketId          = validFrame.PacketId,
@@ -161,7 +163,10 @@ namespace IMUMoCap.Pipeline
                 FpaRight_Deg      = fpaResult?.Fpa_R      ?? float.NaN,
                 FpaRight_Error    = fpaResult?.Error_R    ?? float.NaN,
                 FpaRight_OnTarget = fpaResult?.OnTarget_R ?? false,
-            });
+            };
+            _diagnosticsBuffer.Enqueue(diagRow);
+            if (_diagnosticsBuffer.Count > DiagnosticsCapacity) _diagnosticsBuffer.Dequeue();
+            OnDiagnosticsFrame?.Invoke(diagRow);
 
             if (fpaResult == null) return;
 
@@ -188,7 +193,7 @@ namespace IMUMoCap.Pipeline
 
         /// <summary>返回诊断数据快照（副本），用于 CSV 导出。不清空缓冲区。</summary>
         public List<DiagnosticsRow> GetDiagnosticsSnapshot()
-            => new List<DiagnosticsRow>(_diagnosticsBuffer);
+            => [.._diagnosticsBuffer];
 
         // ── 阶段控制（由 MainWindow 的状态机调用）────────────────────────────
 

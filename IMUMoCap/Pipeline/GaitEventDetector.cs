@@ -26,9 +26,7 @@ namespace IMUMoCap.Pipeline
         public float GyroThreshold          { get; set; } = 1.0f;   // rad/s
         public float FootPitchThreshold     { get; set; } = 0.35f;   // rad，~20°，与校准参考的重力方向偏转上限（10°对转弯后left foot过紧）
         public int   MinStanceFrames        { get; set; } = 5;
-        public float StompAccThreshold_ms2  { get; set; } = 25f;
-        public int   StompMaxFrames         { get; set; } = 20;
-        public int   WalkingWindowFrames    { get; set; } = 100;     // 3s @100Hz
+        public int   WalkingWindowFrames    { get; set; } = 300;     // 3s @100Hz
 
         // ── 内部状态 ──────────────────────────────────────────────────────────
         private int  _leftStanceCount   = 0;
@@ -40,9 +38,6 @@ namespace IMUMoCap.Pipeline
         private int  _rightTransitions  = 0;
         private int  _walkingFrameCount = 0;
         private bool _isWalking         = false;
-
-        private bool _stompPeakSeen    = false;
-        private int  _stompFrameCount  = 0;
 
         public GaitEvent Detect(ValidFrame frame, CalibrationProfile? calibration)
         {
@@ -70,16 +65,13 @@ namespace IMUMoCap.Pipeline
                 _rightTransitions  = 0;
             }
 
-            bool stomp = DetectStomp(frame.LeftFoot);
-
             return new GaitEvent
             {
-                LeftStance    = leftStanceConfirmed,
-                RightStance   = rightStanceConfirmed,
-                LeftSwing     = !leftStanceConfirmed,
-                RightSwing    = !rightStanceConfirmed,
-                StompDetected = stomp,
-                IsWalking     = _isWalking,
+                LeftStance  = leftStanceConfirmed,
+                RightStance = rightStanceConfirmed,
+                LeftSwing   = !leftStanceConfirmed,
+                RightSwing  = !rightStanceConfirmed,
+                IsWalking   = _isWalking,
             };
         }
 
@@ -89,8 +81,6 @@ namespace IMUMoCap.Pipeline
             _leftStancePrev  = _rightStancePrev  = false;
             _leftTransitions = _rightTransitions = 0;
             _walkingFrameCount = 0;
-            _stompPeakSeen   = false;
-            _stompFrameCount = 0;
             _isWalking       = false;
         }
 
@@ -116,28 +106,5 @@ namespace IMUMoCap.Pipeline
             return accOk && gyroOk && pitchOk;
         }
 
-        private bool DetectStomp(ImuSampleFrame leftFoot)
-        {
-            float vertAcc = leftFoot.HasAcceleration
-                ? MathF.Abs(leftFoot.Acceleration.Z - 9.81f)
-                : 0f;
-
-            if (!_stompPeakSeen)
-            {
-                if (vertAcc > StompAccThreshold_ms2) { _stompPeakSeen = true; _stompFrameCount = 1; }
-                return false;
-            }
-
-            _stompFrameCount++;
-            if (vertAcc < StompAccThreshold_ms2 * 0.4f)
-            {
-                bool valid = _stompFrameCount <= StompMaxFrames;
-                _stompPeakSeen   = false;
-                _stompFrameCount = 0;
-                return valid;
-            }
-            if (_stompFrameCount > StompMaxFrames) { _stompPeakSeen = false; _stompFrameCount = 0; }
-            return false;
-        }
     }
 }

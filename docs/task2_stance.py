@@ -6,7 +6,7 @@ import sys, math, csv
 from collections import deque
 
 sys.stdout.reconfigure(encoding='utf-8')
-CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else r"D:\SourceCode\IMUMoCap\docs\ImuSamples_20260609_201647.csv"
+CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else r"D:\SourceCode\IMUMoCap\docs\ImuSamples_20260619_195332.csv"
 
 # ── constants (mirrors C# defaults) ──────────────────────────────────────────
 STATIC_GYRO      = 0.3;  STATIC_REQ = 10;  STATIC_COLLECT = 50
@@ -17,7 +17,7 @@ FREE_ACC_THR   = 2.5    # m/s²
 GYRO_THR       = 1.0    # rad/s
 PITCH_THR      = 0.35   # rad (~20°)
 MIN_STANCE_F   = 5      # debounce frames
-WALK_WINDOW    = 100    # frames
+WALK_WINDOW    = 300    # frames (C# WalkingWindowFrames = 300 @100Hz)
 WALK_MIN_TRANS = 2      # per foot per window
 
 # ── helpers ───────────────────────────────────────────────────────────────────

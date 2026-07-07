@@ -26,7 +26,7 @@ namespace IMUMoCap.Pipeline
 
         // ── 结算参数 ──────────────────────────────────────────────────────────
         // swing→stance 后累积此帧数再输出 FPA（@100Hz，10帧=100ms）
-        public int MinStanceFramesForSettle { get; set; } = 5;
+        public int MinStanceFramesForSettle { get; set; } = 10;
 
         // ── BaselineProfile（Training 阶段设置，Baseline 阶段为 null）────────
         public BaselineProfile? Baseline { get; set; }
@@ -41,12 +41,16 @@ namespace IMUMoCap.Pipeline
         {
             // ── Step 1: 无条件更新 stance 状态（采集与 gate 无关）────────────────
             if (gait.LeftStance)
-                _leftSampler.AddFrame(ExtractYaw(CalibrateQuaternion(frame.LeftFoot.Quaternion, calibration?.LeftFootRef)));
+                _leftSampler.AddFrame(NormalizeAngle(
+                    ExtractYaw(frame.LeftFoot.Quaternion) -
+                    ExtractYaw(calibration?.LeftFootRef ?? System.Numerics.Quaternion.Identity)));
             else
                 _leftSampler.MarkSwing();
 
             if (gait.RightStance)
-                _rightSampler.AddFrame(ExtractYaw(CalibrateQuaternion(frame.RightFoot.Quaternion, calibration?.RightFootRef)));
+                _rightSampler.AddFrame(NormalizeAngle(
+                    ExtractYaw(frame.RightFoot.Quaternion) -
+                    ExtractYaw(calibration?.RightFootRef ?? System.Numerics.Quaternion.Identity)));
             else
                 _rightSampler.MarkSwing();
 
@@ -55,8 +59,6 @@ namespace IMUMoCap.Pipeline
                           && context.Confidence >= ContextConfidenceThreshold;
             bool pdOk = pd.IsValid && pd.Stability >= PdStabilityThreshold;
             if (!contextOk || !pdOk) return null;
-            if (pd.DirectionRad != 0)
-                Console.WriteLine("DirectionRad: " + pd.DirectionRad);
             // 两脚都在 swing（双悬空）时无意义，不输出
             if (!gait.LeftStance && !gait.RightStance) return null;
 
@@ -125,67 +127,49 @@ namespace IMUMoCap.Pipeline
 
         private static float RadToDeg(float rad) => rad * (180f / MathF.PI);
 
-        private static System.Numerics.Quaternion CalibrateQuaternion(
-               System.Numerics.Quaternion measured, System.Numerics.Quaternion? reference)
-        {
-            if (!reference.HasValue) return measured;
-            return System.Numerics.Quaternion.Multiply(System.Numerics.Quaternion.Inverse(reference.Value), measured);
-        }
-
         // ── StanceSampler（内嵌私有类）────────────────────────────────────────
         // 单脚状态机：检测 swing→stance 转换，落地后采集 n 帧，输出一次 FPA。
 
         private sealed class StanceSampler
         {
-            private readonly List<float> _yaws = new();
+            private float _cosSum = 0f;
+            private float _sinSum = 0f;
+            private int _count = 0;
             private bool _inStance = false;
-            private bool _emittedThisStance = false; // 本 stance 周期已输出过
+            private bool _emittedThisStance = false;
 
-            /// <summary>脚处于 stance 时每帧调用，首次调用即为 swing→stance 转换。</summary>
             public void AddFrame(float yaw)
             {
                 if (!_inStance)
                 {
-                    // swing→stance 转换：重置本步采集状态
                     _inStance = true;
                     _emittedThisStance = false;
-                    _yaws.Clear();
+                    _cosSum = 0f;
+                    _sinSum = 0f;
+                    _count = 0;
                 }
-                _yaws.Add(yaw);
+                _cosSum += MathF.Cos(yaw);
+                _sinSum += MathF.Sin(yaw);
+                _count++;
             }
 
-            /// <summary>脚处于 swing 时每帧调用。</summary>
-            public void MarkSwing()
-            {
-                _inStance = false;
-            }
+            public void MarkSwing() { _inStance = false; }
 
-            /// <summary>
-            /// 尝试输出本步 FPA（rad）。
-            /// 条件：处于 stance + 已累积 minFrames 帧 + 本 stance 尚未输出。
-            /// 满足则返回均值并标记已输出；否则返回 null。
-            /// </summary>
             public float? TrySettle(int minFrames)
             {
                 if (!_inStance || _emittedThisStance) return null;
-                if (_yaws.Count < minFrames) return null;
+                if (_count < minFrames) return null;
 
                 _emittedThisStance = true;
-                return Mean(_yaws);
+                return MathF.Atan2(_sinSum, _cosSum);
             }
 
             public void Reset()
             {
-                _yaws.Clear();
+                _cosSum = _sinSum = 0f;
+                _count = 0;
                 _inStance = false;
                 _emittedThisStance = false;
-            }
-
-            private static float Mean(List<float> vs)
-            {
-                float sum = 0f;
-                foreach (var v in vs) sum += v;
-                return sum / vs.Count;
             }
         }
     }

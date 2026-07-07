@@ -24,7 +24,6 @@ namespace IMUMoCap.Pipeline.Models
         public bool RightStance     { get; set; }
         public bool LeftSwing       { get; set; }
         public bool RightSwing      { get; set; }
-        public bool StompDetected   { get; set; }   // 左脚跺脚（校准后精确版）
         public bool IsWalking       { get; set; }
     }
 

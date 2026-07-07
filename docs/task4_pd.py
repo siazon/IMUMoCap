@@ -6,18 +6,18 @@ import sys, math, csv
 from collections import deque
 
 sys.stdout.reconfigure(encoding='utf-8')
-CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else r"D:\SourceCode\IMUMoCap\docs\ImuSamples_20260609_201647.csv"
+CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else r"D:\SourceCode\IMUMoCap\docs\ImuSamples_20260619_195332.csv"
 
 # ── constants ─────────────────────────────────────────────────────────────────
 STATIC_GYRO=0.3; STATIC_REQ=10; STATIC_COLLECT=50; STATIC_TIMEOUT=300
 STOMP_THRESH=15.0; STOMP_MAX=20
 XSF_ORIENT_VALID=0x02; XSF_CLIPPING=0x00080000
 FREE_ACC_THR=2.5; GYRO_THR=1.0; PITCH_THR=0.35; MIN_STANCE_F=5
-WALK_WINDOW=100; WALK_MIN_TRANS=2
+WALK_WINDOW=300; WALK_MIN_TRANS=2
 YAW_RATE_THR=0.70; DELTA_Q_THR=0.17
 TURN_CONFIRM=10; STR_CONFIRM=10; REACQ_CONFIRM=10
 PELVIS_W=0.6; LEFT_W=0.2; RIGHT_W=0.2
-STAB_WINDOW=3; STAB_THR=0.65; MIN_STEPS=2
+STAB_WINDOW=10; STAB_THR=0.85; MIN_STEPS=2
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def quat_inv(q):

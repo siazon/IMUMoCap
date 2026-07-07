@@ -7,7 +7,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-    
+
 namespace IMUMoCap.Methods
 {
     // ======================= WebSocket Server (Broadcast) =======================
@@ -33,14 +33,22 @@ namespace IMUMoCap.Methods
         public void Start(string[] prefix)
         {
             if (IsRunning) return;
-            _listener.Prefixes.Clear();
-            foreach (var item in prefix)
+            try
             {
-                _listener.Prefixes.Add(item);
-            }
-            _listener.Start();
-            IsRunning = true;
 
+
+                _listener.Prefixes.Clear();
+                foreach (var item in prefix)
+                {
+                    _listener.Prefixes.Add(item);
+                }
+                _listener.Start();
+                IsRunning = true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
             _ = Task.Run(AcceptLoopAsync);
         }
 

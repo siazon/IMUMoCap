@@ -83,17 +83,7 @@
                         Restart Calibration
                     </Button>
 
-                    <Button x:Name="BtnSaveDiagnostics" Click="BtnSaveDiagnostics_Click"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            ToolTip="Export diagnostics to CSV for AI analysis">
-                        Save Diagnostics (CSV)
-                    </Button>
-
-                    <Button x:Name="BtnLoadData" Click="BtnLoadData_Click"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            ToolTip="Load IMU samples CSV and replay through pipeline">
-                        Load IMU Samples (CSV)
-                    </Button>
+                    
 
                     <Separator Margin="0,4,0,8"/>
 
@@ -104,8 +94,32 @@
                         <TextBlock Text="Sample Hz:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"/>
                         <TextBox x:Name="txtSampleRate" Width="50" Height="24" Text="10"/>
                     </StackPanel>
-                    <Button Click="Button_SaveData" HorizontalAlignment="Stretch" Margin="0,4,0,0">Save IMU Samples</Button>
+                    <Button Click="Button_SaveData" HorizontalAlignment="Stretch" Margin="0,4,0,8">Save IMU Samples</Button>
 
+                    
+
+                    <Button x:Name="BtnLoadData" Click="BtnLoadData_Click"
+        HorizontalAlignment="Stretch" Margin="0,0,0,8"
+        ToolTip="Load IMU samples CSV and replay through pipeline">
+                        Load IMU Samples (CSV)
+                    </Button>
+                    <Button x:Name="BtnSaveDiagnostics" Click="BtnSaveDiagnostics_Click"
+HorizontalAlignment="Stretch" Margin="0,0,0,8"
+ToolTip="Export diagnostics to CSV for AI analysis">
+                        Save Diagnostics (CSV)
+                    </Button>
+
+                    <!-- Replay controls — visible only during replay -->
+                    <StackPanel x:Name="ReplayControls" Visibility="Collapsed" Margin="0,0,0,8">
+                        <Button x:Name="BtnReplayPause" Click="BtnReplayPause_Click"
+            HorizontalAlignment="Stretch" Margin="0,0,0,4">⏸ Pause</Button>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Click="BtnReplaySpeed_Click" Tag="50"  Width="56" Margin="0,0,2,0" ToolTip="0.2× real-time">Slow</Button>
+                            <Button Click="BtnReplaySpeed_Click" Tag="10"  Width="56" Margin="0,0,2,0" ToolTip="1× real-time">1×</Button>
+                            <Button Click="BtnReplaySpeed_Click" Tag="2"   Width="56" Margin="0,0,2,0" ToolTip="5× real-time">5×</Button>
+                            <Button Click="BtnReplaySpeed_Click" Tag="0"   Width="50"                  ToolTip="No delay">Max</Button>
+                        </StackPanel>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Border>
@@ -113,11 +127,14 @@
         <!-- ── LEFT PANEL — Grid with resizable log row ─────────────────────── -->
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>             <!-- Row 0: status grid -->
+                <RowDefinition Height="Auto"/>
+                <!-- Row 0: status grid -->
+                <RowDefinition Height="107"/>
+                <!-- Row 2: timeline -->
                 <RowDefinition Height="*" MinHeight="80"/> <!-- Row 1: 3D viewports -->
-                <RowDefinition x:Name="SplitterRow" Height="5"/>          <!-- Row 2: drag handle -->
-                <RowDefinition x:Name="LogRow" Height="*" MinHeight="60"/> <!-- Row 3: log -->
-                <RowDefinition Height="Auto"/>             <!-- Row 4: log toggle button -->
+                <RowDefinition x:Name="SplitterRow" Height="5"/>          <!-- Row 3: drag handle -->
+                <RowDefinition x:Name="LogRow" Height="*" MinHeight="60"/> <!-- Row 4: log -->
+                <RowDefinition Height="Auto"/>             <!-- Row 5: log toggle button -->
             </Grid.RowDefinitions>
 
             <!-- Row 0: Status grid -->
@@ -192,7 +209,7 @@
             </Grid>
 
             <!-- Row 1: 3D viewports -->
-            <UniformGrid Grid.Row="1" Rows="1" Columns="3">
+            <UniformGrid Grid.Row="2" Rows="1" Columns="3">
                 <Grid>
                     <Viewport3D>
                         <Viewport3D.Camera>
@@ -254,8 +271,30 @@
                 </Grid>
             </UniformGrid>
 
-            <!-- Row 2: GridSplitter — drag up/down to resize log -->
-            <GridSplitter Grid.Row="2"
+            <!-- Row 2: Timeline panel -->
+            <Border Grid.Row="1" x:Name="TimelineBorder"  Background="#1E1E1E" Margin="0 10 0 0"
+                    SizeChanged="TimelineBorder_SizeChanged">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="64"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Top">
+                        <TextBlock Text="PdValid"  Foreground="#888" Height="16" VerticalAlignment="Center" Margin="2,0"/>
+                        <TextBlock Text="L.Stance" Foreground="#888" Height="16" VerticalAlignment="Center" Margin="2,0"/>
+                        <TextBlock Text="R.Stance" Foreground="#888" Height="16" VerticalAlignment="Center" Margin="2,0"/>
+                        <TextBlock Text="Walking"  Foreground="#888" Height="16" VerticalAlignment="Center" Margin="2,0"/>
+                        <TextBlock Text="MotionCtx" Foreground="#888" Height="16" VerticalAlignment="Center" Margin="2,0"/>
+                        <TextBlock Text="FPA"      Foreground="#888" Height="16" VerticalAlignment="Center" Margin="2,0"/>
+                    </StackPanel>
+                    <Image x:Name="TimelineImage" Grid.Column="1"
+                           Stretch="None" HorizontalAlignment="Left" VerticalAlignment="Top"
+                           RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                </Grid>
+            </Border>
+
+            <!-- Row 3: GridSplitter — drag up/down to resize log -->
+            <GridSplitter Grid.Row="3"
                           Height="5"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
@@ -265,10 +304,10 @@
                           ResizeBehavior="PreviousAndNext"
                           Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
 
-            <!-- Row 3: Log TextBox -->
+            <!-- Row 4: Log TextBox -->
             <TextBox
                 x:Name="LogBox"
-                Grid.Row="3"
+                Grid.Row="4"
                 AcceptsReturn="True"
                 IsReadOnly="True"
                 Text="{Binding LogList}"
@@ -280,8 +319,8 @@
                 Margin="8,0,8,2"
                 Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
 
-            <!-- Row 4: Log toggle button -->
-            <StackPanel Grid.Row="4" Orientation="Horizontal">
+            <!-- Row 5: Log toggle button -->
+            <StackPanel Grid.Row="5" Orientation="Horizontal">
             <Button x:Name="BtnToggleLog"
                     Grid.Row="4"
                     Click="BtnToggleLog_Click"

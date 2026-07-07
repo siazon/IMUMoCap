@@ -19,7 +19,7 @@ namespace IMUMoCap.Pipeline
         public float YawRateThreshold_rads { get; set; } = 0.70f; // ~40°/s (raised from 0.26: normal gait pelvic yaw peaks ~0.5 rad/s)
         public float DeltaQYawThreshold { get; set; } = 0.17f; // rad
         public int TurningConfirmFrames { get; set; } = 10; // 持续帧数才判 Turning
-        public int StraightConfirmFrames { get; set; } = 10; // 持续帧数才退出 Turning
+        public int StraightConfirmFrames { get; set; } = 20; // 持续帧数才退出 Turning
         // Prevents gait-sway yaw spikes from immediately bouncing ReacquiringPd back to Turning.
         public int ReacqTurningConfirmFrames { get; set; } = 10;
 

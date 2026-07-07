@@ -8,7 +8,9 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Media.Media3D;
 using System.Windows.Threading;
 using XDA;
@@ -38,8 +40,35 @@ namespace IMUMoCap
         private DispatcherTimer _uiTimer;
         private volatile bool _isReplaying = false;
 
+        // Replay controls
+        private volatile bool _replayPaused = false;
+        private volatile int  _replayDelayMs = 10;
+
+        // Timeline panel
+        private const int TimelineCapacity = 600;
+        private readonly Queue<DiagnosticsRow> _timelineBuffer = new(TimelineCapacity + 1);
+        private DispatcherTimer? _timelineTimer;
+        private static readonly SolidColorBrush s_darkGray;
+        private static readonly SolidColorBrush s_darkRed;
+        private static readonly SolidColorBrush s_darkOrange;
+        private static readonly SolidColorBrush s_darkGreen;
+        private static readonly Pen              s_cyanPen;
+        private static readonly Pen              s_purplePen;
+        static MainWindow()
+        {
+            s_darkGray   = Freeze(new SolidColorBrush(Color.FromRgb(0x44, 0x44, 0x44)));
+            s_darkRed    = Freeze(new SolidColorBrush(Color.FromRgb(0x80, 0x10, 0x10)));
+            s_darkOrange = Freeze(new SolidColorBrush(Color.FromRgb(0x80, 0x40, 0x00)));
+            s_darkGreen  = Freeze(new SolidColorBrush(Color.FromRgb(0x10, 0x50, 0x10)));
+            var cyanBrush   = Freeze(new SolidColorBrush(Colors.Cyan));
+            var violetBrush = Freeze(new SolidColorBrush(Colors.Violet));
+            s_cyanPen   = Freeze(new Pen(cyanBrush,   1.5));
+            s_purplePen = Freeze(new Pen(violetBrush, 1.5));
+        }
+        private static T Freeze<T>(T f) where T : Freezable { f.Freeze(); return f; }
+
         // Data recording configuration
-        private int _sampleRateHz = 100; // Default 10 Hz
+        private int _sampleRateHz = 100; // Default 100 Hz
         private readonly List<ImuSampleFrame> _imuSamples = new();
         private readonly ImuFrameCollector _imuFrameCollector = new();
 
@@ -90,6 +119,15 @@ namespace IMUMoCap
                 if (!_isReplaying) Dispatcher.BeginInvoke(() => HandleBaselineCompleted(profile));
             };
             _pipeline.OnFpaResult += (result, isTraining) => Dispatcher.BeginInvoke(() => OnFpaResult(result, isTraining));
+            _pipeline.OnDiagnosticsFrame += row => Dispatcher.BeginInvoke(() =>
+            {
+                _timelineBuffer.Enqueue(row);
+                if (_timelineBuffer.Count > TimelineCapacity) _timelineBuffer.Dequeue();
+            });
+
+            _timelineTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+            _timelineTimer.Tick += (_, _) => DrawTimeline();
+            _timelineTimer.Start();
 
             // 参数同步：VM 属性变化时推入 pipeline
             _content.PropertyChanged += (_, e) => SyncParamToPipeline(e.PropertyName);
@@ -194,6 +232,7 @@ namespace IMUMoCap
         {
             _imuLoopCts?.Cancel();
             _baselineTimer?.Stop();
+            _timelineTimer?.Stop();
             ImuDataQueue?.CompleteAdding();
             _deviceManager.Dispose();
             if (_wsServer != null)
@@ -547,6 +586,7 @@ namespace IMUMoCap
             _baselineTimer?.Stop();
             _baselineTimer = null;
             _pipeline.Reset();
+            _timelineBuffer.Clear();
             _content.StatusLabel = "Calibration reset. Stomp left foot to begin.";
             _content.LeftFpaTarget = "";
             _content.RightFpaTarget = "";
@@ -659,14 +699,20 @@ namespace IMUMoCap
             _pipeline.OnCalibrationStateChanged += onCalChanged;
             _pipeline.OnBaselineCompleted += onBaselineDone;
 
+            _replayPaused = false;
+            _replayDelayMs = 10;
+            ReplayControls.Visibility = Visibility.Visible;
+            BtnReplayPause.Content = "⏸ Pause";
+
             try
             {
                 await Task.Run(async () =>
                 {
                     foreach (var bundle in bundles)
                     {
+                        while (_replayPaused) await Task.Delay(50);
                         _pipeline.Process(bundle);
-                        await Task.Delay(10);
+                        if (_replayDelayMs > 0) await Task.Delay(_replayDelayMs);
                     }
                 });
             }
@@ -675,6 +721,8 @@ namespace IMUMoCap
                 _pipeline.OnCalibrationStateChanged -= onCalChanged;
                 _pipeline.OnBaselineCompleted -= onBaselineDone;
                 _isReplaying = false;
+                _replayPaused = false;
+                ReplayControls.Visibility = Visibility.Collapsed;
                 BtnLoadData.IsEnabled = true;
             }
 
@@ -737,35 +785,37 @@ namespace IMUMoCap
 
             if (firstPid >= 0 && stompPid > firstPid + 5)
                 events.Add(($"{firstPid}–{stompPid - 1}",
-                    $"传感器初始化 + 静止等待（约 {(stompPid - firstPid) / 100f:F1} 秒）"));
+                    $"Sensor init + static wait (~{(stompPid - firstPid) / 100f:F1} s)"));
 
             if (stompPid >= 0)
                 events.Add(($"{stompPid}",
-                    $"跺脚触发标定（Az={stompAz:F1}, diff={MathF.Abs(stompAz - 9.81f):F1} > 阈值{stompThreshold:F0} ✓）"));
+                    $"Stomp triggered calibration (Az={stompAz:F1}, diff={MathF.Abs(stompAz - 9.81f):F1} > threshold {stompThreshold:F0} ✓)"));
             else
-                events.Add(("—", $"未检测到跺脚（所有帧 diff < 阈值{stompThreshold:F0}）"));
+                events.Add(("—", $"No stomp detected (all frames diff < threshold {stompThreshold:F0})"));
 
             if (invStart >= 0)
                 events.Add(($"{invStart}–{invEnd}",
-                    $"Left 足 SW=0（跺脚后 AHRS 方向短暂失效，约 {(invEnd - invStart + 1) / 100f:F1}s）"));
+                    $"Left foot SW=0 (AHRS orientation briefly invalid after stomp, ~{(invEnd - invStart + 1) / 100f:F1}s)"));
 
             if (validResumed >= 0)
-                events.Add(($"{validResumed}", "有效帧恢复，仍在静止"));
+                events.Add(($"{validResumed}", "Valid frames resumed, still static"));
 
             // ── Post-calibration: scan DiagnosticsRows ────────────────────────
             if (diag.Count == 0)
             {
-                events.Add(("—", "标定未完成（无诊断数据）"));
+                events.Add(("—", "Calibration incomplete (no diagnostics data)"));
                 return FormatTimelineTable(events);
             }
 
             long calPid = diag[0].PacketId;
-            events.Add(($"≈{calPid}", "标定完成（静止确认10帧 + 采集50帧）"));
+            events.Add(($"≈{calPid}", "Calibration done (10 static confirm + 50 collect frames)"));
 
             long standEndPid = calPid;
             long walkMotionPid = -1, isWalkTruePid = -1;
             bool prevWalking = false;
             int fpaL = 0, fpaR = 0;
+            int trainOkL = 0, trainMissL = 0, trainOkR = 0, trainMissR = 0;
+            long trainFirstPid = -1, trainLastPid = -1;
             var turningEps = new List<(long s, long e)>();
             var reacqEps = new List<(long s, long e)>();
             var prevState = ContextState.Straight;
@@ -779,6 +829,20 @@ namespace IMUMoCap
                 prevWalking = row.IsWalking;
                 if (!float.IsNaN(row.FpaLeft_Deg)) fpaL++;
                 if (!float.IsNaN(row.FpaRight_Deg)) fpaR++;
+
+                // Training 步：Error 不为 NaN 说明 Baseline 已设置（Training 阶段）
+                if (!float.IsNaN(row.FpaLeft_Error))
+                {
+                    if (trainFirstPid < 0) trainFirstPid = row.PacketId;
+                    trainLastPid = row.PacketId;
+                    if (row.FpaLeft_OnTarget) trainOkL++; else trainMissL++;
+                }
+                if (!float.IsNaN(row.FpaRight_Error))
+                {
+                    if (trainFirstPid < 0) trainFirstPid = row.PacketId;
+                    trainLastPid = row.PacketId;
+                    if (row.FpaRight_OnTarget) trainOkR++; else trainMissR++;
+                }
 
                 if (row.MotionState != prevState)
                 {
@@ -804,10 +868,10 @@ namespace IMUMoCap
 
             if (standEndPid > calPid + 20)
                 events.Add(($"{calPid}–{standEndPid}",
-                    $"标定后继续站立 ~{(standEndPid - calPid) / 100f:F1}s → IsWalking=False → FPA门控失败"));
+                    $"Standing still after calibration ~{(standEndPid - calPid) / 100f:F1}s → IsWalking=False → FPA gating failed"));
 
-            if (walkMotionPid > 0) events.Add(($"≈{walkMotionPid}", "走路开始"));
-            if (isWalkTruePid > 0) events.Add(($"≈{isWalkTruePid}", "IsWalking 第一次变 True（100帧窗口填满）"));
+            if (walkMotionPid > 0) events.Add(($"≈{walkMotionPid}", "Walking started"));
+            if (isWalkTruePid > 0) events.Add(($"≈{isWalkTruePid}", "IsWalking first turned True (100-frame window full)"));
 
             long fpaWindowStart = isWalkTruePid > 0 ? isWalkTruePid
                                 : walkMotionPid > 0 ? walkMotionPid : calPid;
@@ -816,16 +880,16 @@ namespace IMUMoCap
             {
                 if (preL > 0 || preR > 0)
                     events.Add(($"{fpaWindowStart}–{turningEps[0].s}",
-                        $"有效 FPA 计算窗口（约 {preL}步L / {preR}步R）"));
+                        $"Valid FPA window (~{preL} steps L / {preR} steps R)"));
                 foreach (var ep in turningEps)
-                    events.Add(($"{ep.s}–{ep.e}", "转弯检测（yaw rate > 0.70 rad/s），进入 Turning"));
+                    events.Add(($"{ep.s}–{ep.e}", "Turn detected (yaw rate > 0.70 rad/s), entering Turning"));
                 foreach (var ep in reacqEps)
-                    events.Add(($"{ep.s}–{ep.e}", "ReacquiringPd：PD 历史清空，等待 2 步重建"));
+                    events.Add(($"{ep.s}–{ep.e}", "ReacquiringPd: PD history cleared, waiting 2 steps to rebuild"));
                 if (postL > 0 || postR > 0)
                 {
                     long postStart = reacqEps.Count > 0 ? reacqEps[^1].e : turningEps[^1].e;
                     events.Add(($"{postStart}–{diag[^1].PacketId}",
-                        $"转弯后有效 FPA 计算（约 {postL}步L / {postR}步R）"));
+                        $"Valid FPA after turn (~{postL} steps L / {postR} steps R)"));
                 }
             }
             else if (fpaL > 0 || fpaR > 0)
@@ -834,17 +898,23 @@ namespace IMUMoCap
                 foreach (var row in diag)
                     if (!float.IsNaN(row.FpaLeft_Deg) || !float.IsNaN(row.FpaRight_Deg))
                     { if (fpaFirst < 0) fpaFirst = row.PacketId; fpaLast = row.PacketId; }
-                events.Add(($"{fpaFirst}–{fpaLast}", $"有效 FPA 计算（{fpaL}步L / {fpaR}步R）"));
+                events.Add(($"{fpaFirst}–{fpaLast}", $"Valid FPA ({fpaL} steps L / {fpaR} steps R)"));
             }
             else
             {
-                events.Add(("—", "无 FPA 输出（门控持续阻断）"));
+                events.Add(("—", "No FPA output (gating blocked continuously)"));
             }
 
             string conclusion = fpaL >= minBaselineSteps && fpaR >= minBaselineSteps
-                ? "Baseline 完成"
-                : "步数不足 → Baseline 未完成 → Training 未启动";
-            events.Add(("合计", $"FPA: L={fpaL}步 / R={fpaR}步，MinBaselineSteps={minBaselineSteps} → {conclusion}"));
+                ? "Baseline done"
+                : "Insufficient steps → Baseline incomplete → Training not started";
+            events.Add(("Total", $"FPA: L={fpaL} steps / R={fpaR} steps, MinBaselineSteps={minBaselineSteps} → {conclusion}"));
+
+            if (trainOkL + trainMissL + trainOkR + trainMissR > 0)
+                events.Add(($"{trainFirstPid}–{trainLastPid}",
+                    $"Training: L={trainOkL} steps OK {trainMissL} steps Miss / R={trainOkR} steps OK {trainMissR} steps Miss"));
+            else if (fpaL >= minBaselineSteps && fpaR >= minBaselineSteps)
+                events.Add(("—", "Training started, no FPA step data yet"));
 
             return FormatTimelineTable(events);
         }
@@ -857,7 +927,7 @@ namespace IMUMoCap
 
             var sb = new StringBuilder();
             sb.AppendLine($"┌─{new string('─', PidW)}─┬─{new string('─', descW)}─┐");
-            sb.AppendLine($"│ {PadD("PacketId", PidW)} │ {PadD("事件", descW)} │");
+            sb.AppendLine($"│ {PadD("PacketId", PidW)} │ {PadD("Event", descW)} │");
             foreach (var (pid, desc) in events)
             {
                 sb.AppendLine($"├─{new string('─', PidW)}─┼─{new string('─', descW)}─┤");
@@ -883,6 +953,20 @@ namespace IMUMoCap
             return dw >= width ? s : s + new string(' ', width - dw);
         }
 
+        private void BtnReplayPause_Click(object sender, RoutedEventArgs e)
+        {
+            _replayPaused = !_replayPaused;
+            BtnReplayPause.Content = _replayPaused ? "▶ Resume" : "⏸ Pause";
+            if (_replayPaused && _timelineBuffer.Count > 0)
+                log($"Paused. Timeline first frame PacketId={_timelineBuffer.Peek().PacketId}");
+        }
+
+        private void BtnReplaySpeed_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && int.TryParse(btn.Tag?.ToString(), out int ms))
+                _replayDelayMs = ms;
+        }
+
         private void BtnToggleLog_Click(object sender, RoutedEventArgs e)
         {
             _content.LogPanelVisible = !_content.LogPanelVisible;
@@ -899,6 +983,96 @@ namespace IMUMoCap
             _content.ParamsPanelVisible = !_content.ParamsPanelVisible;
             if (BtnToggleParams != null)
                 BtnToggleParams.Content = _content.ParamsPanelVisible ? "Hide Params" : "Show Params";
+        }
+
+        private void TimelineBorder_SizeChanged(object sender, SizeChangedEventArgs e) => DrawTimeline();
+
+        private void DrawTimeline()
+        {
+            var frames = _timelineBuffer.ToArray();
+            int w = Math.Max(0, (int)TimelineBorder.ActualWidth - 64);
+            if (w < 2) return;
+
+            const int laneH = 16, laneCount = 6, h = laneH * laneCount;
+            double dx = Math.Max(1.0, (double)w / TimelineCapacity);
+            bool showText = dx >= 12;
+            float confThr = (float)_pipeline.Params.PdConfidenceThreshold;
+            float stabThr = (float)_pipeline.Params.PdStabilityThreshold;
+
+            var typeface = new Typeface("Consolas");
+
+            var dv = new DrawingVisual();
+            using (var dc = dv.RenderOpen())
+            {
+                dc.DrawRectangle(Brushes.Black, null, new Rect(0, 0, w, h));
+
+                for (int i = 0; i < frames.Length; i++)
+                {
+                    double x = (double)i / TimelineCapacity * w;
+                    var r = frames[i];
+
+                    Rect LaneRect(int lane) => new Rect(x, lane * laneH, dx, laneH - 1);
+
+                    // Lane 0: PdIsValid
+                    dc.DrawRectangle(r.PdIsValid ? Brushes.DodgerBlue : s_darkGray, null, LaneRect(0));
+                    // Lane 1: L.Stance
+                    dc.DrawRectangle(r.LeftStance ? Brushes.LimeGreen : s_darkGray, null, LaneRect(1));
+                    // Lane 2: R.Stance
+                    dc.DrawRectangle(r.RightStance ? Brushes.LimeGreen : s_darkGray, null, LaneRect(2));
+                    // Lane 3: IsWalking
+                    dc.DrawRectangle(r.IsWalking ? Brushes.DodgerBlue : s_darkGray, null, LaneRect(3));
+                    // Lane 4: MotionContext
+                    var ctxBrush = r.MotionState switch
+                    {
+                        ContextState.Turning       => Brushes.Red,
+                        ContextState.ReacquiringPd => Brushes.Orange,
+                        _                          => Brushes.LimeGreen,
+                    };
+                    dc.DrawRectangle(ctxBrush, null, LaneRect(4));
+                    // Lane 5: FPA gate background (why blocked) + tick on actual output
+                    Brush fpaGateBrush;
+                    if (r.MotionState != ContextState.Straight || r.MotionConfidence < confThr)
+                        fpaGateBrush = s_darkRed;
+                    else if (!r.PdIsValid || r.PdStability < stabThr)
+                        fpaGateBrush = s_darkOrange;
+                    else if (!r.IsWalking)
+                        fpaGateBrush = s_darkGray;
+                    else
+                        fpaGateBrush = s_darkGreen;
+                    dc.DrawRectangle(fpaGateBrush, null, LaneRect(5));
+                    bool hasL = !float.IsNaN(r.FpaLeft_Deg);
+                    bool hasR = !float.IsNaN(r.FpaRight_Deg);
+                    if (hasL)
+                    {
+                        dc.DrawLine(s_cyanPen, new Point(x, 5 * laneH), new Point(x, 6 * laneH));
+                        if (showText)
+                        {
+                            var ft = new FormattedText($"{r.FpaLeft_Deg:F0}",
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                FlowDirection.LeftToRight, typeface, 9, Brushes.Cyan,
+                                VisualTreeHelper.GetDpi(this).PixelsPerDip);
+                            dc.DrawText(ft, new Point(x + 1, 5 * laneH));
+                        }
+                    }
+                    if (hasR)
+                    {
+                        dc.DrawLine(s_purplePen, new Point(x, 5 * laneH), new Point(x, 6 * laneH));
+                        if (showText && !hasL)
+                        {
+                            var ft = new FormattedText($"{r.FpaRight_Deg:F0}",
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                FlowDirection.LeftToRight, typeface, 9, Brushes.Violet,
+                                VisualTreeHelper.GetDpi(this).PixelsPerDip);
+                            dc.DrawText(ft, new Point(x + 1, 5 * laneH));
+                        }
+                    }
+                }
+            }
+
+            var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(dv);
+            rtb.Freeze();
+            TimelineImage.Source = rtb;
         }
 
         private void OnFpaResult(FpaResult result, bool isTraining)

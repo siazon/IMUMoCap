@@ -31,9 +31,9 @@ namespace IMUMoCap.Pipeline
         public float StompAccThreshold_ms2   { get; set; } = 25f;  // ~2.5g
         public int   StompMaxFrames          { get; set; } = 20;   // 0.2s @100Hz
         public float StaticGyroThreshold     { get; set; } = 0.3f; // rad/s
-        public int   StaticRequiredFrames    { get; set; } = 10;   // 0.3s 连续静止才开始采集
-        public int   StaticCollectFrames     { get; set; } = 50;  // 采集 3s 数据
-        public int   StaticTimeoutFrames     { get; set; } = 300; // 10s 超时 → Failed
+        public int   StaticRequiredFrames    { get; set; } = 30;   // 0.3s 连续静止才开始采集
+        public int   StaticCollectFrames     { get; set; } = 300; // 采集 3s 数据
+        public int   StaticTimeoutFrames     { get; set; } = 1000; // 10s 超时 → Failed
 
         // ── 状态 ──────────────────────────────────────────────────────────────
         public CalibrationState State { get; private set; } = CalibrationState.WaitingForStart;

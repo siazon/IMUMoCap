@@ -27,8 +27,8 @@ namespace IMUMoCap.Pipeline
         public float PelvisWeight { get; set; } = 0.6f;
         public float LeftFootWeight { get; set; } = 0.2f;
         public float RightFootWeight { get; set; } = 0.2f;
-        public int StabilityWindow { get; set; } = 3;    // 步数滑动窗口
-        public float StabilityThreshold { get; set; } = 0.65f;
+        public int StabilityWindow { get; set; } = 10;   // 步数滑动窗口
+        public float StabilityThreshold { get; set; } = 0.85f;
         public int MinStepsBeforeValid { get; set; } = 2;    // 进入 ReacquiringPd 时历史会被清空，2 步即可重建 stability
 
         // ── 内部状态 ──────────────────────────────────────────────────────────

@@ -17,10 +17,10 @@ namespace IMUMoCap.Pipeline.Models
         public float StanceFootPitchThreshold { get; set; } = 0.35f;  // rad，~20°，转弯后left foot安装倾斜角大，10°过紧
 
         // FpaEngine gate thresholds
-        public float PdConfidenceThreshold   { get; set; } = 0.5f;  // 0.3–1.0
-        public float PdStabilityThreshold    { get; set; } = 0.5f;  // 0.3–1.0
+        public float PdConfidenceThreshold   { get; set; } = 0.7f;  // 0.3–1.0
+        public float PdStabilityThreshold    { get; set; } = 0.7f;  // 0.3–1.0
 
         // BaselineProcessor
-        public int   MinBaselineSteps        { get; set; } = 5;    // 10–50
+        public int   MinBaselineSteps        { get; set; } = 20;   // 10–50
     }
 }
