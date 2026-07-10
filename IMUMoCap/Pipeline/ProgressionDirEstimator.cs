@@ -30,6 +30,9 @@ namespace IMUMoCap.Pipeline
         public int StabilityWindow { get; set; } = 10;   // 步数滑动窗口
         public float StabilityThreshold { get; set; } = 0.85f;
         public int MinStepsBeforeValid { get; set; } = 2;    // 进入 ReacquiringPd 时历史会被清空，2 步即可重建 stability
+        // ReacquiringPd 退出前，融合朝向（含双脚）与骨盆瞬时朝向的夹角须小于此值，
+        // 防止双脚朝向还没跟上骨盆转身进度时就提前锁定一个偏差很大的 PD。
+        public float PelvisAgreementThreshold_deg { get; set; } = 15f;
 
         // ── 内部状态 ──────────────────────────────────────────────────────────
         private float _currentPd = 0f;
@@ -118,7 +121,8 @@ namespace IMUMoCap.Pipeline
             if (context.State == ContextState.ReacquiringPd)
             {
                 float stability = ComputeStability();
-                if (stability >= StabilityThreshold && _stepCount >= MinStepsBeforeValid)
+                bool pelvisAgrees = AngleDiffDeg(_currentPd, pelvisYaw) <= PelvisAgreementThreshold_deg;
+                if (stability >= StabilityThreshold && _stepCount >= MinStepsBeforeValid && pelvisAgrees)
                     contextDetector.ConfirmStraight();
             }
 
@@ -270,6 +274,12 @@ namespace IMUMoCap.Pipeline
             return System.Numerics.Quaternion.Multiply(System.Numerics.Quaternion.Inverse(reference.Value), measured);
         }
 
-
+        private static float AngleDiffDeg(float aRad, float bRad)
+        {
+            float d = aRad - bRad;
+            while (d > MathF.PI) d -= 2f * MathF.PI;
+            while (d < -MathF.PI) d += 2f * MathF.PI;
+            return MathF.Abs(d) * (180f / MathF.PI);
+        }
     }
 }

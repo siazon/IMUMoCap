@@ -98,17 +98,17 @@
 
                     
 
-                    <Button x:Name="BtnLoadData" Click="BtnLoadData_Click"
-        HorizontalAlignment="Stretch" Margin="0,0,0,8"
-        ToolTip="Load IMU samples CSV and replay through pipeline">
-                        Load IMU Samples (CSV)
-                    </Button>
                     <Button x:Name="BtnSaveDiagnostics" Click="BtnSaveDiagnostics_Click"
 HorizontalAlignment="Stretch" Margin="0,0,0,8"
 ToolTip="Export diagnostics to CSV for AI analysis">
                         Save Diagnostics (CSV)
                     </Button>
 
+                    <Button x:Name="BtnLoadData" Click="BtnLoadData_Click"
+        HorizontalAlignment="Stretch" Margin="0,0,0,8"
+        ToolTip="Load IMU samples CSV and replay through pipeline">
+                        Load IMU Samples (CSV)
+                    </Button>
                     <!-- Replay controls — visible only during replay -->
                     <StackPanel x:Name="ReplayControls" Visibility="Collapsed" Margin="0,0,0,8">
                         <Button x:Name="BtnReplayPause" Click="BtnReplayPause_Click"

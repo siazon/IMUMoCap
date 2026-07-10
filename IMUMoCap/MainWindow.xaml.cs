@@ -477,6 +477,7 @@ namespace IMUMoCap
 
                 var csvUtil = new CsvUtil();
                 csvUtil.WriteImuSamplesCsv(saveFileDialog.FileName, _imuSamples);
+                _imuSamples.Clear();
             }
             catch (Exception ex)
             {
@@ -587,6 +588,8 @@ namespace IMUMoCap
             _baselineTimer = null;
             _pipeline.Reset();
             _timelineBuffer.Clear();
+            _imuSamples.Clear();
+            _imuFrameCollector.Reset();
             _content.StatusLabel = "Calibration reset. Stomp left foot to begin.";
             _content.LeftFpaTarget = "";
             _content.RightFpaTarget = "";

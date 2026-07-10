@@ -138,6 +138,18 @@ namespace IMUMoCap.Methods
             return bundle;
         }
 
+        public void Reset()
+        {
+            _frameBundles.Clear();
+            _firstPacketId = null;
+            _lastCompletedPacketId = -1;
+            _totalFramesSeen = 0;
+            _completedFrames = 0;
+            _pelvisGapFrames = 0;
+            _leftFootGapFrames = 0;
+            _rightFootGapFrames = 0;
+        }
+
         public FrameQualityReport GenerateReport()
         {
             return new FrameQualityReport

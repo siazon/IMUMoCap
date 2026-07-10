@@ -25,7 +25,6 @@ namespace IMUMoCap.Tests.Integration
         {
             var pipeline = new GaitPipeline();
             var results  = new List<FpaResult>();
-            pipeline.OnFpaResult += r => results.Add(r);
 
             // 录制文件里已包含完整流程；这里直接回放
             pipeline.StartBaseline();
