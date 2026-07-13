@@ -47,6 +47,10 @@ namespace IMUMoCap.Pipeline.Models
         public float FpaRight_Error    { get; init; }
         public bool  FpaRight_OnTarget { get; init; }
 
+        // ── Experiment tagging (set by ExperimentRecorder when persisting, not by pipeline) ──
+        public string Stage   { get; set; } = "";
+        public int    Attempt { get; set; } = 1;
+
         // ── CSV header (matches property order above) ─────────────────────────
         public static string CsvHeader =>
             "Timestamp,PacketId," +
@@ -63,7 +67,8 @@ namespace IMUMoCap.Pipeline.Models
             "MotionContext_State,MotionContext_Confidence," +
             "PD_DirectionDeg,PD_Stability,PD_IsValid," +
             "FPA_Left_Deg,FPA_Left_Error,FPA_Left_OnTarget," +
-            "FPA_Right_Deg,FPA_Right_Error,FPA_Right_OnTarget";
+            "FPA_Right_Deg,FPA_Right_Error,FPA_Right_OnTarget," +
+            "Stage,Attempt";
 
         public string ToCsvRow() =>
             $"{Timestamp},{PacketId}," +
@@ -84,6 +89,7 @@ namespace IMUMoCap.Pipeline.Models
             $"{FpaLeft_OnTarget}," +
             $"{(float.IsNaN(FpaRight_Deg)  ? "" : FpaRight_Deg.ToString("F2"))}," +
             $"{(float.IsNaN(FpaRight_Error) ? "" : FpaRight_Error.ToString("F2"))}," +
-            $"{FpaRight_OnTarget}";
+            $"{FpaRight_OnTarget}," +
+            $"{Stage},{Attempt}";
     }
 }

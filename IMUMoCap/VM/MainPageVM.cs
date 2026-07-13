@@ -416,6 +416,57 @@ namespace IMUMoCap
         }
 
         public List<IMUData> datas { get; set; } = new List<IMUData>();
+
+        // ── Experiment session (participant/condition file tracking) ──────────
+
+        private string _currentStageLabel = "";
+        public string CurrentStageLabel
+        {
+            get { return _currentStageLabel; }
+            set { _currentStageLabel = value; OnPropertyChanged(nameof(CurrentStageLabel)); }
+        }
+
+        private string _stageElapsedDisplay = "00:00";
+        public string StageElapsedDisplay
+        {
+            get { return _stageElapsedDisplay; }
+            set { _stageElapsedDisplay = value; OnPropertyChanged(nameof(StageElapsedDisplay)); }
+        }
+
+        private string _currentSessionFileName = "";
+        public string CurrentSessionFileName
+        {
+            get { return _currentSessionFileName; }
+            set { _currentSessionFileName = value; OnPropertyChanged(nameof(CurrentSessionFileName)); }
+        }
+
+        private string _currentMetaFileName = "";
+        public string CurrentMetaFileName
+        {
+            get { return _currentMetaFileName; }
+            set { _currentMetaFileName = value; OnPropertyChanged(nameof(CurrentMetaFileName)); }
+        }
+
+        private string _currentQoeFileName = "";
+        public string CurrentQoeFileName
+        {
+            get { return _currentQoeFileName; }
+            set { _currentQoeFileName = value; OnPropertyChanged(nameof(CurrentQoeFileName)); }
+        }
+
+        private bool _isPaused;
+        public bool IsPaused
+        {
+            get { return _isPaused; }
+            set { _isPaused = value; OnPropertyChanged(nameof(IsPaused)); }
+        }
+
+        private string _pauseReason = "";
+        public string PauseReason
+        {
+            get { return _pauseReason; }
+            set { _pauseReason = value; OnPropertyChanged(nameof(PauseReason)); }
+        }
         #endregion
 
         public void DataReceived(RecordedData data, int dataSource)

@@ -72,6 +72,13 @@ namespace IMUMoCap
         private readonly List<ImuSampleFrame> _imuSamples = new();
         private readonly ImuFrameCollector _imuFrameCollector = new();
 
+        // Experiment session recording (participant/condition/stage → file)
+        private static readonly string[] ConditionStages = { "Baseline", "Training1", "Training2", "Training3", "Retention" };
+        private readonly Methods.ExperimentRecorder _recorder = new();
+        private string _currentStage = "";
+        private readonly Dictionary<string, int> _stageAttempt = new();
+        private readonly System.Diagnostics.Stopwatch _stageStopwatch = new();
+
         public MainWindow()
         {
             InitializeComponent();
@@ -123,10 +130,17 @@ namespace IMUMoCap
             {
                 _timelineBuffer.Enqueue(row);
                 if (_timelineBuffer.Count > TimelineCapacity) _timelineBuffer.Dequeue();
+
+                if (_recorder.IsRecording && !_content.IsPaused)
+                    _recorder.WriteRow(row, _currentStage, _stageAttempt.GetValueOrDefault(_currentStage, 1));
             });
 
             _timelineTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
-            _timelineTimer.Tick += (_, _) => DrawTimeline();
+            _timelineTimer.Tick += (_, _) =>
+            {
+                DrawTimeline();
+                _content.StageElapsedDisplay = _stageStopwatch.Elapsed.ToString(@"mm\:ss");
+            };
             _timelineTimer.Start();
 
             // 参数同步：VM 属性变化时推入 pipeline
@@ -233,6 +247,7 @@ namespace IMUMoCap
             _imuLoopCts?.Cancel();
             _baselineTimer?.Stop();
             _timelineTimer?.Stop();
+            _recorder.Close();
             ImuDataQueue?.CompleteAdding();
             _deviceManager.Dispose();
             if (_wsServer != null)
@@ -553,6 +568,7 @@ namespace IMUMoCap
                 $"R={profile.Target_R:F1}° ({profile.Direction_R})";
             _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.Tolerance_L:F1}° ({profile.Direction_L})";
             _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.Tolerance_R:F1}° ({profile.Direction_R})";
+            _recorder.SaveBaseline(profile);
             _pipeline.StartTraining();
             BroadcastArState("training");
         }
@@ -632,6 +648,114 @@ namespace IMUMoCap
             catch (Exception ex)
             {
                 log($"Error saving diagnostics: {ex.Message}");
+            }
+        }
+
+        // ── 实验会话：Participant/Condition/Stage → 文件 ─────────────────────────
+
+        private void BtnStartCondition_Click(object sender, RoutedEventArgs e)
+        {
+            string participantId = txtParticipantId.Text.Trim();
+            if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
+
+            string condition = (cmbCondition.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "EF";
+            string orderGroup = (cmbOrderGroup.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "A";
+
+            _recorder.StartCondition(participantId, condition, orderGroup);
+            _stageAttempt.Clear();
+            _currentStage = ConditionStages[0];
+            _stageStopwatch.Restart();
+
+            _content.CurrentStageLabel = _currentStage;
+            _content.CurrentSessionFileName = _recorder.CurrentSessionFilePath ?? "";
+            _content.CurrentMetaFileName = _recorder.CurrentMetaFilePath ?? "";
+            _content.CurrentQoeFileName = _recorder.CurrentQoeFilePath ?? "";
+            log($"Started condition {condition} (order {orderGroup}) → {_recorder.CurrentSessionFilePath}");
+        }
+
+        private void BtnStartWashout_Click(object sender, RoutedEventArgs e)
+        {
+            string participantId = txtParticipantId.Text.Trim();
+            if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
+
+            _recorder.StartCondition(participantId, "Washout", null);
+            _stageAttempt.Clear();
+            _currentStage = "Washout";
+            _stageStopwatch.Restart();
+
+            _content.CurrentStageLabel = _currentStage;
+            _content.CurrentSessionFileName = _recorder.CurrentSessionFilePath ?? "";
+            _content.CurrentMetaFileName = "";
+            _content.CurrentQoeFileName = "";
+            log($"Started washout → {_recorder.CurrentSessionFilePath}");
+        }
+
+        private void BtnNextStage_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_recorder.IsRecording) { log("No active condition/washout recording."); return; }
+            if (_recorder.Condition == "Washout") { log("Washout has no sub-stages."); return; }
+
+            int idx = Array.IndexOf(ConditionStages, _currentStage);
+            if (idx < 0 || idx >= ConditionStages.Length - 1) { log("Already at final stage (Retention)."); return; }
+
+            _currentStage = ConditionStages[idx + 1];
+            _stageStopwatch.Restart();
+            _content.CurrentStageLabel = _currentStage;
+            log($"Stage → {_currentStage}");
+        }
+
+        private void BtnEndCondition_Click(object sender, RoutedEventArgs e)
+        {
+            _recorder.Close();
+            _stageStopwatch.Stop();
+            log($"Recording closed: {_content.CurrentSessionFileName}");
+        }
+
+        private void BtnPauseResume_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_recorder.IsRecording) { log("No active recording to pause."); return; }
+
+            if (!_content.IsPaused)
+            {
+                if (string.IsNullOrWhiteSpace(_content.PauseReason))
+                {
+                    MessageBox.Show("请填写暂停原因 / Please enter a pause reason before pausing.",
+                        "Pause", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                _content.IsPaused = true;
+                _stageStopwatch.Stop();
+                _recorder.BeginPause(_currentStage, _content.PauseReason);
+                BtnPauseResume.Content = "Resume";
+                log($"Paused at {_currentStage}: {_content.PauseReason}");
+            }
+            else
+            {
+                var elapsed = _recorder.PauseElapsed;
+                var result = MessageBox.Show(
+                    $"暂停时长 {elapsed.TotalMinutes:F1} 分钟。是否需要重测当前阶段？\n" +
+                    $"Pause duration {elapsed.TotalMinutes:F1} min. Redo this stage?",
+                    "Resume", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    int nextAttempt = _stageAttempt.GetValueOrDefault(_currentStage, 1) + 1;
+                    _stageAttempt[_currentStage] = nextAttempt;
+                    _recorder.EndPause("Redo");
+                    _recorder.MarkRedo(_currentStage, nextAttempt);
+                    _stageStopwatch.Restart();
+                    log($"Resumed with Redo — {_currentStage} attempt #{nextAttempt}");
+                }
+                else
+                {
+                    _recorder.EndPause("Continue");
+                    _stageStopwatch.Start();
+                    log($"Resumed, continuing {_currentStage}");
+                }
+
+                _content.IsPaused = false;
+                _content.PauseReason = "";
+                BtnPauseResume.Content = "Pause";
             }
         }
 
