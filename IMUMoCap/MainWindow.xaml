@@ -14,6 +14,27 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <Style x:Key="CoreButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+            <Setter Property="Background" Value="#1976D2"/>
+            <Setter Property="BorderBrush" Value="#1976D2"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style x:Key="CalibrationButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+            <Setter Property="Background" Value="#F57C00"/>
+            <Setter Property="BorderBrush" Value="#F57C00"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style x:Key="ToolsButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+            <Setter Property="Background" Value="#5E35B1"/>
+            <Setter Property="BorderBrush" Value="#5E35B1"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style x:Key="ParamsButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+            <Setter Property="Background" Value="#388E3C"/>
+            <Setter Property="BorderBrush" Value="#388E3C"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
     </Window.Resources>
 
     <!-- Root: right panel (fixed 270px) | left panel (flex) -->
@@ -26,151 +47,158 @@
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="12">
 
-                    <!-- Toggle params -->
-                    <Button x:Name="BtnToggleParams" Click="BtnToggleParams_Click"
-                            Margin="0,0,0,6" HorizontalAlignment="Stretch">Hide Params</Button>
-
-                    <!-- Params section (collapsible) -->
-                    <StackPanel x:Name="ParamsPanel"
-                                Visibility="{Binding ParamsPanelVisible, Converter={StaticResource BoolToVis}}">
-
-                        <TextBlock Text="Parameters" FontWeight="Bold" Margin="0,0,0,8"/>
-
-                        <!-- 1. Stomp threshold -->
-                        <TextBlock Text="{Binding StompThreshold, StringFormat='Stomp Threshold: {0:F0} m/s²'}" FontSize="11"/>
-                        <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
-                                Value="{Binding StompThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                        <!-- 2. Static gyro threshold -->
-                        <TextBlock Text="{Binding StaticGyroThreshold, StringFormat='Static Gyro Threshold: {0:F2} rad/s'}" FontSize="11"/>
-                        <Slider Minimum="0.05" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                Value="{Binding StaticGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                        <!-- 3. Stance free-acc threshold -->
-                        <TextBlock Text="{Binding StanceFreeAccThreshold, StringFormat='Stance Acc Threshold: {0:F1} m/s²'}" FontSize="11"/>
-                        <Slider Minimum="0.5" Maximum="5.0" SmallChange="0.1" LargeChange="0.5"
-                                Value="{Binding StanceFreeAccThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                        <!-- 4. Stance gyro threshold -->
-                        <TextBlock Text="{Binding StanceGyroThreshold, StringFormat='Stance Gyro Threshold: {0:F1} rad/s'}" FontSize="11"/>
-                        <Slider Minimum="0.1" Maximum="3.0" SmallChange="0.05" LargeChange="0.2"
-                                Value="{Binding StanceGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                        <!-- 5. PD confidence threshold -->
-                        <TextBlock Text="{Binding PdConfidenceThreshold, StringFormat='PD Confidence Threshold: {0:F2}'}" FontSize="11"/>
-                        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                Value="{Binding PdConfidenceThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                        <!-- 6. PD stability threshold -->
-                        <TextBlock Text="{Binding PdStabilityThreshold, StringFormat='PD Stability Threshold: {0:F2}'}" FontSize="11"/>
-                        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                Value="{Binding PdStabilityThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                        <!-- 7. Min baseline steps -->
-                        <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="11"/>
-                        <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
-                                IsSnapToTickEnabled="True" TickFrequency="1"
-                                Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                        <!-- 8. Baseline L/R step count imbalance warning threshold -->
-                        <TextBlock Text="{Binding BaselineImbalanceRatioThreshold, StringFormat='Baseline Imbalance Ratio: {0:F2}'}" FontSize="11"/>
-                        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                Value="{Binding BaselineImbalanceRatioThreshold, Mode=TwoWay}" Margin="0,0,0,12"/>
-
-                    </StackPanel>
-
-                    <Separator Margin="0,4,0,8"/>
-
-                    <!-- Action buttons -->
-                    <Button x:Name="BtnRestartCal" Click="BtnRestartCal_Click"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,8"
-                            ToolTip="Reset pipeline and wait for stomp to re-calibrate">
-                        Restart Calibration
-                    </Button>
-
-                    
-
-                    <Separator Margin="0,4,0,8"/>
-
-                    <!-- Experiment session (participant/condition/stage + file tracking) -->
-                    <TextBlock Text="Experiment Session" FontWeight="Bold" Margin="0,0,0,8"/>
-
-                    <TextBlock Text="Participant ID:" FontSize="11" Opacity="0.7"/>
-                    <TextBox x:Name="txtParticipantId" Margin="0,0,0,6"/>
-
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                        <StackPanel Margin="0,0,8,0">
-                            <TextBlock Text="Condition:" FontSize="11" Opacity="0.7"/>
-                            <ComboBox x:Name="cmbCondition" Width="70" SelectedIndex="0">
-                                <ComboBoxItem Content="EF"/>
-                                <ComboBoxItem Content="IF"/>
-                            </ComboBox>
-                        </StackPanel>
+                    <!-- ── CORE: Experiment Session (always visible) ───────────────── -->
+                    <Border Background="#E3F2FD" CornerRadius="6" Padding="10" Margin="0,0,0,10">
                         <StackPanel>
-                            <TextBlock Text="Order Group:" FontSize="11" Opacity="0.7"/>
-                            <ComboBox x:Name="cmbOrderGroup" Width="70" SelectedIndex="0">
-                                <ComboBoxItem Content="A"/>
-                                <ComboBoxItem Content="B"/>
-                            </ComboBox>
+                            <TextBlock Text="Experiment Session" FontWeight="Bold" Margin="0,0,0,8"/>
+
+                            <TextBlock Text="Participant ID:" FontSize="11" Opacity="0.7"/>
+                            <TextBox x:Name="txtParticipantId" Margin="0,0,0,6"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <StackPanel Margin="0,0,8,0">
+                                    <TextBlock Text="Condition:" FontSize="11" Opacity="0.7"/>
+                                    <ComboBox x:Name="cmbCondition" Width="70" SelectedIndex="0">
+                                        <ComboBoxItem Content="EF"/>
+                                        <ComboBoxItem Content="IF"/>
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel>
+                                    <TextBlock Text="Order Group:" FontSize="11" Opacity="0.7"/>
+                                    <ComboBox x:Name="cmbOrderGroup" Width="70" SelectedIndex="0">
+                                        <ComboBoxItem Content="A"/>
+                                        <ComboBoxItem Content="B"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnStartCondition_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Start Condition</Button>
+                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnStartWashout_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Start Washout</Button>
+                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnNextStage_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Next Stage</Button>
+                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnEndCondition_Click" HorizontalAlignment="Stretch" Margin="0,0,0,8">End / Close File</Button>
+
+                            <TextBlock Margin="0,0,0,4">
+                                <Run Text="Stage: " Foreground="Gray"/><Run Text="{Binding CurrentStageLabel}" FontWeight="SemiBold"/>
+                                <Run Text="  Elapsed: " Foreground="Gray"/><Run Text="{Binding StageElapsedDisplay}"/>
+                            </TextBlock>
+                            <TextBlock Text="{Binding TurningExclusionDisplay}" FontSize="11" Foreground="Gray" Margin="0,0,0,4"/>
+
+                            <TextBlock Text="Session file:" FontSize="11" Opacity="0.7"/>
+                            <TextBlock Text="{Binding CurrentSessionFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                            <TextBlock Text="Meta file:" FontSize="11" Opacity="0.7"/>
+                            <TextBlock Text="{Binding CurrentMetaFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                            <TextBlock Text="QoE file (fill in externally):" FontSize="11" Opacity="0.7"/>
+                            <TextBlock Text="{Binding CurrentQoeFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+                            <Button x:Name="BtnPauseResume" Style="{StaticResource CoreButtonStyle}" Click="BtnPauseResume_Click"
+                                    HorizontalAlignment="Stretch">Pause</Button>
                         </StackPanel>
-                    </StackPanel>
+                    </Border>
 
-                    <Button Click="BtnStartCondition_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Start Condition</Button>
-                    <Button Click="BtnStartWashout_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Start Washout</Button>
-                    <Button Click="BtnNextStage_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Next Stage</Button>
-                    <Button Click="BtnEndCondition_Click" HorizontalAlignment="Stretch" Margin="0,0,0,8">End / Close File</Button>
-
-                    <TextBlock Margin="0,0,0,4">
-                        <Run Text="Stage: " Foreground="Gray"/><Run Text="{Binding CurrentStageLabel}" FontWeight="SemiBold"/>
-                        <Run Text="  Elapsed: " Foreground="Gray"/><Run Text="{Binding StageElapsedDisplay}"/>
-                    </TextBlock>
-                    <TextBlock Text="{Binding TurningExclusionDisplay}" FontSize="11" Foreground="Gray" Margin="0,0,0,4"/>
-
-                    <TextBlock Text="Session file:" FontSize="11" Opacity="0.7"/>
-                    <TextBlock Text="{Binding CurrentSessionFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                    <TextBlock Text="Meta file:" FontSize="11" Opacity="0.7"/>
-                    <TextBlock Text="{Binding CurrentMetaFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                    <TextBlock Text="QoE file (fill in externally):" FontSize="11" Opacity="0.7"/>
-                    <TextBlock Text="{Binding CurrentQoeFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,8"/>
-
-                    <Button x:Name="BtnPauseResume" Click="BtnPauseResume_Click"
-                            HorizontalAlignment="Stretch" Margin="0,0,0,4">Pause</Button>
-
-                    <Separator Margin="0,4,0,8"/>
-
-                    <!-- Legacy controls -->
-                    <Button Click="BtnMeasure_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Measure</Button>
-                    <Button Click="BtnTest_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Test</Button>
-                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <TextBlock Text="Sample Hz:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"/>
-                        <TextBox x:Name="txtSampleRate" Width="50" Height="24" Text="10"/>
-                    </StackPanel>
-                    <Button Click="Button_SaveData" HorizontalAlignment="Stretch" Margin="0,4,0,8">Save IMU Samples</Button>
-
-                    
-
-                    <Button x:Name="BtnSaveDiagnostics" Click="BtnSaveDiagnostics_Click"
-HorizontalAlignment="Stretch" Margin="0,0,0,8"
-ToolTip="Export diagnostics to CSV for AI analysis">
-                        Save Diagnostics (CSV)
-                    </Button>
-
-                    <Button x:Name="BtnLoadData" Click="BtnLoadData_Click"
-        HorizontalAlignment="Stretch" Margin="0,0,0,8"
-        ToolTip="Load IMU samples CSV and replay through pipeline">
-                        Load IMU Samples (CSV)
-                    </Button>
-                    <!-- Replay controls — visible only during replay -->
-                    <StackPanel x:Name="ReplayControls" Visibility="Collapsed" Margin="0,0,0,8">
-                        <Button x:Name="BtnReplayPause" Click="BtnReplayPause_Click"
-            HorizontalAlignment="Stretch" Margin="0,0,0,4">⏸ Pause</Button>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Click="BtnReplaySpeed_Click" Tag="50"  Width="56" Margin="0,0,2,0" ToolTip="0.2× real-time">Slow</Button>
-                            <Button Click="BtnReplaySpeed_Click" Tag="10"  Width="56" Margin="0,0,2,0" ToolTip="1× real-time">1×</Button>
-                            <Button Click="BtnReplaySpeed_Click" Tag="2"   Width="56" Margin="0,0,2,0" ToolTip="5× real-time">5×</Button>
-                            <Button Click="BtnReplaySpeed_Click" Tag="0"   Width="50"                  ToolTip="No delay">Max</Button>
+                    <!-- ── Calibration (always visible, not collapsible) ───────────── -->
+                    <Border Background="#FFF3E0" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="Calibration" FontWeight="Bold" Margin="0,0,0,8"/>
+                            <Button x:Name="BtnRestartCal" Style="{StaticResource CalibrationButtonStyle}" Click="BtnRestartCal_Click"
+                                    HorizontalAlignment="Stretch"
+                                    ToolTip="Reset pipeline and wait for stomp to re-calibrate">
+                                Restart Calibration
+                            </Button>
                         </StackPanel>
-                    </StackPanel>
+                    </Border>
+
+                    <!-- ── Tools: legacy + diagnostics (collapsible) ────────────────── -->
+                    <Border Background="#EDE7F6" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+                        <StackPanel>
+                            <Expander Header="Tools" IsExpanded="{Binding ToolsVisible, Mode=TwoWay}">
+                                <StackPanel Margin="0,8,0,0">
+                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnMeasure_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Measure</Button>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <TextBlock Text="Sample Hz:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"/>
+                                        <TextBox x:Name="txtSampleRate" Width="50" Height="24" Text="10"/>
+                                    </StackPanel>
+                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="Button_SaveData" HorizontalAlignment="Stretch" Margin="0,0,0,8">Save IMU Samples</Button>
+
+                                    <Button x:Name="BtnSaveDiagnostics" Style="{StaticResource ToolsButtonStyle}" Click="BtnSaveDiagnostics_Click"
+                                            HorizontalAlignment="Stretch" Margin="0,0,0,4"
+                                            ToolTip="Export diagnostics to CSV for AI analysis">
+                                        Save Diagnostics (CSV)
+                                    </Button>
+
+                                    <Button x:Name="BtnLoadData" Style="{StaticResource ToolsButtonStyle}" Click="BtnLoadData_Click"
+                                            HorizontalAlignment="Stretch"
+                                            ToolTip="Load IMU samples CSV and replay through pipeline">
+                                        Load IMU Samples (CSV)
+                                    </Button>
+                                </StackPanel>
+                            </Expander>
+                            <!-- Replay controls — visible only during replay -->
+                            <StackPanel x:Name="ReplayControls" Visibility="Collapsed" Margin="0,8,0,0">
+                                <Button x:Name="BtnReplayPause" Style="{StaticResource ToolsButtonStyle}" Click="BtnReplayPause_Click"
+                                        HorizontalAlignment="Stretch" Margin="0,0,0,4">⏸ Pause</Button>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="50"  Width="56" Margin="0,0,2,0" ToolTip="0.2× real-time">Slow</Button>
+                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="10"  Width="56" Margin="0,0,2,0" ToolTip="1× real-time">1×</Button>
+                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="2"   Width="56" Margin="0,0,2,0" ToolTip="5× real-time">5×</Button>
+                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="0"   Width="50"                  ToolTip="No delay">Max</Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ── Parameters (collapsible, bottom) ─────────────────────────── -->
+                    <Border Background="#E8F5E9" CornerRadius="6" Padding="10" Margin="0,0,0,10">
+                        <Expander Header="Parameters" IsExpanded="{Binding ParamsPanelVisible, Mode=TwoWay}">
+                            <StackPanel Margin="0,8,0,0">
+                                <!-- 1. Stomp threshold -->
+                                <TextBlock Text="{Binding StompThreshold, StringFormat='Stomp Threshold: {0:F0} m/s²'}" FontSize="11"/>
+                                <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
+                                        Value="{Binding StompThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                                <!-- 2. Static gyro threshold -->
+                                <TextBlock Text="{Binding StaticGyroThreshold, StringFormat='Static Gyro Threshold: {0:F2} rad/s'}" FontSize="11"/>
+                                <Slider Minimum="0.05" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                        Value="{Binding StaticGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                                <!-- 3. Stance free-acc threshold -->
+                                <TextBlock Text="{Binding StanceFreeAccThreshold, StringFormat='Stance Acc Threshold: {0:F1} m/s²'}" FontSize="11"/>
+                                <Slider Minimum="0.5" Maximum="5.0" SmallChange="0.1" LargeChange="0.5"
+                                        Value="{Binding StanceFreeAccThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                                <!-- 4. Stance gyro threshold -->
+                                <TextBlock Text="{Binding StanceGyroThreshold, StringFormat='Stance Gyro Threshold: {0:F1} rad/s'}" FontSize="11"/>
+                                <Slider Minimum="0.1" Maximum="3.0" SmallChange="0.05" LargeChange="0.2"
+                                        Value="{Binding StanceGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                                <!-- 5. PD confidence threshold -->
+                                <TextBlock Text="{Binding PdConfidenceThreshold, StringFormat='PD Confidence Threshold: {0:F2}'}" FontSize="11"/>
+                                <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                        Value="{Binding PdConfidenceThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                                <!-- 6. PD stability threshold -->
+                                <TextBlock Text="{Binding PdStabilityThreshold, StringFormat='PD Stability Threshold: {0:F2}'}" FontSize="11"/>
+                                <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                        Value="{Binding PdStabilityThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                                <!-- 7. Min baseline steps -->
+                                <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="11"/>
+                                <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
+                                        IsSnapToTickEnabled="True" TickFrequency="1"
+                                        Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                                <!-- 8. Baseline L/R step count imbalance warning threshold -->
+                                <TextBlock Text="{Binding BaselineImbalanceRatioThreshold, StringFormat='Baseline Imbalance Ratio: {0:F2}'}" FontSize="11"/>
+                                <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                        Value="{Binding BaselineImbalanceRatioThreshold, Mode=TwoWay}" Margin="0,0,0,12"/>
+
+                                <Button x:Name="BtnSaveParams" Style="{StaticResource ParamsButtonStyle}" Click="BtnSaveParams_Click"
+                                        HorizontalAlignment="Stretch"
+                                        ToolTip="Persist current parameter values to disk">
+                                    Save Params
+                                </Button>
+                            </StackPanel>
+                        </Expander>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
         </Border>
@@ -178,14 +206,10 @@ ToolTip="Export diagnostics to CSV for AI analysis">
         <!-- ── LEFT PANEL — Grid with resizable log row ─────────────────────── -->
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <!-- Row 0: status grid -->
-                <RowDefinition Height="107"/>
-                <!-- Row 2: timeline -->
-                <RowDefinition Height="*" MinHeight="80"/> <!-- Row 1: 3D viewports -->
-                <RowDefinition x:Name="SplitterRow" Height="5"/>          <!-- Row 3: drag handle -->
-                <RowDefinition x:Name="LogRow" Height="*" MinHeight="60"/> <!-- Row 4: log -->
-                <RowDefinition Height="Auto"/>             <!-- Row 5: log toggle button -->
+                <RowDefinition Height="Auto"/>                             <!-- Row 0: status grid -->
+                <RowDefinition Height="Auto"/>                             <!-- Row 1: timeline -->
+                <RowDefinition x:Name="SplitterRow" Height="5"/>           <!-- Row 2: drag handle -->
+                <RowDefinition x:Name="LogRow" Height="*" MinHeight="60"/> <!-- Row 3: log (now gets all freed space) -->
             </Grid.RowDefinitions>
 
             <!-- Row 0: Status grid -->
@@ -259,70 +283,7 @@ ToolTip="Export diagnostics to CSV for AI analysis">
                 </Border>
             </Grid>
 
-            <!-- Row 1: 3D viewports -->
-            <UniformGrid Grid.Row="2" Rows="1" Columns="3">
-                <Grid>
-                    <Viewport3D>
-                        <Viewport3D.Camera>
-                            <PerspectiveCamera Position="2,1.2,2" LookDirection="-2,-1.2,-2"
-                                               UpDirection="0,1,0" FieldOfView="45"/>
-                        </Viewport3D.Camera>
-                        <ModelVisual3D>
-                            <ModelVisual3D.Content>
-                                <Model3DGroup>
-                                    <AmbientLight Color="#666666"/>
-                                    <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
-                                    <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
-                                </Model3DGroup>
-                            </ModelVisual3D.Content>
-                        </ModelVisual3D>
-                        <ModelVisual3D x:Name="AxesVisual"/>
-                        <ModelVisual3D x:Name="ImuVisual"/>
-                    </Viewport3D>
-                </Grid>
-
-                <Grid>
-                    <Viewport3D>
-                        <Viewport3D.Camera>
-                            <PerspectiveCamera Position="2,1.2,2" LookDirection="-2,-1.2,-2"
-                                               UpDirection="0,1,0" FieldOfView="45"/>
-                        </Viewport3D.Camera>
-                        <ModelVisual3D>
-                            <ModelVisual3D.Content>
-                                <Model3DGroup>
-                                    <AmbientLight Color="#666666"/>
-                                    <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
-                                    <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
-                                </Model3DGroup>
-                            </ModelVisual3D.Content>
-                        </ModelVisual3D>
-                        <ModelVisual3D x:Name="AxesVisual1"/>
-                        <ModelVisual3D x:Name="ImuVisual1"/>
-                    </Viewport3D>
-                </Grid>
-
-                <Grid>
-                    <Viewport3D>
-                        <Viewport3D.Camera>
-                            <PerspectiveCamera Position="2,1.2,2" LookDirection="-2,-1.2,-2"
-                                               UpDirection="0,1,0" FieldOfView="45"/>
-                        </Viewport3D.Camera>
-                        <ModelVisual3D>
-                            <ModelVisual3D.Content>
-                                <Model3DGroup>
-                                    <AmbientLight Color="#666666"/>
-                                    <DirectionalLight Color="#FFFFFF" Direction="-1,-1,-1"/>
-                                    <DirectionalLight Color="#FFFFFF" Direction="1,-0.5,0.2"/>
-                                </Model3DGroup>
-                            </ModelVisual3D.Content>
-                        </ModelVisual3D>
-                        <ModelVisual3D x:Name="AxesVisual12"/>
-                        <ModelVisual3D x:Name="ImuVisual12"/>
-                    </Viewport3D>
-                </Grid>
-            </UniformGrid>
-
-            <!-- Row 2: Timeline panel -->
+            <!-- Row 1: Timeline panel -->
             <Border Grid.Row="1" x:Name="TimelineBorder"  Background="#1E1E1E" Margin="0 10 0 0"
                     SizeChanged="TimelineBorder_SizeChanged">
                 <Grid>
@@ -344,8 +305,8 @@ ToolTip="Export diagnostics to CSV for AI analysis">
                 </Grid>
             </Border>
 
-            <!-- Row 3: GridSplitter — drag up/down to resize log -->
-            <GridSplitter Grid.Row="3"
+            <!-- Row 2: GridSplitter — drag up/down to resize log -->
+            <GridSplitter Grid.Row="2"
                           Height="5"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
@@ -355,26 +316,30 @@ ToolTip="Export diagnostics to CSV for AI analysis">
                           ResizeBehavior="PreviousAndNext"
                           Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
 
-            <!-- Row 4: Log panel — left: debug log, right: AR feedback event log (cue + timestamp) -->
-            <Grid Grid.Row="4" Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}">
+            <!-- Row 3: Log panel — left: debug log, right: AR feedback event log (cue + timestamp) -->
+            <Grid Grid.Row="3" Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*"/>
                     <ColumnDefinition Width="5"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <TextBox
-                    x:Name="LogBox"
-                    Grid.Column="0"
-                    AcceptsReturn="True"
-                    IsReadOnly="True"
-                    Text="{Binding LogList}"
-                    TextWrapping="NoWrap"
-                    FontFamily="Consolas"
-                    FontSize="12"
-                    HorizontalScrollBarVisibility="Auto"
-                    VerticalScrollBarVisibility="Auto"
-                    Margin="8,0,4,2"/>
+                <DockPanel Grid.Column="0" Margin="8,0,4,2">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,2">
+                        <TextBlock Text="Debug Log" FontSize="11" Foreground="Gray" VerticalAlignment="Center"/>
+                        <Button Content="Clear" Click="btnClear" Padding="6,0" Margin="8,0,0,0"/>
+                    </StackPanel>
+                    <TextBox
+                        x:Name="LogBox"
+                        AcceptsReturn="True"
+                        IsReadOnly="True"
+                        Text="{Binding LogList}"
+                        TextWrapping="NoWrap"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Auto"/>
+                </DockPanel>
 
                 <GridSplitter Grid.Column="1"
                               Width="5"
@@ -400,19 +365,6 @@ ToolTip="Export diagnostics to CSV for AI analysis">
                         VerticalScrollBarVisibility="Auto"/>
                 </DockPanel>
             </Grid>
-
-            <!-- Row 5: Log toggle button -->
-            <StackPanel Grid.Row="5" Orientation="Horizontal">
-            <Button x:Name="BtnToggleLog"
-                    Grid.Row="4"
-                    Click="BtnToggleLog_Click"
-                    HorizontalAlignment="Left"
-                    Margin="8,2,8,4"
-                    Padding="8,2">Hide</Button>
-
-            <Button Click="btnClear" HorizontalAlignment="Stretch" 
-                    Margin="0,0,0,4">Clear</Button>
-            </StackPanel>
         </Grid>
     </DockPanel>
 </Window>

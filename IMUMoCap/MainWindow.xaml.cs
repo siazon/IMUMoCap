@@ -5,6 +5,7 @@ using IMUMoCap.Pipeline;
 using IMUMoCap.Pipeline.Models;
 using IMUMoCap.Services;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
@@ -92,10 +93,9 @@ namespace IMUMoCap
 
             var imuList = new List<ImuViewModel>
             {
-                //new ImuViewModel(imuPelvis) { ImuVisual = ImuVisual,   DeviceId = 0x00B43D0B, Role = ImuRole.Pelvis },
-                new ImuViewModel(imuPelvis) { ImuVisual = ImuVisual,   DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis },
-                new ImuViewModel(imuL)      { ImuVisual = ImuVisual1,  DeviceId = 0x10b41913, Role = ImuRole.Left   },
-                new ImuViewModel(imuR)      { ImuVisual = ImuVisual12, DeviceId = 0x10B41904, Role = ImuRole.Right  },
+                new ImuViewModel(imuPelvis) { DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis },
+                new ImuViewModel(imuL)      { DeviceId = 0x10b41913, Role = ImuRole.Left   },
+                new ImuViewModel(imuR)      { DeviceId = 0x10B41904, Role = ImuRole.Right  },
             };
             _slotRegistry = new ImuSlotRegistry(imuList);
 
@@ -109,7 +109,6 @@ namespace IMUMoCap
             _deviceManager.BatteryLevelChanged += ev => Dispatcher.BeginInvoke(() => OnBattery(ev));
 
             _content.StatusLabel = "Ready to calibration";
-            _imuRotTf = new RotateTransform3D(_imuRot);
             _imuFrameCollector.SampleRateHz = _sampleRateHz;
             UpdateImuStatusIndicators();
 
@@ -155,6 +154,7 @@ namespace IMUMoCap
 
             // 参数同步：VM 属性变化时推入 pipeline
             _content.PropertyChanged += (_, e) => SyncParamToPipeline(e.PropertyName);
+            LoadParamsIfExists();
 
             StartScanAsync();
         }
@@ -218,12 +218,6 @@ namespace IMUMoCap
         {
             var snap = _deviceManager.GetMtwDataSnapshot(ev.DeviceId);
             if (snap == null) return;
-
-            if (ev.Packet.containsOrientation())
-            {
-                var quat = ev.Packet.orientationQuaternion();
-                OnNewImuQuaternion(new Quaternion(quat.x(), quat.y(), quat.z(), quat.w()), ev.Slot);
-            }
 
             string mtwIdStr = ev.Slot.SlotName;
             if (_content.SelectedMtw >= 0 &&
@@ -355,33 +349,6 @@ namespace IMUMoCap
             });
         }
 
-        private readonly QuaternionRotation3D _imuRot = new QuaternionRotation3D(System.Windows.Media.Media3D.Quaternion.Identity);
-        private readonly RotateTransform3D _imuRotTf;
-
-        #region 3D Rendering
-        /// <summary>
-        /// 你在 IMU 回调里，把最新的 orientationQuats 传进来调用这个方法即可
-        /// </summary>
-        public void OnNewImuQuaternion(Quaternion qImu, ImuViewModel Imu3D)
-        {
-            // 重要：WPF Quaternion 构造/存储顺序是 (X,Y,Z,W)
-            // 如果你的 orientationQuats 是 (w,x,y,z)，你要自己调换成：
-            // qImu = new Quaternion(x, y, z, w);
-
-            qImu.Normalize();
-
-            // 如果你发现方向整体反了/像镜像，常用修正是取共轭（相当于 inverse）
-            // qImu = qImu.Conjugate();
-
-            // UI线程更新
-            Dispatcher.BeginInvoke(() =>
-            {
-
-            });
-        }
-
-        #endregion
-
         private void log(string log)
         {
 
@@ -472,21 +439,6 @@ namespace IMUMoCap
                 ? Convert.ToInt32(_content.UpdateRates[_content.SelectedRate])
                 : -1;
             _deviceManager.StartMeasurement(desiredRate);
-        }
-
-        private void BtnTest_Click(object sender, RoutedEventArgs e)
-        {
-
-        }
-
-        private void btnCalibration_click(object sender, RoutedEventArgs e)
-        {
-
-        }
-
-        private void Button_Restart(object sender, RoutedEventArgs e)
-        {
-
         }
 
         private void Button_SaveData(object sender, RoutedEventArgs e)
@@ -628,6 +580,34 @@ namespace IMUMoCap
                 case nameof(MainPageVM.BaselineImbalanceRatioThreshold):
                     _pipeline.Params.BaselineImbalanceRatioThreshold = _content.BaselineImbalanceRatioThreshold; break;
             }
+        }
+
+        private static readonly string ParamsFilePath =
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pipeline_params.json");
+
+        private void LoadParamsIfExists()
+        {
+            if (!File.Exists(ParamsFilePath)) return;
+            var json = File.ReadAllText(ParamsFilePath, Encoding.UTF8);
+            var p = JsonSerializer.Deserialize<PipelineParams>(json);
+            if (p == null) return;
+
+            _content.StompThreshold = p.StompThreshold_ms2;
+            _content.StaticGyroThreshold = p.StaticGyroThreshold;
+            _content.StanceFreeAccThreshold = p.StanceFreeAccThreshold;
+            _content.StanceGyroThreshold = p.StanceGyroThreshold;
+            _content.PdConfidenceThreshold = p.PdConfidenceThreshold;
+            _content.PdStabilityThreshold = p.PdStabilityThreshold;
+            _content.MinBaselineSteps = p.MinBaselineSteps;
+            _content.BaselineImbalanceRatioThreshold = p.BaselineImbalanceRatioThreshold;
+            _pipeline.Params.StanceFootPitchThreshold = p.StanceFootPitchThreshold;
+        }
+
+        private void BtnSaveParams_Click(object sender, RoutedEventArgs e)
+        {
+            var json = JsonSerializer.Serialize(_pipeline.Params, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(ParamsFilePath, json, Encoding.UTF8);
+            log("Parameters saved.");
         }
 
         // ── 新增按钮处理器 ────────────────────────────────────────────────────
@@ -1122,24 +1102,6 @@ namespace IMUMoCap
         {
             if (sender is Button btn && int.TryParse(btn.Tag?.ToString(), out int ms))
                 _replayDelayMs = ms;
-        }
-
-        private void BtnToggleLog_Click(object sender, RoutedEventArgs e)
-        {
-            _content.LogPanelVisible = !_content.LogPanelVisible;
-            bool visible = _content.LogPanelVisible;
-            if (BtnToggleLog != null)
-                BtnToggleLog.Content = visible ? "Hide Log" : "Show Log";
-            // Collapse/restore the log row height so the splitter takes no space when hidden
-            LogRow.Height = visible ? new GridLength(160, GridUnitType.Pixel) : new GridLength(0);
-            SplitterRow.Height = visible ? new GridLength(5, GridUnitType.Pixel) : new GridLength(0);
-        }
-
-        private void BtnToggleParams_Click(object sender, RoutedEventArgs e)
-        {
-            _content.ParamsPanelVisible = !_content.ParamsPanelVisible;
-            if (BtnToggleParams != null)
-                BtnToggleParams.Content = _content.ParamsPanelVisible ? "Hide Params" : "Show Params";
         }
 
         private void TimelineBorder_SizeChanged(object sender, SizeChangedEventArgs e) => DrawTimeline();

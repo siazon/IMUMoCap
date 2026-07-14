@@ -410,6 +410,13 @@ namespace IMUMoCap
             set { _paramsPanelVisible = value; OnPropertyChanged(nameof(ParamsPanelVisible)); }
         }
 
+        private bool _toolsVisible = false;
+        public bool ToolsVisible
+        {
+            get { return _toolsVisible; }
+            set { _toolsVisible = value; OnPropertyChanged(nameof(ToolsVisible)); }
+        }
+
         private bool _RotationByDegree = true;
 
         public bool RotationByDegree
