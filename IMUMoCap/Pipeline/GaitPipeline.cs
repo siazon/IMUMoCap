@@ -43,6 +43,12 @@ namespace IMUMoCap.Pipeline
         public event Action<BaselineProfile?>? OnBaselineCompleted; // auto- or manual-finalize
         public event Action<string>?           OnLog;
         public event Action<DiagnosticsRow>?   OnDiagnosticsFrame;
+        public event Action<string, bool, StepExclusionReason?>? OnStepOutcome;
+
+        public GaitPipeline()
+        {
+            _fpa.OnStepOutcome += (foot, emitted, reason) => OnStepOutcome?.Invoke(foot, emitted, reason);
+        }
 
         // ── 状态 ──────────────────────────────────────────────────────────────
         public CalibrationProfile? CalibrationProfile => _calibration.Profile;
@@ -77,6 +83,7 @@ namespace IMUMoCap.Pipeline
 
             // BaselineProcessor
             _baseline.MinValidSteps = Params.MinBaselineSteps;
+            _baseline.ImbalanceRatioThreshold = Params.BaselineImbalanceRatioThreshold;
         }
 
         // ── 录制器（可选，仅供录制/测试用）─────────────────────────────────────
@@ -163,6 +170,7 @@ namespace IMUMoCap.Pipeline
                 FpaRight_Deg      = fpaResult?.Fpa_R      ?? float.NaN,
                 FpaRight_Error    = fpaResult?.Error_R    ?? float.NaN,
                 FpaRight_OnTarget = fpaResult?.OnTarget_R ?? false,
+                FpaQuality        = fpaResult?.Quality ?? "",
             };
             _diagnosticsBuffer.Enqueue(diagRow);
             if (_diagnosticsBuffer.Count > DiagnosticsCapacity) _diagnosticsBuffer.Dequeue();
@@ -215,7 +223,12 @@ namespace IMUMoCap.Pipeline
             InBaseline  = false;
             BaselineProfile = _baseline.TryFinalize();
             if (BaselineProfile != null)
+            {
                 OnLog?.Invoke($"Baseline done. μL={BaselineProfile.MeanFpa_L:F1}° μR={BaselineProfile.MeanFpa_R:F1}°");
+                if (BaselineProfile.StepCountImbalanceWarning)
+                    OnLog?.Invoke($"[Warning] Baseline L/R step count imbalance: L={BaselineProfile.ValidSteps_L} R={BaselineProfile.ValidSteps_R}" +
+                        $" (ratio={BaselineProfile.StepCountRatio:P0}, threshold={BaselineProfile.ImbalanceRatioThresholdUsed:P0}) — consider redoing baseline.");
+            }
             else
                 OnLog?.Invoke("Baseline failed — insufficient valid steps.");
             OnBaselineCompleted?.Invoke(BaselineProfile);

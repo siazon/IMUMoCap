@@ -134,6 +134,16 @@ namespace IMUMoCap
                 if (_recorder.IsRecording && !_content.IsPaused)
                     _recorder.WriteRow(row, _currentStage, _stageAttempt.GetValueOrDefault(_currentStage, 1));
             });
+            _pipeline.OnStepOutcome += (foot, emitted, reason) => Dispatcher.BeginInvoke(() =>
+            {
+                if (!_recorder.IsRecording || _content.IsPaused) return;
+                _recorder.NoteStepOutcome(_currentStage, emitted, reason);
+
+                var stats = _recorder.GetStageStats(_currentStage);
+                if (stats != null && stats.TotalAttempted > 0)
+                    _content.TurningExclusionDisplay =
+                        $"Turning excluded: {stats.ExcludedTurning + stats.ExcludedReacquiring}/{stats.TotalAttempted} ({stats.TurningExclusionRate:P0})";
+            });
 
             _timelineTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
             _timelineTimer.Tick += (_, _) =>
@@ -377,7 +387,7 @@ namespace IMUMoCap
 
             this.Dispatcher.BeginInvoke(() =>
             {
-                _content.LogList += (log);
+                _content.LogList += $"[{DateTime.Now:HH:mm:ss.fff}] {log}";
                 _content.LogList += (Environment.NewLine);
 
                 if (_content.IsScrollerToEnd)
@@ -386,6 +396,26 @@ namespace IMUMoCap
                     LogBox.ScrollToEnd();
                 }
             });
+        }
+
+        // ── AR 反馈事件日志：记录每条广播给 AR 端的 cue（内容+时间戳），事后核对算法输出与实际呈现是否一致/有无掉帧 ──
+        private long _arEventSeq = 0;
+        private const int ArEventLogMaxChars = 200_000;
+
+        private void LogArEvent(string content)
+        {
+            long seq = ++_arEventSeq;
+            _content.ArEventLog += $"[{seq:000000}] {DateTime.Now:HH:mm:ss.fff}  {content}{Environment.NewLine}";
+            if (_content.ArEventLog.Length > ArEventLogMaxChars)
+                _content.ArEventLog = _content.ArEventLog.Substring(_content.ArEventLog.Length - ArEventLogMaxChars);
+
+            ArEventLogBox.CaretIndex = ArEventLogBox.Text.Length;
+            ArEventLogBox.ScrollToEnd();
+        }
+
+        private void BtnClearArLog_Click(object sender, RoutedEventArgs e)
+        {
+            _content.ArEventLog = "";
         }
 
         private void setWidgetsStates()
@@ -516,6 +546,7 @@ namespace IMUMoCap
         {
             if (_wsServer == null) return;
             _ = _wsServer.BroadcastJsonAsync(new { type = "state", state });
+            LogArEvent($"type=state  state={state}");
         }
 
         private void OnCalibrationStateChanged(CalibrationState state)
@@ -568,6 +599,7 @@ namespace IMUMoCap
                 $"R={profile.Target_R:F1}° ({profile.Direction_R})";
             _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.Tolerance_L:F1}° ({profile.Direction_L})";
             _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.Tolerance_R:F1}° ({profile.Direction_R})";
+
             _recorder.SaveBaseline(profile);
             _pipeline.StartTraining();
             BroadcastArState("training");
@@ -593,6 +625,8 @@ namespace IMUMoCap
                     _pipeline.Params.PdStabilityThreshold = _content.PdStabilityThreshold; break;
                 case nameof(MainPageVM.MinBaselineSteps):
                     _pipeline.Params.MinBaselineSteps = _content.MinBaselineSteps; break;
+                case nameof(MainPageVM.BaselineImbalanceRatioThreshold):
+                    _pipeline.Params.BaselineImbalanceRatioThreshold = _content.BaselineImbalanceRatioThreshold; break;
             }
         }
 
@@ -670,6 +704,7 @@ namespace IMUMoCap
             _content.CurrentSessionFileName = _recorder.CurrentSessionFilePath ?? "";
             _content.CurrentMetaFileName = _recorder.CurrentMetaFilePath ?? "";
             _content.CurrentQoeFileName = _recorder.CurrentQoeFilePath ?? "";
+            _content.TurningExclusionDisplay = "";
             log($"Started condition {condition} (order {orderGroup}) → {_recorder.CurrentSessionFilePath}");
         }
 
@@ -687,6 +722,7 @@ namespace IMUMoCap
             _content.CurrentSessionFileName = _recorder.CurrentSessionFilePath ?? "";
             _content.CurrentMetaFileName = "";
             _content.CurrentQoeFileName = "";
+            _content.TurningExclusionDisplay = "";
             log($"Started washout → {_recorder.CurrentSessionFilePath}");
         }
 
@@ -698,14 +734,17 @@ namespace IMUMoCap
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             if (idx < 0 || idx >= ConditionStages.Length - 1) { log("Already at final stage (Retention)."); return; }
 
+            _recorder.FlushMeta();
             _currentStage = ConditionStages[idx + 1];
             _stageStopwatch.Restart();
             _content.CurrentStageLabel = _currentStage;
+            _content.TurningExclusionDisplay = "";
             log($"Stage → {_currentStage}");
         }
 
         private void BtnEndCondition_Click(object sender, RoutedEventArgs e)
         {
+            _recorder.FlushMeta();
             _recorder.Close();
             _stageStopwatch.Stop();
             log($"Recording closed: {_content.CurrentSessionFileName}");
@@ -717,44 +756,35 @@ namespace IMUMoCap
 
             if (!_content.IsPaused)
             {
-                if (string.IsNullOrWhiteSpace(_content.PauseReason))
-                {
-                    MessageBox.Show("请填写暂停原因 / Please enter a pause reason before pausing.",
-                        "Pause", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return;
-                }
                 _content.IsPaused = true;
                 _stageStopwatch.Stop();
-                _recorder.BeginPause(_currentStage, _content.PauseReason);
+                _recorder.BeginPause(_currentStage);
                 BtnPauseResume.Content = "Resume";
-                log($"Paused at {_currentStage}: {_content.PauseReason}");
+                log($"Paused at {_currentStage}");
             }
             else
             {
-                var elapsed = _recorder.PauseElapsed;
-                var result = MessageBox.Show(
-                    $"暂停时长 {elapsed.TotalMinutes:F1} 分钟。是否需要重测当前阶段？\n" +
-                    $"Pause duration {elapsed.TotalMinutes:F1} min. Redo this stage?",
-                    "Resume", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                var dlg = new PauseResumeDialog(_recorder.PauseElapsed) { Owner = this };
+                bool? ok = dlg.ShowDialog();
+                if (ok != true) return; // 关闭对话框但没填写/没选择 → 保持暂停状态
 
-                if (result == MessageBoxResult.Yes)
+                if (dlg.Redo)
                 {
                     int nextAttempt = _stageAttempt.GetValueOrDefault(_currentStage, 1) + 1;
                     _stageAttempt[_currentStage] = nextAttempt;
-                    _recorder.EndPause("Redo");
+                    _recorder.EndPause("Redo", dlg.Reason);
                     _recorder.MarkRedo(_currentStage, nextAttempt);
                     _stageStopwatch.Restart();
-                    log($"Resumed with Redo — {_currentStage} attempt #{nextAttempt}");
+                    log($"Resumed with Redo — {_currentStage} attempt #{nextAttempt}: {dlg.Reason}");
                 }
                 else
                 {
-                    _recorder.EndPause("Continue");
+                    _recorder.EndPause("Continue", dlg.Reason);
                     _stageStopwatch.Start();
-                    log($"Resumed, continuing {_currentStage}");
+                    log($"Resumed, continuing {_currentStage}: {dlg.Reason}");
                 }
 
                 _content.IsPaused = false;
-                _content.PauseReason = "";
                 BtnPauseResume.Content = "Pause";
             }
         }
@@ -1245,7 +1275,13 @@ namespace IMUMoCap
                     onTargetR = result.OnTarget_R,
                     errorL = result.Error_L,
                     errorR = result.Error_R,
+                    confidence = result.ContextConfidence,
+                    stability = result.PdStability,
+                    quality = result.Quality,
                 });
+
+                LogArEvent($"type=fpa  stage={(isTraining ? "training" : "baseline")}  packetId={result.PacketId}  " +
+                    $"L={result.Fpa_L:F1}°({(result.OnTarget_L ? "OK" : "ERR")})  R={result.Fpa_R:F1}°({(result.OnTarget_R ? "OK" : "ERR")})  quality={result.Quality}");
             }
         }
 

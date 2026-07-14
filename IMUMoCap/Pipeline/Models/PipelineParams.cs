@@ -22,5 +22,6 @@ namespace IMUMoCap.Pipeline.Models
 
         // BaselineProcessor
         public int   MinBaselineSteps        { get; set; } = 20;   // 10–50
+        public float BaselineImbalanceRatioThreshold { get; set; } = 0.7f;  // 0.3–1.0，L/R步数比低于此值时警示
     }
 }

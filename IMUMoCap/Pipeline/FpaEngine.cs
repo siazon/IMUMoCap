@@ -31,6 +31,11 @@ namespace IMUMoCap.Pipeline
         // ── BaselineProfile（Training 阶段设置，Baseline 阶段为 null）────────
         public BaselineProfile? Baseline { get; set; }
 
+        // ── 步级结果事件：每个真正落地(stance)完成的周期，无论有没有输出 FpaResult ──
+        // emitted=true 时 reason 为 null；emitted=false 时 reason 说明被门控排除的原因
+        // （用于统计 Turning 等排除比例，供 QoE 分析用，不影响 FpaResult 本身的输出逻辑）
+        public event Action<string, bool, StepExclusionReason?>? OnStepOutcome;
+
         // ── 内部 stance 追踪（per foot）───────────────────────────────────────
         private readonly StanceSampler _leftSampler = new();
         private readonly StanceSampler _rightSampler = new();
@@ -40,33 +45,59 @@ namespace IMUMoCap.Pipeline
                                   CalibrationProfile? calibration = null)
         {
             // ── Step 1: 无条件更新 stance 状态（采集与 gate 无关）────────────────
+            // stance→swing 的转换帧上，如果这一步从未成功输出过 FPA，视为一次排除。
             if (gait.LeftStance)
                 _leftSampler.AddFrame(NormalizeAngle(
                     ExtractYaw(frame.LeftFoot.Quaternion) -
                     ExtractYaw(calibration?.LeftFootRef ?? System.Numerics.Quaternion.Identity)));
             else
-                _leftSampler.MarkSwing();
+            {
+                var excludedL = _leftSampler.MarkSwing();
+                if (excludedL.HasValue) OnStepOutcome?.Invoke("L", false, excludedL);
+            }
 
             if (gait.RightStance)
                 _rightSampler.AddFrame(NormalizeAngle(
                     ExtractYaw(frame.RightFoot.Quaternion) -
                     ExtractYaw(calibration?.RightFootRef ?? System.Numerics.Quaternion.Identity)));
             else
-                _rightSampler.MarkSwing();
+            {
+                var excludedR = _rightSampler.MarkSwing();
+                if (excludedR.HasValue) OnStepOutcome?.Invoke("R", false, excludedR);
+            }
 
             // ── Step 2: Gate 检查——仅影响输出，不影响采集 ──────────────────────
             bool contextOk = context.State == ContextState.Straight
                           && context.Confidence >= ContextConfidenceThreshold;
             bool pdOk = pd.IsValid && pd.Stability >= PdStabilityThreshold;
+
+            // 门控失败原因（仅在 !contextOk 时才会被 NoteGate 采用；contextOk 但 !pdOk 时用 PdInvalid）
+            StepExclusionReason blockReason = context.State switch
+            {
+                ContextState.Turning       => StepExclusionReason.Turning,
+                ContextState.ReacquiringPd => StepExclusionReason.ReacquiringPd,
+                _ /* Straight 但 confidence 不够，或 pd 不合格 */ =>
+                    contextOk ? StepExclusionReason.PdInvalid : StepExclusionReason.LowConfidence,
+            };
+            _leftSampler.NoteGate(MinStanceFramesForSettle, contextOk && pdOk, blockReason);
+            _rightSampler.NoteGate(MinStanceFramesForSettle, contextOk && pdOk, blockReason);
+
             if (!contextOk || !pdOk) return null;
             // 两脚都在 swing（双悬空）时无意义，不输出
             if (!gait.LeftStance && !gait.RightStance) return null;
 
             // ── Step 3: 尝试结算：落地后 n 帧已满 + gate 通过 → 输出 ──────────
             float? fpaL = _leftSampler.TrySettle(MinStanceFramesForSettle);
+            if (fpaL.HasValue) OnStepOutcome?.Invoke("L", true, null);
             float? fpaR = _rightSampler.TrySettle(MinStanceFramesForSettle);
+            if (fpaR.HasValue) OnStepOutcome?.Invoke("R", true, null);
 
             if (fpaL == null && fpaR == null) return null;
+
+            // 通过 gate 才能走到这里，此时的 confidence/stability 即决定本次输出的原始质量
+            bool marginal = (context.Confidence - ContextConfidenceThreshold < 0.1f)
+                         || (pd.Stability - PdStabilityThreshold < 0.1f);
+            string quality = marginal ? "Marginal" : "High";
 
             float fpaLDeg = fpaL.HasValue
                 ? RadToDeg(NormalizeAngle(fpaL.Value - pd.DirectionRad))
@@ -103,6 +134,9 @@ namespace IMUMoCap.Pipeline
                 Error_R = errorR,
                 Tolerance_L = Baseline?.Tolerance_L ?? float.NaN,
                 Tolerance_R = Baseline?.Tolerance_R ?? float.NaN,
+                ContextConfidence = context.Confidence,
+                PdStability = pd.Stability,
+                Quality = quality,
             };
         }
 
@@ -138,12 +172,18 @@ namespace IMUMoCap.Pipeline
             private bool _inStance = false;
             private bool _emittedThisStance = false;
 
+            // ── 排除原因追踪：这一步是否已经达到过结算所需帧数，以及当时被什么原因挡住 ──
+            private bool _reachedReady = false;
+            private StepExclusionReason? _pendingReason = null;
+
             public void AddFrame(float yaw)
             {
                 if (!_inStance)
                 {
                     _inStance = true;
                     _emittedThisStance = false;
+                    _reachedReady = false;
+                    _pendingReason = null;
                     _cosSum = 0f;
                     _sinSum = 0f;
                     _count = 0;
@@ -153,7 +193,29 @@ namespace IMUMoCap.Pipeline
                 _count++;
             }
 
-            public void MarkSwing() { _inStance = false; }
+            /// <summary>每帧调用一次，记录门控状态；帧数达标但门控未过时，暂存排除原因。</summary>
+            public void NoteGate(int minFrames, bool gateOk, StepExclusionReason reasonIfBlocked)
+            {
+                if (!_inStance || _emittedThisStance || _count < minFrames) return;
+                _reachedReady = true;
+                _pendingReason = gateOk ? null : reasonIfBlocked;
+            }
+
+            /// <summary>
+            /// 落地→抬脚的转换帧上调用。若这一步曾经达标却从未成功输出过 FPA，
+            /// 返回最后一次记录的排除原因；否则返回 null（要么仍在摆动，要么已正常输出）。
+            /// </summary>
+            public StepExclusionReason? MarkSwing()
+            {
+                StepExclusionReason? excludedReason = null;
+                if (_inStance && !_emittedThisStance && _reachedReady)
+                    excludedReason = _pendingReason;
+
+                _inStance = false;
+                _reachedReady = false;
+                _pendingReason = null;
+                return excludedReason;
+            }
 
             public float? TrySettle(int minFrames)
             {
@@ -170,6 +232,8 @@ namespace IMUMoCap.Pipeline
                 _count = 0;
                 _inStance = false;
                 _emittedThisStance = false;
+                _reachedReady = false;
+                _pendingReason = null;
             }
         }
     }

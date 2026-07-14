@@ -59,7 +59,16 @@ namespace IMUMoCap.Pipeline.Models
         public float Error_R     { get; set; }
         public float Tolerance_L { get; set; }  // NaN if no baseline
         public float Tolerance_R { get; set; }
+
+        // ── 质量标签（gate 通过时的原始置信度，供事后按需筛选低质量 step）────
+        public float  ContextConfidence { get; set; } // MotionContext.Confidence
+        public float  PdStability       { get; set; } // PdEstimate.Stability
+        public string Quality           { get; set; } = ""; // "High" | "Marginal"
     }
+
+    // ── StepExclusionReason ───────────────────────────────────────────────────
+    // 一个已完成的 stance 周期（真实落地）因门控未通过而没有输出 FpaResult 的原因
+    public enum StepExclusionReason { Turning, ReacquiringPd, LowConfidence, PdInvalid }
 
     // ── FrameQualityReport ────────────────────────────────────────────────────
     // 实验结束后的帧质量报告，由 ImuFrameCollector 生成

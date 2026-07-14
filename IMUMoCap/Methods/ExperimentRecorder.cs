@@ -75,16 +75,18 @@ namespace IMUMoCap.Methods
             SaveMeta();
         }
 
-        public void BeginPause(string stage, string reason)
+        public void BeginPause(string stage)
         {
-            _openPause = new PauseEvent { Stage = stage, StartTime = DateTime.Now, Reason = reason };
+            _openPause = new PauseEvent { Stage = stage, StartTime = DateTime.Now };
         }
 
-        public void EndPause(string operatorDecision)
+        // 原因现在在恢复时（Continue/Redo 都要填）才收集，而不是暂停当下。
+        public void EndPause(string operatorDecision, string reason)
         {
             if (_openPause == null || _meta == null) return;
             _openPause.EndTime = DateTime.Now;
             _openPause.OperatorDecision = operatorDecision;
+            _openPause.Reason = reason;
             _meta.PauseEvents.Add(_openPause);
             _openPause = null;
             SaveMeta();
@@ -96,6 +98,32 @@ namespace IMUMoCap.Methods
             _meta.FinalAttempt[stage] = newAttempt;
             SaveMeta();
         }
+
+        /// <summary>
+        /// 每个 step 判定结果调用一次（emitted 或被排除）。只更新内存计数，不落盘——
+        /// 高频调用不适合每次都写文件，落盘统一在 FlushMeta() 里做（阶段切换/关闭时调用）。
+        /// </summary>
+        public void NoteStepOutcome(string stage, bool emitted, StepExclusionReason? reason)
+        {
+            if (_meta == null) return;
+            if (!_meta.StageStepStats.TryGetValue(stage, out var stats))
+                _meta.StageStepStats[stage] = stats = new StepExclusionStats();
+
+            if (emitted) { stats.Emitted++; return; }
+            switch (reason)
+            {
+                case StepExclusionReason.Turning:       stats.ExcludedTurning++; break;
+                case StepExclusionReason.ReacquiringPd: stats.ExcludedReacquiring++; break;
+                case StepExclusionReason.LowConfidence: stats.ExcludedLowConfidence++; break;
+                case StepExclusionReason.PdInvalid:     stats.ExcludedPdInvalid++; break;
+            }
+        }
+
+        public StepExclusionStats? GetStageStats(string stage) =>
+            _meta?.StageStepStats.GetValueOrDefault(stage);
+
+        /// <summary>把当前内存里的 Meta（含 StageStepStats）落盘一次，供阶段切换/关闭时调用。</summary>
+        public void FlushMeta() => SaveMeta();
 
         private void SaveMeta()
         {

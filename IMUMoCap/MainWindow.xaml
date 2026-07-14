@@ -70,7 +70,12 @@
                         <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="11"/>
                         <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
                                 IsSnapToTickEnabled="True" TickFrequency="1"
-                                Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,12"/>
+                                Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+                        <!-- 8. Baseline L/R step count imbalance warning threshold -->
+                        <TextBlock Text="{Binding BaselineImbalanceRatioThreshold, StringFormat='Baseline Imbalance Ratio: {0:F2}'}" FontSize="11"/>
+                        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                                Value="{Binding BaselineImbalanceRatioThreshold, Mode=TwoWay}" Margin="0,0,0,12"/>
 
                     </StackPanel>
 
@@ -119,6 +124,7 @@
                         <Run Text="Stage: " Foreground="Gray"/><Run Text="{Binding CurrentStageLabel}" FontWeight="SemiBold"/>
                         <Run Text="  Elapsed: " Foreground="Gray"/><Run Text="{Binding StageElapsedDisplay}"/>
                     </TextBlock>
+                    <TextBlock Text="{Binding TurningExclusionDisplay}" FontSize="11" Foreground="Gray" Margin="0,0,0,4"/>
 
                     <TextBlock Text="Session file:" FontSize="11" Opacity="0.7"/>
                     <TextBlock Text="{Binding CurrentSessionFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
@@ -127,8 +133,6 @@
                     <TextBlock Text="QoE file (fill in externally):" FontSize="11" Opacity="0.7"/>
                     <TextBlock Text="{Binding CurrentQoeFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,8"/>
 
-                    <TextBlock Text="Pause reason (fill before pausing):" FontSize="11" Opacity="0.7"/>
-                    <TextBox Text="{Binding PauseReason, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4"/>
                     <Button x:Name="BtnPauseResume" Click="BtnPauseResume_Click"
                             HorizontalAlignment="Stretch" Margin="0,0,0,4">Pause</Button>
 
@@ -351,20 +355,51 @@ ToolTip="Export diagnostics to CSV for AI analysis">
                           ResizeBehavior="PreviousAndNext"
                           Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
 
-            <!-- Row 4: Log TextBox -->
-            <TextBox
-                x:Name="LogBox"
-                Grid.Row="4"
-                AcceptsReturn="True"
-                IsReadOnly="True"
-                Text="{Binding LogList}"
-                TextWrapping="NoWrap"
-                FontFamily="Consolas"
-                FontSize="12"
-                HorizontalScrollBarVisibility="Auto"
-                VerticalScrollBarVisibility="Auto"
-                Margin="8,0,8,2"
-                Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
+            <!-- Row 4: Log panel — left: debug log, right: AR feedback event log (cue + timestamp) -->
+            <Grid Grid.Row="4" Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="5"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBox
+                    x:Name="LogBox"
+                    Grid.Column="0"
+                    AcceptsReturn="True"
+                    IsReadOnly="True"
+                    Text="{Binding LogList}"
+                    TextWrapping="NoWrap"
+                    FontFamily="Consolas"
+                    FontSize="12"
+                    HorizontalScrollBarVisibility="Auto"
+                    VerticalScrollBarVisibility="Auto"
+                    Margin="8,0,4,2"/>
+
+                <GridSplitter Grid.Column="1"
+                              Width="5"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Stretch"
+                              Background="#33000000"
+                              ShowsPreview="True"/>
+
+                <DockPanel Grid.Column="2" Margin="4,0,8,2">
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,2">
+                        <TextBlock Text="AR Feedback Events (cue + timestamp)" FontSize="11" Foreground="Gray" VerticalAlignment="Center"/>
+                        <Button Content="Clear" Click="BtnClearArLog_Click" Padding="6,0" Margin="8,0,0,0"/>
+                    </StackPanel>
+                    <TextBox
+                        x:Name="ArEventLogBox"
+                        AcceptsReturn="True"
+                        IsReadOnly="True"
+                        Text="{Binding ArEventLog}"
+                        TextWrapping="NoWrap"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        HorizontalScrollBarVisibility="Auto"
+                        VerticalScrollBarVisibility="Auto"/>
+                </DockPanel>
+            </Grid>
 
             <!-- Row 5: Log toggle button -->
             <StackPanel Grid.Row="5" Orientation="Horizontal">

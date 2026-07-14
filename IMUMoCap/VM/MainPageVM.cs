@@ -81,6 +81,19 @@ namespace IMUMoCap
             }
         }
 
+        private string _arEventLog = "";
+
+        // AR 反馈事件日志：每条广播出去的 cue（state/fpa）+ 时间戳，供事后核对算法输出与 AR 实际呈现是否一致
+        public string ArEventLog
+        {
+            get { return _arEventLog; }
+            set
+            {
+                _arEventLog = value;
+                OnPropertyChanged(nameof(ArEventLog));
+            }
+        }
+
 
         private ObservableCollection<string> _UpdateRates = new ObservableCollection<string>();
 
@@ -374,6 +387,13 @@ namespace IMUMoCap
             set { _minBaselineSteps = value; OnPropertyChanged(nameof(MinBaselineSteps)); }
         }
 
+        private float _baselineImbalanceRatioThreshold = 0.7f;
+        public float BaselineImbalanceRatioThreshold
+        {
+            get { return _baselineImbalanceRatioThreshold; }
+            set { _baselineImbalanceRatioThreshold = value; OnPropertyChanged(nameof(BaselineImbalanceRatioThreshold)); }
+        }
+
         // ── Panel visibility ──────────────────────────────────────────────────
 
         private bool _logPanelVisible = true;
@@ -433,6 +453,13 @@ namespace IMUMoCap
             set { _stageElapsedDisplay = value; OnPropertyChanged(nameof(StageElapsedDisplay)); }
         }
 
+        private string _turningExclusionDisplay = "";
+        public string TurningExclusionDisplay
+        {
+            get { return _turningExclusionDisplay; }
+            set { _turningExclusionDisplay = value; OnPropertyChanged(nameof(TurningExclusionDisplay)); }
+        }
+
         private string _currentSessionFileName = "";
         public string CurrentSessionFileName
         {
@@ -461,12 +488,6 @@ namespace IMUMoCap
             set { _isPaused = value; OnPropertyChanged(nameof(IsPaused)); }
         }
 
-        private string _pauseReason = "";
-        public string PauseReason
-        {
-            get { return _pauseReason; }
-            set { _pauseReason = value; OnPropertyChanged(nameof(PauseReason)); }
-        }
         #endregion
 
         public void DataReceived(RecordedData data, int dataSource)

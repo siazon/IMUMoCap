@@ -29,6 +29,11 @@ namespace IMUMoCap.Pipeline.Models
         public int  MinRequiredSteps { get; init; }
         public bool IsValid => ValidSteps_L >= MinRequiredSteps && ValidSteps_R >= MinRequiredSteps;
 
+        // ── 左右步数不对称检查（跟上面 FPA 角度的 Asymmetry 是两回事）────────
+        public float StepCountRatio              { get; init; } // min/max，越接近1越均衡
+        public float ImbalanceRatioThresholdUsed { get; init; } // 生成时生效的阈值（可调，记录下来便于事后复核）
+        public bool  StepCountImbalanceWarning   { get; init; } // StepCountRatio < ImbalanceRatioThresholdUsed
+
         /// <summary>
         /// 从统计数据计算训练目标，规则：
         /// μ > 10° → ToeIn，T = μ - 5°
@@ -37,7 +42,8 @@ namespace IMUMoCap.Pipeline.Models
         public static BaselineProfile Create(
             float meanL, float sdL, int stepsL,
             float meanR, float sdR, int stepsR,
-            int minRequiredSteps = 20)
+            int minRequiredSteps = 20,
+            float imbalanceRatioThreshold = 0.7f)
         {
             static (float target, TrainingDirection dir) ComputeTarget(float mean)
             {
@@ -52,6 +58,10 @@ namespace IMUMoCap.Pipeline.Models
             var (tL, dL) = ComputeTarget(meanL);
             var (tR, dR) = ComputeTarget(meanR);
 
+            float stepRatio = (stepsL == 0 || stepsR == 0)
+                ? 0f
+                : (float)Math.Min(stepsL, stepsR) / Math.Max(stepsL, stepsR);
+
             return new BaselineProfile
             {
                 MeanFpa_L       = meanL, SdFpa_L   = sdL, ValidSteps_L = stepsL,
@@ -60,6 +70,9 @@ namespace IMUMoCap.Pipeline.Models
                 Target_L        = tL,    Direction_L = dL, Tolerance_L = ComputeTolerance(sdL),
                 Target_R        = tR,    Direction_R = dR, Tolerance_R = ComputeTolerance(sdR),
                 MinRequiredSteps = minRequiredSteps,
+                StepCountRatio              = stepRatio,
+                ImbalanceRatioThresholdUsed = imbalanceRatioThreshold,
+                StepCountImbalanceWarning   = stepRatio < imbalanceRatioThreshold,
             };
         }
     }

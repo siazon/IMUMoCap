@@ -15,6 +15,7 @@ namespace IMUMoCap.Pipeline
     public sealed class BaselineProcessor
     {
         public int MinValidSteps { get; set; } = 20;
+        public float ImbalanceRatioThreshold { get; set; } = 0.7f;
 
         private readonly List<float> _fpaL = new();
         private readonly List<float> _fpaR = new();
@@ -52,7 +53,7 @@ namespace IMUMoCap.Pipeline
             return BaselineProfile.Create(
                 meanL, sdL, _fpaL.Count,
                 meanR, sdR, _fpaR.Count,
-                MinValidSteps);
+                MinValidSteps, ImbalanceRatioThreshold);
         }
 
         public void Reset()
