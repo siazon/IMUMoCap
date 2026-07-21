@@ -12,279 +12,223 @@
     WindowState="Maximized"
     mc:Ignorable="d">
 
-    <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
-
-        <Style x:Key="CoreButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
-            <Setter Property="Background" Value="#1976D2"/>
-            <Setter Property="BorderBrush" Value="#1976D2"/>
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-        <Style x:Key="CalibrationButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
-            <Setter Property="Background" Value="#F57C00"/>
-            <Setter Property="BorderBrush" Value="#F57C00"/>
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-        <Style x:Key="ToolsButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
-            <Setter Property="Background" Value="#5E35B1"/>
-            <Setter Property="BorderBrush" Value="#5E35B1"/>
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-        <Style x:Key="ParamsButtonStyle" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
-            <Setter Property="Background" Value="#388E3C"/>
-            <Setter Property="BorderBrush" Value="#388E3C"/>
-            <Setter Property="Foreground" Value="White"/>
-        </Style>
-    </Window.Resources>
-
-    <!-- Root: right panel (fixed 270px) | left panel (flex) -->
+    <!-- Root: brand header bar on top, single left panel below -->
     <DockPanel LastChildFill="True">
 
-        <!-- ── RIGHT PANEL ──────────────────────────────────────────────────── -->
-        <Border DockPanel.Dock="Right" Width="270"
-                BorderBrush="#22000000" BorderThickness="1,0,0,0"
-                Background="#F5F5F5">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="12">
-
-                    <!-- ── CORE: Experiment Session (always visible) ───────────────── -->
-                    <Border Background="#E3F2FD" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-                        <StackPanel>
-                            <TextBlock Text="Experiment Session" FontWeight="Bold" Margin="0,0,0,8"/>
-
-                            <TextBlock Text="Participant ID:" FontSize="11" Opacity="0.7"/>
-                            <TextBox x:Name="txtParticipantId" Margin="0,0,0,6"/>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                <StackPanel Margin="0,0,8,0">
-                                    <TextBlock Text="Condition:" FontSize="11" Opacity="0.7"/>
-                                    <ComboBox x:Name="cmbCondition" Width="70" SelectedIndex="0">
-                                        <ComboBoxItem Content="EF"/>
-                                        <ComboBoxItem Content="IF"/>
-                                    </ComboBox>
-                                </StackPanel>
-                                <StackPanel>
-                                    <TextBlock Text="Order Group:" FontSize="11" Opacity="0.7"/>
-                                    <ComboBox x:Name="cmbOrderGroup" Width="70" SelectedIndex="0">
-                                        <ComboBoxItem Content="A"/>
-                                        <ComboBoxItem Content="B"/>
-                                    </ComboBox>
-                                </StackPanel>
-                            </StackPanel>
-
-                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnStartCondition_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Start Condition</Button>
-                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnStartWashout_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Start Washout</Button>
-                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnNextStage_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Next Stage</Button>
-                            <Button Style="{StaticResource CoreButtonStyle}" Click="BtnEndCondition_Click" HorizontalAlignment="Stretch" Margin="0,0,0,8">End / Close File</Button>
-
-                            <TextBlock Margin="0,0,0,4">
-                                <Run Text="Stage: " Foreground="Gray"/><Run Text="{Binding CurrentStageLabel}" FontWeight="SemiBold"/>
-                                <Run Text="  Elapsed: " Foreground="Gray"/><Run Text="{Binding StageElapsedDisplay}"/>
-                            </TextBlock>
-                            <TextBlock Text="{Binding TurningExclusionDisplay}" FontSize="11" Foreground="Gray" Margin="0,0,0,4"/>
-
-                            <TextBlock Text="Session file:" FontSize="11" Opacity="0.7"/>
-                            <TextBlock Text="{Binding CurrentSessionFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                            <TextBlock Text="Meta file:" FontSize="11" Opacity="0.7"/>
-                            <TextBlock Text="{Binding CurrentMetaFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                            <TextBlock Text="QoE file (fill in externally):" FontSize="11" Opacity="0.7"/>
-                            <TextBlock Text="{Binding CurrentQoeFileName}" FontSize="10" TextWrapping="Wrap" Margin="0,0,0,8"/>
-
-                            <Button x:Name="BtnPauseResume" Style="{StaticResource CoreButtonStyle}" Click="BtnPauseResume_Click"
-                                    HorizontalAlignment="Stretch">Pause</Button>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- ── Calibration (always visible, not collapsible) ───────────── -->
-                    <Border Background="#FFF3E0" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-                        <StackPanel>
-                            <TextBlock Text="Calibration" FontWeight="Bold" Margin="0,0,0,8"/>
-                            <Button x:Name="BtnRestartCal" Style="{StaticResource CalibrationButtonStyle}" Click="BtnRestartCal_Click"
-                                    HorizontalAlignment="Stretch"
-                                    ToolTip="Reset pipeline and wait for stomp to re-calibrate">
-                                Restart Calibration
-                            </Button>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- ── Tools: legacy + diagnostics (collapsible) ────────────────── -->
-                    <Border Background="#EDE7F6" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-                        <StackPanel>
-                            <Expander Header="Tools" IsExpanded="{Binding ToolsVisible, Mode=TwoWay}">
-                                <StackPanel Margin="0,8,0,0">
-                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnMeasure_Click" HorizontalAlignment="Stretch" Margin="0,0,0,4">Measure</Button>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                        <TextBlock Text="Sample Hz:" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"/>
-                                        <TextBox x:Name="txtSampleRate" Width="50" Height="24" Text="10"/>
-                                    </StackPanel>
-                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="Button_SaveData" HorizontalAlignment="Stretch" Margin="0,0,0,8">Save IMU Samples</Button>
-
-                                    <Button x:Name="BtnSaveDiagnostics" Style="{StaticResource ToolsButtonStyle}" Click="BtnSaveDiagnostics_Click"
-                                            HorizontalAlignment="Stretch" Margin="0,0,0,4"
-                                            ToolTip="Export diagnostics to CSV for AI analysis">
-                                        Save Diagnostics (CSV)
-                                    </Button>
-
-                                    <Button x:Name="BtnLoadData" Style="{StaticResource ToolsButtonStyle}" Click="BtnLoadData_Click"
-                                            HorizontalAlignment="Stretch"
-                                            ToolTip="Load IMU samples CSV and replay through pipeline">
-                                        Load IMU Samples (CSV)
-                                    </Button>
-                                </StackPanel>
-                            </Expander>
-                            <!-- Replay controls — visible only during replay -->
-                            <StackPanel x:Name="ReplayControls" Visibility="Collapsed" Margin="0,8,0,0">
-                                <Button x:Name="BtnReplayPause" Style="{StaticResource ToolsButtonStyle}" Click="BtnReplayPause_Click"
-                                        HorizontalAlignment="Stretch" Margin="0,0,0,4">⏸ Pause</Button>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="50"  Width="56" Margin="0,0,2,0" ToolTip="0.2× real-time">Slow</Button>
-                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="10"  Width="56" Margin="0,0,2,0" ToolTip="1× real-time">1×</Button>
-                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="2"   Width="56" Margin="0,0,2,0" ToolTip="5× real-time">5×</Button>
-                                    <Button Style="{StaticResource ToolsButtonStyle}" Click="BtnReplaySpeed_Click" Tag="0"   Width="50"                  ToolTip="No delay">Max</Button>
-                                </StackPanel>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- ── Parameters (collapsible, bottom) ─────────────────────────── -->
-                    <Border Background="#E8F5E9" CornerRadius="6" Padding="10" Margin="0,0,0,10">
-                        <Expander Header="Parameters" IsExpanded="{Binding ParamsPanelVisible, Mode=TwoWay}">
-                            <StackPanel Margin="0,8,0,0">
-                                <!-- 1. Stomp threshold -->
-                                <TextBlock Text="{Binding StompThreshold, StringFormat='Stomp Threshold: {0:F0} m/s²'}" FontSize="11"/>
-                                <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
-                                        Value="{Binding StompThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                                <!-- 2. Static gyro threshold -->
-                                <TextBlock Text="{Binding StaticGyroThreshold, StringFormat='Static Gyro Threshold: {0:F2} rad/s'}" FontSize="11"/>
-                                <Slider Minimum="0.05" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                        Value="{Binding StaticGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                                <!-- 3. Stance free-acc threshold -->
-                                <TextBlock Text="{Binding StanceFreeAccThreshold, StringFormat='Stance Acc Threshold: {0:F1} m/s²'}" FontSize="11"/>
-                                <Slider Minimum="0.5" Maximum="5.0" SmallChange="0.1" LargeChange="0.5"
-                                        Value="{Binding StanceFreeAccThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                                <!-- 4. Stance gyro threshold -->
-                                <TextBlock Text="{Binding StanceGyroThreshold, StringFormat='Stance Gyro Threshold: {0:F1} rad/s'}" FontSize="11"/>
-                                <Slider Minimum="0.1" Maximum="3.0" SmallChange="0.05" LargeChange="0.2"
-                                        Value="{Binding StanceGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                                <!-- 5. PD confidence threshold -->
-                                <TextBlock Text="{Binding PdConfidenceThreshold, StringFormat='PD Confidence Threshold: {0:F2}'}" FontSize="11"/>
-                                <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                        Value="{Binding PdConfidenceThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                                <!-- 6. PD stability threshold -->
-                                <TextBlock Text="{Binding PdStabilityThreshold, StringFormat='PD Stability Threshold: {0:F2}'}" FontSize="11"/>
-                                <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                        Value="{Binding PdStabilityThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                                <!-- 7. Min baseline steps -->
-                                <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="11"/>
-                                <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
-                                        IsSnapToTickEnabled="True" TickFrequency="1"
-                                        Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
-
-                                <!-- 8. Baseline L/R step count imbalance warning threshold -->
-                                <TextBlock Text="{Binding BaselineImbalanceRatioThreshold, StringFormat='Baseline Imbalance Ratio: {0:F2}'}" FontSize="11"/>
-                                <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
-                                        Value="{Binding BaselineImbalanceRatioThreshold, Mode=TwoWay}" Margin="0,0,0,12"/>
-
-                                <Button x:Name="BtnSaveParams" Style="{StaticResource ParamsButtonStyle}" Click="BtnSaveParams_Click"
-                                        HorizontalAlignment="Stretch"
-                                        ToolTip="Persist current parameter values to disk">
-                                    Save Params
-                                </Button>
-                            </StackPanel>
-                        </Expander>
-                    </Border>
-                </StackPanel>
-            </ScrollViewer>
+        <!-- ── HEADER BAR — app identity (global, always visible) ── -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource Brand.Navy}" Height="44">
+            <TextBlock Text="IMUMoCap" Foreground="White" FontSize="16" FontWeight="Bold"
+                       Margin="16,0" VerticalAlignment="Center" HorizontalAlignment="Left"/>
         </Border>
 
         <!-- ── LEFT PANEL — Grid with resizable log row ─────────────────────── -->
         <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>                             <!-- Row 0: status grid -->
-                <RowDefinition Height="Auto"/>                             <!-- Row 1: timeline -->
-                <RowDefinition x:Name="SplitterRow" Height="5"/>           <!-- Row 2: drag handle -->
-                <RowDefinition x:Name="LogRow" Height="*" MinHeight="60"/> <!-- Row 3: log (now gets all freed space) -->
+                <RowDefinition Height="Auto"/>
+                <!-- Row 0: Session card + Left/Right FPA -->
+                <RowDefinition Height="Auto"/>
+                <!-- Row 1: status bar (full width) -->
+                <RowDefinition Height="Auto"/>
+                <!-- Row 2: timeline -->
+                <RowDefinition x:Name="SplitterRow" Height="5"/>
+                <!-- Row 3: drag handle -->
+                <RowDefinition x:Name="LogRow" Height="*" MinHeight="60"/>
+                <!-- Row 4: log (now gets all freed space) -->
             </Grid.RowDefinitions>
 
-            <!-- Row 0: Status grid -->
-            <Grid Grid.Row="0" Margin="8,6,8,4">
+            <!-- Row 0: Session (top-left) + Left FPA + Right FPA -->
+            <Grid Grid.Row="0" Margin="8,6,8,8">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="1*"/>
+                    <ColumnDefinition Width="1*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Col 0: System status -->
-                <Border Grid.Column="0" Padding="10" CornerRadius="6" Background="#11000000" Margin="0,0,4,0">
+                <!-- ── Experiment Session (Tools folded in, Parameters moved to popup) ── -->
+                <!-- Fixed width (12 padding + 1 border on each side + 512 content = 4x(120 button + 8 gap), no slack)
+                     so the button rows keep a consistent gap and never drift when the window is resized. -->
+                <Border Grid.Column="0" Width="538" Padding="12" CornerRadius="8"
+                        BorderBrush="{StaticResource Brand.MintMid}" BorderThickness="1"
+                        VerticalAlignment="Top" Margin="0,0,4,0">
                     <StackPanel>
-                        <TextBlock Text="{Binding DeviceState}" FontSize="16" FontWeight="SemiBold"/>
-                        <TextBlock Text="{Binding StatusLabel}" FontSize="16" FontWeight="Bold"
-                                   Margin="0,4,0,8" TextWrapping="Wrap"/>
-                        <UniformGrid Columns="2">
-                            <TextBlock Text="Calib State:" Opacity="0.7" FontSize="11"/>
-                            <TextBlock Text="{Binding CalibrationState}" FontSize="11"/>
-                            <TextBlock Text="Prog Dir:" Opacity="0.7" FontSize="11"/>
-                            <TextBlock Text="{Binding ProgDirDeg, StringFormat={}{0:F1}°}" FontSize="11"/>
-                            <TextBlock Text="Gate Reject:" Opacity="0.7" FontSize="11"/>
-                            <TextBlock Text="{Binding PelvisRejectStreak}" FontSize="11"/>
-                            <TextBlock Text="Gait:" Opacity="0.7" FontSize="11"/>
-                            <TextBlock Text="{Binding StanceSummary}" FontSize="11" TextWrapping="Wrap"/>
+                        <TextBlock Text="Experiment Session" FontSize="14" FontWeight="Bold"
+                                   Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Bottom" Margin="0,0,0,10">
+                            <StackPanel Margin="0,0,10,0">
+                                <TextBlock Text="Participant ID:" Style="{StaticResource CaptionTextStyle}"/>
+                                <TextBox x:Name="txtParticipantId" Style="{StaticResource BrandTextBoxStyle}" Width="130"/>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,0">
+                                <TextBlock Text="Condition:" Style="{StaticResource CaptionTextStyle}"/>
+                                <ComboBox x:Name="cmbCondition" Style="{StaticResource BrandComboBoxStyle}" Width="70" SelectedIndex="0">
+                                    <ComboBoxItem Content="EF"/>
+                                    <ComboBoxItem Content="IF"/>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Margin="0,0,10,0">
+                                <TextBlock Text="Order Group:" Style="{StaticResource CaptionTextStyle}"/>
+                                <ComboBox x:Name="cmbOrderGroup" Style="{StaticResource BrandComboBoxStyle}" Width="70" SelectedIndex="0">
+                                    <ComboBoxItem Content="A"/>
+                                    <ComboBoxItem Content="B"/>
+                                </ComboBox>
+                            </StackPanel>
+                            <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnStartCondition_Click" Width="120" Margin="0,0,0,0">
+                                <TextBlock Text="Start Condition" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                        </StackPanel>
+
+                        <UniformGrid Columns="4" Rows="1" Margin="0,0,0,8">
+                            <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnStartWashout_Click" Width="120">
+                                <TextBlock Text="Start Washout" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                            <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnNextStage_Click" Width="120"
+                                    ToolTip="Manual override — only needed if auto-advance doesn't trigger">
+                                <TextBlock Text="Next Stage" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                            <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnEndCondition_Click" Width="120"
+                                    ToolTip="End condition/washout recording and close the session file">
+                                <TextBlock Text="End Recording" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                            <Button x:Name="BtnPauseResume" Style="{StaticResource PrimaryButtonStyle}" Click="BtnPauseResume_Click" Width="120">Pause</Button>
                         </UniformGrid>
 
-                        <!-- IMU connection indicators -->
-                        <StackPanel Margin="0,8,0,0">
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse x:Name="PelvisStatusDot" Width="10" Height="10" Fill="Gray"
-                                         Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="PelvisStatusText" Text="Pelvis: --" FontSize="11"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                <Ellipse x:Name="LeftStatusDot" Width="10" Height="10" Fill="Gray"
-                                         Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="LeftStatusText" Text="Left: --" FontSize="11"/>
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="0,2,0,0">
-                                <Ellipse x:Name="RightStatusDot" Width="10" Height="10" Fill="Gray"
-                                         Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="RightStatusText" Text="Right: --" FontSize="11"/>
+                        <TextBlock Margin="0,0,0,4">
+                            <Run Text="Stage: " Foreground="Gray"/><Run Text="{Binding CurrentStageLabel}" FontWeight="SemiBold" Foreground="{StaticResource Brand.Navy}"/>
+                            <Run Text="  Elapsed: " Foreground="Gray"/><Run Text="{Binding StageElapsedDisplay}" Foreground="{StaticResource Brand.Navy}"/>
+                        </TextBlock>
+                        <TextBlock Text="{Binding TurningExclusionDisplay}" FontSize="12" Opacity="0.7"
+                                    Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
+
+                        <TextBlock Text="Session file:" Style="{StaticResource CaptionTextStyle}"/>
+                        <TextBlock Text="{Binding CurrentSessionFileName}" FontSize="11" Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                        <TextBlock Text="Meta file:" Style="{StaticResource CaptionTextStyle}"/>
+                        <TextBlock Text="{Binding CurrentMetaFileName}" FontSize="11" Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                        <TextBlock Text="QoE file (fill in externally):" Style="{StaticResource CaptionTextStyle}"/>
+                        <TextBlock Text="{Binding CurrentQoeFileName}" FontSize="11" Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                        <!-- ── Tools (folded into Session) ──────────────────────────── -->
+                        <TextBlock Text="Tools" FontWeight="Bold" FontSize="12" Foreground="{StaticResource Brand.Navy}" Margin="0,4,0,6"/>
+
+                        <UniformGrid Columns="4" Margin="0,0,0,4">
+                            <Button x:Name="BtnStartCal" Style="{StaticResource PrimaryButtonStyle}" Click="BtnStartCal_Click"
+                                    Width="120" ToolTip="Reset pipeline and immediately start calibration">
+                                <TextBlock Text="Start Calibration" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                            <Button x:Name="BtnMeasure" Style="{StaticResource PrimaryButtonStyle}" Click="BtnMeasure_Click" Width="120">
+                                <TextBlock x:Name="BtnMeasureLabel" Text="▶ Measure" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                            <Button Style="{StaticResource SecondaryButtonStyle}" Click="Button_SaveData" Width="120">
+                                <TextBlock Text="Save IMU Samples" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                            <Button x:Name="BtnSaveDiagnostics" Style="{StaticResource SecondaryButtonStyle}" Click="BtnSaveDiagnostics_Click"
+                                    Width="120" ToolTip="Export diagnostics to CSV for AI analysis">
+                                <TextBlock Text="Save Diagnostics" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                        </UniformGrid>
+
+                        <!-- Parameters, Load IMU Samples, and replay controls (visible only during replay) share one row -->
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <Button x:Name="BtnOpenParams" Style="{StaticResource SecondaryButtonStyle}" Click="BtnOpenParams_Click"
+                                    Width="120" ToolTip="Open pipeline parameter settings">
+                                Parameters...
+                            </Button>
+                            <Button x:Name="BtnLoadData" Style="{StaticResource SecondaryButtonStyle}" Click="BtnLoadData_Click"
+                                    Width="120" ToolTip="Load IMU samples CSV and replay through pipeline">
+                                <TextBlock Text="Load IMU Samples" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
+                            <StackPanel x:Name="ReplayControls" Orientation="Horizontal" Visibility="Collapsed">
+                                <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnReplaySlower_Click" Width="60" FontSize="16" ToolTip="Slow down replay">⏪</Button>
+                                <Button x:Name="BtnReplayPause" Style="{StaticResource SecondaryButtonStyle}" Click="BtnReplayPause_Click" Width="60" FontSize="16" ToolTip="Pause / Resume">⏸</Button>
+                                <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnReplayFaster_Click" Width="60" FontSize="16" ToolTip="Speed up replay">⏩</Button>
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- Col 1: Left FPA -->
-                <Border Grid.Column="1" Padding="10" CornerRadius="6"
+                <!-- Left FPA — key info, given more room and visual weight -->
+                <Border Grid.Column="1" Padding="12" CornerRadius="8"
                         Background="{Binding LeftFpaBackground}" Margin="4,0">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <TextBlock Text="Left FPA" FontSize="14" Opacity="0.75" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Left FPA" FontSize="13" Opacity="0.75" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
                         <TextBlock Text="{Binding LeftFpaDeg, StringFormat={}{0:F1}°}"
-                                   FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="{Binding LeftFpaTarget}" FontSize="12" Opacity="0.8" HorizontalAlignment="Center"/>
-                        <TextBlock Text="{Binding LeftFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
+                                   FontSize="40" FontWeight="Bold" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
+                        <TextBlock Text="{Binding LeftFpaTarget}" FontSize="13" Opacity="0.85" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
+                        <TextBlock Text="{Binding LeftFpaNote}" FontSize="12" Opacity="0.75" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
                     </StackPanel>
                 </Border>
 
-                <!-- Col 2: Right FPA -->
-                <Border Grid.Column="2" Padding="10" CornerRadius="6"
+                <!-- Right FPA — key info, given more room and visual weight -->
+                <Border Grid.Column="2" Padding="12" CornerRadius="8"
                         Background="{Binding RightFpaBackground}" Margin="4,0,0,0">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <TextBlock Text="Right FPA" FontSize="14" Opacity="0.75" HorizontalAlignment="Center"/>
+                        <TextBlock Text="Right FPA" FontSize="13" Opacity="0.75" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
                         <TextBlock Text="{Binding RightFpaDeg, StringFormat={}{0:F1}°}"
-                                   FontSize="48" FontWeight="Bold" HorizontalAlignment="Center"/>
-                        <TextBlock Text="{Binding RightFpaTarget}" FontSize="12" Opacity="0.8" HorizontalAlignment="Center"/>
-                        <TextBlock Text="{Binding RightFpaNote}" Opacity="0.7" HorizontalAlignment="Center"/>
+                                   FontSize="40" FontWeight="Bold" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
+                        <TextBlock Text="{Binding RightFpaTarget}" FontSize="13" Opacity="0.85" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
+                        <TextBlock Text="{Binding RightFpaNote}" FontSize="12" Opacity="0.75" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Brand.Navy}"/>
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <!-- Row 1: Timeline panel -->
-            <Border Grid.Row="1" x:Name="TimelineBorder"  Background="#1E1E1E" Margin="0 10 0 0"
+            <!-- Row 1: Status bar — full width, moved above the timeline -->
+            <Border Grid.Row="1" Padding="10" CornerRadius="8"
+                    BorderBrush="{StaticResource Brand.MintMid}" BorderThickness="1" Margin="8,0,8,8">
+                <StackPanel Orientation="Horizontal">
+                    <!-- IMU connection status — color conveys connected/disconnected, so the label is role-only -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,24,0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                            <Ellipse x:Name="PelvisStatusDot" Width="16" Height="16" Fill="Gray"
+                                     Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="PelvisStatusText" Text="Pelvis" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
+                            <Ellipse x:Name="LeftStatusDot" Width="16" Height="16" Fill="Gray"
+                                     Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="LeftStatusText" Text="Left" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="RightStatusDot" Width="16" Height="16" Fill="Gray"
+                                     Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="RightStatusText" Text="Right" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel MinWidth="180" Margin="0,0,24,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding StatusLabel}" FontSize="16" FontWeight="Bold"
+                                   Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal">
+                        <StackPanel Margin="0,0,24,0">
+                            <TextBlock Text="Calib State:" Style="{StaticResource CaptionTextStyle}"/>
+                            <TextBlock Text="{Binding CalibrationState}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,24,0">
+                            <TextBlock Text="Prog Dir:" Style="{StaticResource CaptionTextStyle}"/>
+                            <TextBlock Text="{Binding ProgDirDeg, StringFormat={}{0:F1}°}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,24,0">
+                            <TextBlock Text="Gate Reject:" Style="{StaticResource CaptionTextStyle}"/>
+                            <TextBlock Text="{Binding PelvisRejectStreak}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock Text="Gait:" Style="{StaticResource CaptionTextStyle}"/>
+                            <TextBlock Text="{Binding StanceSummary}" FontSize="12" Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Row 2: Timeline panel — dark chrome echoes the header bar -->
+            <Border Grid.Row="2" x:Name="TimelineBorder" Background="{StaticResource Brand.Navy}" Margin="0,10,0,0"
                     SizeChanged="TimelineBorder_SizeChanged">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -305,65 +249,77 @@
                 </Grid>
             </Border>
 
-            <!-- Row 2: GridSplitter — drag up/down to resize log -->
-            <GridSplitter Grid.Row="2"
+            <!-- Row 3: GridSplitter — drag up/down to resize log -->
+            <GridSplitter Grid.Row="3"
                           Height="5"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Stretch"
-                          Background="#33000000"
+                          Background="{StaticResource Brand.MintMid}"
                           ShowsPreview="True"
                           ResizeDirection="Rows"
                           ResizeBehavior="PreviousAndNext"
                           Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}"/>
 
-            <!-- Row 3: Log panel — left: debug log, right: AR feedback event log (cue + timestamp) -->
-            <Grid Grid.Row="3" Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}">
+            <!-- Row 4: Log panel — left: debug log, right: AR feedback event log (cue + timestamp) -->
+            <Grid Grid.Row="4" Visibility="{Binding LogPanelVisible, Converter={StaticResource BoolToVis}}">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="2*"/>
+                    <ColumnDefinition Width="1*"/>
                     <ColumnDefinition Width="5"/>
-                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="1*"/>
                 </Grid.ColumnDefinitions>
 
-                <DockPanel Grid.Column="0" Margin="8,0,4,2">
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,2">
-                        <TextBlock Text="Debug Log" FontSize="11" Foreground="Gray" VerticalAlignment="Center"/>
-                        <Button Content="Clear" Click="btnClear" Padding="6,0" Margin="8,0,0,0"/>
-                    </StackPanel>
-                    <TextBox
-                        x:Name="LogBox"
-                        AcceptsReturn="True"
-                        IsReadOnly="True"
-                        Text="{Binding LogList}"
-                        TextWrapping="NoWrap"
-                        FontFamily="Consolas"
-                        FontSize="12"
-                        HorizontalScrollBarVisibility="Auto"
-                        VerticalScrollBarVisibility="Auto"/>
-                </DockPanel>
+                <Border Grid.Column="0" BorderBrush="{StaticResource Brand.MintMid}" BorderThickness="1" CornerRadius="4" Margin="8,0,4,2">
+                    <DockPanel Margin="6">
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="Debug Log" FontSize="12" Foreground="{StaticResource Brand.Navy}" Opacity="0.7" VerticalAlignment="Center"/>
+                            <Button Click="btnClear" Width="24" Height="24" Padding="0" Margin="8,0,0,0"
+                                    Background="Transparent" BorderThickness="0"
+                                    Foreground="{StaticResource Brand.Navy}" Opacity="0.5"
+                                    FontSize="13" ToolTip="Clear log">🧹</Button>
+                        </StackPanel>
+                        <TextBox
+                            x:Name="LogBox"
+                            AcceptsReturn="True"
+                            IsReadOnly="True"
+                            Text="{Binding LogList}"
+                            TextWrapping="NoWrap"
+                            FontFamily="Consolas"
+                            FontSize="12"
+                            BorderThickness="0"
+                            HorizontalScrollBarVisibility="Auto"
+                            VerticalScrollBarVisibility="Auto"/>
+                    </DockPanel>
+                </Border>
 
                 <GridSplitter Grid.Column="1"
                               Width="5"
                               HorizontalAlignment="Stretch"
                               VerticalAlignment="Stretch"
-                              Background="#33000000"
+                              Background="{StaticResource Brand.MintMid}"
                               ShowsPreview="True"/>
 
-                <DockPanel Grid.Column="2" Margin="4,0,8,2">
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,2">
-                        <TextBlock Text="AR Feedback Events (cue + timestamp)" FontSize="11" Foreground="Gray" VerticalAlignment="Center"/>
-                        <Button Content="Clear" Click="BtnClearArLog_Click" Padding="6,0" Margin="8,0,0,0"/>
-                    </StackPanel>
-                    <TextBox
-                        x:Name="ArEventLogBox"
-                        AcceptsReturn="True"
-                        IsReadOnly="True"
-                        Text="{Binding ArEventLog}"
-                        TextWrapping="NoWrap"
-                        FontFamily="Consolas"
-                        FontSize="12"
-                        HorizontalScrollBarVisibility="Auto"
-                        VerticalScrollBarVisibility="Auto"/>
-                </DockPanel>
+                <Border Grid.Column="2" BorderBrush="{StaticResource Brand.MintMid}" BorderThickness="1" CornerRadius="4" Margin="4,0,8,2">
+                    <DockPanel Margin="6">
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                            <TextBlock Text="AR Feedback Events (cue + timestamp)" FontSize="12" Foreground="{StaticResource Brand.Navy}" Opacity="0.7" VerticalAlignment="Center"/>
+                            <Button Click="BtnClearArLog_Click" Width="24" Height="24" Padding="0" Margin="8,0,0,0"
+                                    Background="Transparent" BorderThickness="0"
+                                    Foreground="{StaticResource Brand.Navy}" Opacity="0.5"
+                                    FontSize="13" ToolTip="Clear log">🧹</Button>
+                        </StackPanel>
+                        <TextBox
+                            x:Name="ArEventLogBox"
+                            AcceptsReturn="True"
+                            IsReadOnly="True"
+                            Text="{Binding ArEventLog}"
+                            TextWrapping="NoWrap"
+                            FontFamily="Consolas"
+                            FontSize="12"
+                            BorderThickness="0"
+                            HorizontalScrollBarVisibility="Auto"
+                            VerticalScrollBarVisibility="Auto"/>
+                    </DockPanel>
+                </Border>
             </Grid>
         </Grid>
     </DockPanel>

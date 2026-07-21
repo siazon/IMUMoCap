@@ -15,6 +15,70 @@
 
                 <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign2.Defaults.xaml" />
             </ResourceDictionary.MergedDictionaries>
+
+            <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+            <!-- ── Brand palette (shared by MainWindow and popup windows) ───────── -->
+            <SolidColorBrush x:Key="Brand.Navy" Color="#272643"/>
+            <SolidColorBrush x:Key="Brand.MintLight" Color="#E3F6F5"/>
+            <SolidColorBrush x:Key="Brand.MintMid" Color="#BAE8E8"/>
+            <SolidColorBrush x:Key="Brand.Teal" Color="#2C698D"/>
+            <SolidColorBrush x:Key="Status.WarnAction" Color="#B85C48"/>
+
+            <!-- ── Buttons: two semantic roles — primary (teal) / warning (terracotta) ── -->
+            <Style x:Key="BrandButtonBase" TargetType="Button" BasedOn="{StaticResource MaterialDesignRaisedButton}">
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="MinHeight" Value="36"/>
+                <Setter Property="Width" Value="170"/>
+                <Setter Property="Margin" Value="0,0,8,8"/>
+                <Setter Property="HorizontalAlignment" Value="Left"/>
+            </Style>
+            <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandButtonBase}">
+                <Setter Property="Background" Value="{StaticResource Brand.Teal}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource Brand.Teal}"/>
+            </Style>
+            <Style x:Key="WarningButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandButtonBase}">
+                <Setter Property="Background" Value="{StaticResource Status.WarnAction}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource Status.WarnAction}"/>
+            </Style>
+            <!-- Secondary: situational/dev tools (calibration recovery, manual export, replay debugging) — lighter fill, less visual weight than Primary -->
+            <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandButtonBase}">
+                <Setter Property="Background" Value="{StaticResource Brand.MintLight}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource Brand.MintMid}"/>
+                <Setter Property="Foreground" Value="{StaticResource Brand.Teal}"/>
+            </Style>
+            <!-- Muted: rare manual-override actions — flat and low-contrast so they don't compete with the main flow -->
+            <Style x:Key="MutedButtonStyle" TargetType="Button" BasedOn="{StaticResource BrandButtonBase}">
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderBrush" Value="{StaticResource Brand.MintMid}"/>
+                <Setter Property="Foreground" Value="{StaticResource Brand.Navy}"/>
+                <Setter Property="Opacity" Value="0.55"/>
+            </Style>
+
+            <!-- ── Inputs: outlined + fixed width so fields read as clickable regions ── -->
+            <Style x:Key="BrandTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource MaterialDesignOutlinedTextBox}">
+                <Setter Property="BorderBrush" Value="{StaticResource Brand.MintMid}"/>
+                <Setter Property="Foreground" Value="{StaticResource Brand.Navy}"/>
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Height" Value="34"/>
+                <Setter Property="HorizontalAlignment" Value="Left"/>
+            </Style>
+            <Style x:Key="BrandComboBoxStyle" TargetType="ComboBox" BasedOn="{StaticResource MaterialDesignOutlinedComboBox}">
+                <Setter Property="BorderBrush" Value="{StaticResource Brand.MintMid}"/>
+                <Setter Property="Foreground" Value="{StaticResource Brand.Navy}"/>
+                <Setter Property="Padding" Value="8,6"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Height" Value="34"/>
+                <Setter Property="HorizontalAlignment" Value="Left"/>
+            </Style>
+
+            <Style x:Key="CaptionTextStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Opacity" Value="0.7"/>
+                <Setter Property="Foreground" Value="{StaticResource Brand.Navy}"/>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

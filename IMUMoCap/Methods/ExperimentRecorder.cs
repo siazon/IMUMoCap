@@ -35,6 +35,14 @@ namespace IMUMoCap.Methods
         public TimeSpan PauseElapsed =>
             _openPause == null ? TimeSpan.Zero : DateTime.Now - _openPause.StartTime;
 
+        /// <summary>True if StartCondition for this participant/condition would overwrite an existing Session CSV.</summary>
+        public static bool SessionFileExists(string participantId, string condition)
+        {
+            var dir = Path.Combine(DataRoot, $"P{participantId}");
+            var path = Path.Combine(dir, $"P{participantId}_{condition}_Session.csv");
+            return File.Exists(path);
+        }
+
         public void StartCondition(string participantId, string condition, string? orderGroup)
         {
             Close();

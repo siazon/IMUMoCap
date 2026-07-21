@@ -298,9 +298,9 @@ namespace IMUMoCap
 
         // ── FPA card target labels & background colors ────────────────────────
 
-        internal static readonly Brush DefaultCardBg  = MakeBrush(0x11, 0x00, 0x00, 0x00);
-        internal static readonly Brush OnTargetBg     = MakeBrush(0x55, 0x00, 0xCC, 0x44);
-        internal static readonly Brush OffTargetBg    = MakeBrush(0x55, 0xCC, 0x22, 0x00);
+        internal static readonly Brush DefaultCardBg  = MakeBrush(0xFF, 0xE3, 0xF6, 0xF5);
+        internal static readonly Brush OnTargetBg     = MakeBrush(0xFF, 0xA1, 0xE5, 0xB8);
+        internal static readonly Brush OffTargetBg    = MakeBrush(0xFF, 0xE5, 0xAC, 0xA1);
         private static Brush MakeBrush(byte a, byte r, byte g, byte b)
         {
             var br = new SolidColorBrush(Color.FromArgb(a, r, g, b));
@@ -337,13 +337,6 @@ namespace IMUMoCap
         }
 
         // ── Pipeline tunable parameters (bound to right-panel sliders) ────────
-
-        private float _stompThreshold = 15f;
-        public float StompThreshold
-        {
-            get { return _stompThreshold; }
-            set { _stompThreshold = value; OnPropertyChanged(nameof(StompThreshold)); }
-        }
 
         private float _staticGyroThreshold = 0.3f;
         public float StaticGyroThreshold
@@ -401,20 +394,6 @@ namespace IMUMoCap
         {
             get { return _logPanelVisible; }
             set { _logPanelVisible = value; OnPropertyChanged(nameof(LogPanelVisible)); }
-        }
-
-        private bool _paramsPanelVisible = true;
-        public bool ParamsPanelVisible
-        {
-            get { return _paramsPanelVisible; }
-            set { _paramsPanelVisible = value; OnPropertyChanged(nameof(ParamsPanelVisible)); }
-        }
-
-        private bool _toolsVisible = false;
-        public bool ToolsVisible
-        {
-            get { return _toolsVisible; }
-            set { _toolsVisible = value; OnPropertyChanged(nameof(ToolsVisible)); }
         }
 
         private bool _RotationByDegree = true;

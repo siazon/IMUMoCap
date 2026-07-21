@@ -1,0 +1,54 @@
+<Window
+    x:Class="IMUMoCap.ParamsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Parameters"
+    Width="420"
+    SizeToContent="Height"
+    WindowStartupLocation="CenterOwner"
+    ResizeMode="NoResize">
+
+    <StackPanel Margin="16">
+        <!-- 1. Static gyro threshold -->
+        <TextBlock Text="{Binding StaticGyroThreshold, StringFormat='Static Gyro Threshold: {0:F2} rad/s'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <Slider Minimum="0.05" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                Value="{Binding StaticGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+        <!-- 2. Stance free-acc threshold -->
+        <TextBlock Text="{Binding StanceFreeAccThreshold, StringFormat='Stance Acc Threshold: {0:F1} m/s²'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <Slider Minimum="0.5" Maximum="5.0" SmallChange="0.1" LargeChange="0.5"
+                Value="{Binding StanceFreeAccThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+        <!-- 3. Stance gyro threshold -->
+        <TextBlock Text="{Binding StanceGyroThreshold, StringFormat='Stance Gyro Threshold: {0:F1} rad/s'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <Slider Minimum="0.1" Maximum="3.0" SmallChange="0.05" LargeChange="0.2"
+                Value="{Binding StanceGyroThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+        <!-- 4. PD confidence threshold -->
+        <TextBlock Text="{Binding PdConfidenceThreshold, StringFormat='PD Confidence Threshold: {0:F2}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                Value="{Binding PdConfidenceThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+        <!-- 5. PD stability threshold -->
+        <TextBlock Text="{Binding PdStabilityThreshold, StringFormat='PD Stability Threshold: {0:F2}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                Value="{Binding PdStabilityThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+        <!-- 6. Min baseline steps -->
+        <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
+                IsSnapToTickEnabled="True" TickFrequency="1"
+                Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
+
+        <!-- 7. Baseline L/R step count imbalance warning threshold -->
+        <TextBlock Text="{Binding BaselineImbalanceRatioThreshold, StringFormat='Baseline Imbalance Ratio: {0:F2}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
+                Value="{Binding BaselineImbalanceRatioThreshold, Mode=TwoWay}" Margin="0,0,0,12"/>
+
+        <Button x:Name="BtnSaveParams" Style="{StaticResource PrimaryButtonStyle}" Click="BtnSaveParams_Click"
+                Width="220" HorizontalAlignment="Left"
+                ToolTip="Persist current parameter values to disk">
+            Save Params
+        </Button>
+    </StackPanel>
+</Window>

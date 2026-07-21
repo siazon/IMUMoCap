@@ -18,13 +18,21 @@ namespace IMUMoCap.Pipeline.Models
         public int   ValidSteps_L { get; init; }
         public int   ValidSteps_R { get; init; }
 
-        // 训练目标（Δ = 5° 固定）
-        public float Target_L    { get; init; }  // T = μ ± 5°
+        // 训练目标：Tᵢ = μᵢ ± k·SDᵢ（k 固定 = 1.0，个体化偏移量，见 Research Overview §2.4）
+        public const float TargetK          = 1.0f;
+        public const float ToleranceWMinDeg = 4f;   // w_min
+
+        public float Target_L    { get; init; }
         public float Target_R    { get; init; }
-        public float Tolerance_L { get; init; }  // max(4°, SD)
-        public float Tolerance_R { get; init; }  // max(4°, SD)
         public TrainingDirection Direction_L { get; init; }
         public TrainingDirection Direction_R { get; init; }
+
+        /// <summary>
+        /// 当前训练块的容差半宽：w = max(w_min, α·SD)。α 随训练块递减实现渐进式难度，
+        /// 由调用方（FpaEngine.ToleranceAlpha）传入，与 target 的 k 解耦，故不作为固定字段存储。
+        /// </summary>
+        public float ToleranceL(float alpha) => MathF.Max(ToleranceWMinDeg, alpha * SdFpa_L);
+        public float ToleranceR(float alpha) => MathF.Max(ToleranceWMinDeg, alpha * SdFpa_R);
 
         public int  MinRequiredSteps { get; init; }
         public bool IsValid => ValidSteps_L >= MinRequiredSteps && ValidSteps_R >= MinRequiredSteps;
@@ -36,8 +44,9 @@ namespace IMUMoCap.Pipeline.Models
 
         /// <summary>
         /// 从统计数据计算训练目标，规则：
-        /// μ > 10° → ToeIn，T = μ - 5°
-        /// μ ≤ 10° → ToeOut，T = μ + 5°
+        /// μ > 10° → ToeIn，T = μ - k·SD
+        /// μ ≤ 10° → ToeOut，T = μ + k·SD
+        /// （方向判定规则本身文档未规定，沿用既有的 10° 阈值；偏移量按文档改为 k·SD）
         /// </summary>
         public static BaselineProfile Create(
             float meanL, float sdL, int stepsL,
@@ -45,18 +54,16 @@ namespace IMUMoCap.Pipeline.Models
             int minRequiredSteps = 20,
             float imbalanceRatioThreshold = 0.7f)
         {
-            static (float target, TrainingDirection dir) ComputeTarget(float mean)
+            static (float target, TrainingDirection dir) ComputeTarget(float mean, float sd)
             {
                 if (mean > 10f)
-                    return (mean - 5f, TrainingDirection.ToeIn);
+                    return (mean - TargetK * sd, TrainingDirection.ToeIn);
                 else
-                    return (mean + 5f, TrainingDirection.ToeOut);
+                    return (mean + TargetK * sd, TrainingDirection.ToeOut);
             }
 
-            static float ComputeTolerance(float sd) => MathF.Max(4f, sd);
-
-            var (tL, dL) = ComputeTarget(meanL);
-            var (tR, dR) = ComputeTarget(meanR);
+            var (tL, dL) = ComputeTarget(meanL, sdL);
+            var (tR, dR) = ComputeTarget(meanR, sdR);
 
             float stepRatio = (stepsL == 0 || stepsR == 0)
                 ? 0f
@@ -67,8 +74,8 @@ namespace IMUMoCap.Pipeline.Models
                 MeanFpa_L       = meanL, SdFpa_L   = sdL, ValidSteps_L = stepsL,
                 MeanFpa_R       = meanR, SdFpa_R   = sdR, ValidSteps_R = stepsR,
                 Asymmetry       = MathF.Abs(meanL - meanR),
-                Target_L        = tL,    Direction_L = dL, Tolerance_L = ComputeTolerance(sdL),
-                Target_R        = tR,    Direction_R = dR, Tolerance_R = ComputeTolerance(sdR),
+                Target_L        = tL,    Direction_L = dL,
+                Target_R        = tR,    Direction_R = dR,
                 MinRequiredSteps = minRequiredSteps,
                 StepCountRatio              = stepRatio,
                 ImbalanceRatioThresholdUsed = imbalanceRatioThreshold,

@@ -8,7 +8,6 @@ namespace IMUMoCap.Pipeline.Models
     public sealed class PipelineParams
     {
         // CalibrationProcessor
-        public float StompThreshold_ms2      { get; set; } = 15f;   // 10–50
         public float StaticGyroThreshold     { get; set; } = 0.3f;  // 0.05–1.0
 
         // GaitEventDetector

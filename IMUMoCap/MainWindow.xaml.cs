@@ -44,6 +44,9 @@ namespace IMUMoCap
         // Replay controls
         private volatile bool _replayPaused = false;
         private volatile int  _replayDelayMs = 10;
+        private static readonly int[]    ReplaySpeedStepsMs  = { 50, 10, 2, 0 }; // slow → fast
+        private static readonly string[] ReplaySpeedLabels   = { "0.2×", "1×", "5×", "Max" };
+        private int _replaySpeedIndex = 1; // default: 1× real-time
 
         // Timeline panel
         private const int TimelineCapacity = 600;
@@ -77,7 +80,9 @@ namespace IMUMoCap
         private static readonly string[] ConditionStages = { "Baseline", "Training1", "Training2", "Training3", "Retention" };
         private readonly Methods.ExperimentRecorder _recorder = new();
         private string _currentStage = "";
+        private bool _isRetention = false; // true once _currentStage == "Retention": AR feedback removed
         private readonly Dictionary<string, int> _stageAttempt = new();
+        private static readonly TimeSpan TrainingBlockMaxDuration = TimeSpan.FromMinutes(5);
         private readonly System.Diagnostics.Stopwatch _stageStopwatch = new();
 
         public MainWindow()
@@ -143,12 +148,21 @@ namespace IMUMoCap
                     _content.TurningExclusionDisplay =
                         $"Turning excluded: {stats.ExcludedTurning + stats.ExcludedReacquiring}/{stats.TotalAttempted} ({stats.TurningExclusionRate:P0})";
             });
+            _pipeline.OnTrainingBlockComplete += () => Dispatcher.BeginInvoke(() =>
+            {
+                if (!_isReplaying && IsTrainingBlockStage(_currentStage))
+                    AdvanceStage();
+            });
 
             _timelineTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
             _timelineTimer.Tick += (_, _) =>
             {
                 DrawTimeline();
                 _content.StageElapsedDisplay = _stageStopwatch.Elapsed.ToString(@"mm\:ss");
+
+                // Training block max-duration fallback: ends the block at 5 min even if 150 steps/foot wasn't reached.
+                if (!_isReplaying && IsTrainingBlockStage(_currentStage) && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
+                    AdvanceStage();
             };
             _timelineTimer.Start();
 
@@ -199,11 +213,16 @@ namespace IMUMoCap
             bool allConnected = _slotRegistry.Imus.All(i => i.IsConnected);
             if (allConnected)
             {
+                _content.StatusLabel = "All IMUs connected. Starting measurement...";
                 log("All IMUs connected. Auto-starting measurement...");
                 int desiredRate = _content.UpdateRates.Count > 0
                     ? Convert.ToInt32(_content.UpdateRates[_content.SelectedRate])
                     : -1;
                 _deviceManager.StartMeasurement(desiredRate);
+            }
+            else
+            {
+                _content.StatusLabel = ConnectedCountLabel();
             }
         }
 
@@ -211,8 +230,16 @@ namespace IMUMoCap
         {
             _content.ConnectedMtws.Remove(ev.DeviceIdStr);
             _content.SelectedMtw = _content.ConnectedMtws.Count - 1;
+
+            var vm = _slotRegistry.Imus.FirstOrDefault(a => a.DeviceId == ev.DeviceId);
+            if (vm != null) vm.IsConnected = false;
+
             UpdateImuStatusIndicators();
+            _content.StatusLabel = ConnectedCountLabel();
         }
+
+        private string ConnectedCountLabel() =>
+            $"{_slotRegistry.Imus.Count(i => i.IsConnected)}/{_slotRegistry.Imus.Count} IMUs connected.";
 
         private void OnDataPacket(DataPacketEvent ev)
         {
@@ -285,6 +312,16 @@ namespace IMUMoCap
                         });
                         break;
 
+                    case "ReadyForCalibration":
+                        Dispatcher.Invoke(() =>
+                        {
+                            if (_pipeline.TriggerCalibration())
+                                log("WS: participant signaled ready — calibration triggered.");
+                            else
+                                log("WS: participant signaled ready, but calibration isn't armed yet (Start Condition/Washout not open).");
+                        });
+                        break;
+
                     case "stop":
                     case "Stop":
                         Dispatcher.Invoke(() =>
@@ -315,33 +352,18 @@ namespace IMUMoCap
             {
                 foreach (var imu in _slotRegistry.Imus)
                 {
-                    string statusText;
-                    string dotColor;
+                    string dotColor = imu.IsConnected ? "Green" : "Gray";
 
-                    if (imu.IsConnected)
-                    {
-                        statusText = $"{imu.Role}: Connected";
-                        dotColor = "Green";
-                    }
-                    else
-                    {
-                        statusText = $"{imu.Role}: Disconnected";
-                        dotColor = "Gray";
-                    }
-
-                    // Update the corresponding UI elements
+                    // Dot color conveys connection state; label stays a static role name.
                     switch (imu.Role)
                     {
                         case ImuRole.Pelvis:
-                            PelvisStatusText.Text = statusText;
                             PelvisStatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dotColor));
                             break;
                         case ImuRole.Left:
-                            LeftStatusText.Text = statusText;
                             LeftStatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dotColor));
                             break;
                         case ImuRole.Right:
-                            RightStatusText.Text = statusText;
                             RightStatusDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dotColor));
                             break;
                     }
@@ -389,7 +411,12 @@ namespace IMUMoCap
         {
             switch (_content.DeviceState)
             {
-
+                case States.MEASURING:
+                    BtnMeasureLabel.Text = "⏹ Stop";
+                    break;
+                default:
+                    BtnMeasureLabel.Text = "▶ Measure";
+                    break;
             }
         }
 
@@ -445,18 +472,6 @@ namespace IMUMoCap
         {
             try
             {
-                // Update sample rate from UI
-                if (int.TryParse(this.txtSampleRate.Text, out int newSampleRate) && newSampleRate > 0)
-                {
-                    _sampleRateHz = newSampleRate;
-                    _imuFrameCollector.SampleRateHz = _sampleRateHz;
-                    log($"Sample rate updated to {_sampleRateHz} Hz");
-                }
-                else
-                {
-                    log("Invalid sample rate. Using current rate.");
-                }
-
                 if (_imuSamples.Count == 0)
                 {
                     log("No data to save.");
@@ -482,8 +497,20 @@ namespace IMUMoCap
             }
         }
 
+        private bool _loggedLiveDuringReplay = false;
+
         void OnXsensData(ImuRole sensor, uint deviceId, XsDataPacket packet)
         {
+            if (_isReplaying)
+            {
+                if (!_loggedLiveDuringReplay)
+                {
+                    _loggedLiveDuringReplay = true;
+                    log("Live IMU data ignored — a replay is currently running.");
+                }
+                return;
+            }
+
             // One callback packet becomes a single-IMU sample, then a synchronized 3-IMU frame.
             var (sample, _) = _imuFrameCollector.Process(sensor, deviceId, packet);
             _imuSamples.Add(sample);
@@ -546,15 +573,27 @@ namespace IMUMoCap
                 return;
             }
             _sessionState = TestState.Step;
+            _pipeline.StartTraining(); // resets tolerance α to the Block 1 default before we display it below
             _content.StatusLabel =
                 $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
                 $"R={profile.Target_R:F1}° ({profile.Direction_R})";
-            _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.Tolerance_L:F1}° ({profile.Direction_L})";
-            _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.Tolerance_R:F1}° ({profile.Direction_R})";
 
             _recorder.SaveBaseline(profile);
-            _pipeline.StartTraining();
             BroadcastArState("training");
+
+            // Advance the experiment stage bookkeeping (Baseline → Training1) so tolerance α, CSV stage
+            // tagging, and the 150-step/5-min auto-termination all pick up correctly. Only meaningful
+            // when a real condition/washout recording is open (Start Condition was clicked first).
+            if (_recorder.IsRecording && _currentStage == "Baseline")
+            {
+                AdvanceStage();
+            }
+            else
+            {
+                // No recording open (e.g. calibration-only test run) — still show target/tolerance locally.
+                _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_L})";
+                _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_R})";
+            }
         }
 
         // ── 参数同步 ──────────────────────────────────────────────────────────
@@ -563,8 +602,6 @@ namespace IMUMoCap
         {
             switch (propName)
             {
-                case nameof(MainPageVM.StompThreshold):
-                    _pipeline.Params.StompThreshold_ms2 = _content.StompThreshold; break;
                 case nameof(MainPageVM.StaticGyroThreshold):
                     _pipeline.Params.StaticGyroThreshold = _content.StaticGyroThreshold; break;
                 case nameof(MainPageVM.StanceFreeAccThreshold):
@@ -592,7 +629,6 @@ namespace IMUMoCap
             var p = JsonSerializer.Deserialize<PipelineParams>(json);
             if (p == null) return;
 
-            _content.StompThreshold = p.StompThreshold_ms2;
             _content.StaticGyroThreshold = p.StaticGyroThreshold;
             _content.StanceFreeAccThreshold = p.StanceFreeAccThreshold;
             _content.StanceGyroThreshold = p.StanceGyroThreshold;
@@ -610,9 +646,21 @@ namespace IMUMoCap
             log("Parameters saved.");
         }
 
+        private ParamsDialog? _paramsDialog;
+
+        private void BtnOpenParams_Click(object sender, RoutedEventArgs e)
+        {
+            if (_paramsDialog != null) { _paramsDialog.Activate(); return; }
+
+            _paramsDialog = new ParamsDialog { Owner = this, DataContext = _content };
+            _paramsDialog.SaveParamsClicked += BtnSaveParams_Click;
+            _paramsDialog.Closed += (_, _) => _paramsDialog = null;
+            _paramsDialog.Show();
+        }
+
         // ── 新增按钮处理器 ────────────────────────────────────────────────────
 
-        private void BtnRestartCal_Click(object sender, RoutedEventArgs e)
+        private void BtnStartCal_Click(object sender, RoutedEventArgs e)
         {
             _baselineTimer?.Stop();
             _baselineTimer = null;
@@ -620,7 +668,6 @@ namespace IMUMoCap
             _timelineBuffer.Clear();
             _imuSamples.Clear();
             _imuFrameCollector.Reset();
-            _content.StatusLabel = "Calibration reset. Stomp left foot to begin.";
             _content.LeftFpaTarget = "";
             _content.RightFpaTarget = "";
             _content.LeftFpaNote = "";
@@ -628,8 +675,17 @@ namespace IMUMoCap
             _content.LeftFpaBackground = MainPageVM.DefaultCardBg;
             _content.RightFpaBackground = MainPageVM.DefaultCardBg;
             _sessionState = TestState.Launching;
-            BroadcastArState("waiting");
-            log("Calibration restarted by user.");
+
+            if (_pipeline.TriggerCalibration())
+            {
+                log("Calibration reset and started — stand still.");
+            }
+            else
+            {
+                _content.StatusLabel = "Reset. Click Start Condition/Washout first, then Start Calibration.";
+                BroadcastArState("waiting");
+                log("Calibration reset — not started (click Start Condition/Washout first).");
+            }
         }
 
         private void BtnSaveDiagnostics_Click(object sender, RoutedEventArgs e)
@@ -671,13 +727,28 @@ namespace IMUMoCap
         {
             string participantId = txtParticipantId.Text.Trim();
             if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
+            if (_content.DeviceState != States.MEASURING) { log("Start Condition blocked: IMUs are not measuring. Click Measure first."); return; }
 
             string condition = (cmbCondition.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "EF";
             string orderGroup = (cmbOrderGroup.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "A";
 
+            if (Methods.ExperimentRecorder.SessionFileExists(participantId, condition))
+            {
+                var overwrite = MessageBox.Show(
+                    $"P{participantId}_{condition}_Session.csv already exists and will be overwritten. Continue?",
+                    "Participant/Condition already exists", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (overwrite != MessageBoxResult.Yes)
+                {
+                    log($"Start Condition cancelled — {condition} data for P{participantId} already exists.");
+                    return;
+                }
+            }
+
             _recorder.StartCondition(participantId, condition, orderGroup);
+            _pipeline.CalibrationArmed = true;
             _stageAttempt.Clear();
             _currentStage = ConditionStages[0];
+            _isRetention = false;
             _stageStopwatch.Restart();
 
             _content.CurrentStageLabel = _currentStage;
@@ -685,6 +756,7 @@ namespace IMUMoCap
             _content.CurrentMetaFileName = _recorder.CurrentMetaFilePath ?? "";
             _content.CurrentQoeFileName = _recorder.CurrentQoeFilePath ?? "";
             _content.TurningExclusionDisplay = "";
+            BroadcastArState("armed"); // tells the AR client it can show its "ready to calibrate" button
             log($"Started condition {condition} (order {orderGroup}) → {_recorder.CurrentSessionFilePath}");
         }
 
@@ -692,10 +764,25 @@ namespace IMUMoCap
         {
             string participantId = txtParticipantId.Text.Trim();
             if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
+            if (_content.DeviceState != States.MEASURING) { log("Start Washout blocked: IMUs are not measuring. Click Measure first."); return; }
+
+            if (Methods.ExperimentRecorder.SessionFileExists(participantId, "Washout"))
+            {
+                var overwrite = MessageBox.Show(
+                    $"P{participantId}_Washout_Session.csv already exists and will be overwritten. Continue?",
+                    "Participant/Washout already exists", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (overwrite != MessageBoxResult.Yes)
+                {
+                    log($"Start Washout cancelled — Washout data for P{participantId} already exists.");
+                    return;
+                }
+            }
 
             _recorder.StartCondition(participantId, "Washout", null);
+            _pipeline.CalibrationArmed = true;
             _stageAttempt.Clear();
             _currentStage = "Washout";
+            _isRetention = false;
             _stageStopwatch.Restart();
 
             _content.CurrentStageLabel = _currentStage;
@@ -703,6 +790,7 @@ namespace IMUMoCap
             _content.CurrentMetaFileName = "";
             _content.CurrentQoeFileName = "";
             _content.TurningExclusionDisplay = "";
+            BroadcastArState("armed"); // tells the AR client it can show its "ready to calibrate" button
             log($"Started washout → {_recorder.CurrentSessionFilePath}");
         }
 
@@ -714,11 +802,52 @@ namespace IMUMoCap
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             if (idx < 0 || idx >= ConditionStages.Length - 1) { log("Already at final stage (Retention)."); return; }
 
+            AdvanceStage();
+        }
+
+        private static bool IsTrainingBlockStage(string stage) =>
+            stage is "Training1" or "Training2" or "Training3";
+
+        /// <summary>
+        /// Moves _currentStage to the next entry in ConditionStages. Called both manually (Next Stage button)
+        /// and automatically — training block auto-completion (150 valid steps/foot) and the 5-minute block
+        /// timeout both call this too (Research Overview §2.6).
+        /// </summary>
+        private void AdvanceStage()
+        {
+            int idx = Array.IndexOf(ConditionStages, _currentStage);
+            if (idx < 0 || idx >= ConditionStages.Length - 1) return;
+
             _recorder.FlushMeta();
             _currentStage = ConditionStages[idx + 1];
             _stageStopwatch.Restart();
             _content.CurrentStageLabel = _currentStage;
             _content.TurningExclusionDisplay = "";
+
+            // Progressive-difficulty tolerance narrowing across the 3 training blocks (Research Overview §2.4).
+            int trainingBlock = _currentStage switch
+            {
+                "Training1" => 1,
+                "Training2" => 2,
+                "Training3" => 3,
+                _ => 0,
+            };
+            if (trainingBlock > 0)
+            {
+                _pipeline.SetTrainingBlock(trainingBlock);
+                if (_pipeline.BaselineProfile is { } bp)
+                {
+                    _content.LeftFpaTarget = $"Target {bp.Target_L:F1}° ±{bp.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({bp.Direction_L})";
+                    _content.RightFpaTarget = $"Target {bp.Target_R:F1}° ±{bp.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({bp.Direction_R})";
+                }
+            }
+            else if (_currentStage == "Retention")
+            {
+                // Immediate Retention Test: AR feedback removed, FPA data collection continues (Research Overview §2.6).
+                _isRetention = true;
+                BroadcastArState("retention");
+            }
+
             log($"Stage → {_currentStage}");
         }
 
@@ -726,6 +855,7 @@ namespace IMUMoCap
         {
             _recorder.FlushMeta();
             _recorder.Close();
+            _pipeline.CalibrationArmed = false;
             _stageStopwatch.Stop();
             log($"Recording closed: {_content.CurrentSessionFileName}");
         }
@@ -771,6 +901,17 @@ namespace IMUMoCap
 
         private async void BtnLoadData_Click(object sender, RoutedEventArgs e)
         {
+            if (_recorder.IsRecording)
+            {
+                log("Load IMU Samples blocked: a condition/washout is currently recording — " +
+                    "replaying now would write mislabeled data into that session's CSV. End or pause it first.");
+                return;
+            }
+            if (_content.DeviceState == States.MEASURING)
+            {
+                log("Load IMU Samples blocked: IMUs are currently measuring — replaying now would mix live and replayed data. Stop measurement first.");
+                return;
+            }
 
             Console.WriteLine("BtnLoadData_Click: ");
 
@@ -784,6 +925,7 @@ namespace IMUMoCap
 
             BtnLoadData.IsEnabled = false;
             log("Loading...");
+            _content.StatusLabel = "Loading IMU samples...";
 
             // Parse CSV on background thread to avoid blocking the UI.
             var (samples, bundles) = await Task.Run(() =>
@@ -796,14 +938,18 @@ namespace IMUMoCap
             if (samples.Count == 0)
             {
                 log("Load failed: no samples found.");
+                _content.StatusLabel = "Load failed: no samples found.";
                 BtnLoadData.IsEnabled = true;
                 return;
             }
 
             int completeBundles = bundles.Count(b => b.IsComplete);
             log($"Loaded {samples.Count} samples → {bundles.Count} bundles ({completeBundles} complete). Replaying...");
+            _content.StatusLabel = $"Replaying {samples.Count} samples ({completeBundles} complete bundles)...";
 
             _isReplaying = true;
+            _loggedLiveDuringReplay = false;
+            BtnMeasure.IsEnabled = false;
             _pipeline.Reset();
             _sessionState = TestState.Launching;
 
@@ -814,6 +960,7 @@ namespace IMUMoCap
                 Dispatcher.BeginInvoke(() =>
                 {
                     _sessionState = TestState.Baseline;
+                    _content.StatusLabel = "Replay: calibration done. Baseline started.";
                     log("Replay: calibration done — baseline started.");
                 });
             }
@@ -824,8 +971,8 @@ namespace IMUMoCap
                 Dispatcher.BeginInvoke(() =>
                 {
                     _sessionState = TestState.Step;
-                    _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.Tolerance_L:F1}° ({profile.Direction_L})";
-                    _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.Tolerance_R:F1}° ({profile.Direction_R})";
+                    _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_L})";
+                    _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_R})";
                     _content.StatusLabel =
                         $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
                         $"R={profile.Target_R:F1}° ({profile.Direction_R})";
@@ -837,9 +984,10 @@ namespace IMUMoCap
             _pipeline.OnBaselineCompleted += onBaselineDone;
 
             _replayPaused = false;
-            _replayDelayMs = 10;
+            _replaySpeedIndex = 1;
+            _replayDelayMs = ReplaySpeedStepsMs[_replaySpeedIndex];
             ReplayControls.Visibility = Visibility.Visible;
-            BtnReplayPause.Content = "⏸ Pause";
+            BtnReplayPause.Content = "⏸";
 
             try
             {
@@ -861,6 +1009,7 @@ namespace IMUMoCap
                 _replayPaused = false;
                 ReplayControls.Visibility = Visibility.Collapsed;
                 BtnLoadData.IsEnabled = true;
+                BtnMeasure.IsEnabled = true;
             }
 
             if (_pipeline.InBaseline)
@@ -876,10 +1025,13 @@ namespace IMUMoCap
             log(BuildReplayTimeline(
                 bundles,
                 _pipeline.GetDiagnosticsSnapshot(),
-                _pipeline.Params.StompThreshold_ms2,
+                LegacyStompThreshold_ms2, // live calibration no longer uses stomp; this is only for interpreting old recordings
                 _pipeline.Params.MinBaselineSteps));
             log("Replay done. Save diagnostics to inspect results.");
+            _content.StatusLabel = "Replay done. Save diagnostics to inspect results.";
         }
+
+        private const float LegacyStompThreshold_ms2 = 15f;
 
         private string BuildReplayTimeline(
             List<ImuFrameBundle> bundles,
@@ -1093,15 +1245,35 @@ namespace IMUMoCap
         private void BtnReplayPause_Click(object sender, RoutedEventArgs e)
         {
             _replayPaused = !_replayPaused;
-            BtnReplayPause.Content = _replayPaused ? "▶ Resume" : "⏸ Pause";
-            if (_replayPaused && _timelineBuffer.Count > 0)
-                log($"Paused. Timeline first frame PacketId={_timelineBuffer.Peek().PacketId}");
+            if (_replayPaused)
+            {
+                BtnReplayPause.Content = "▶";
+                if (_timelineBuffer.Count > 0)
+                    log($"Paused. Timeline first frame PacketId={_timelineBuffer.Peek().PacketId}");
+            }
+            else
+            {
+                _replaySpeedIndex = 1;
+                _replayDelayMs = ReplaySpeedStepsMs[_replaySpeedIndex];
+                BtnReplayPause.Content = "⏸";
+                log($"Resumed at {ReplaySpeedLabels[_replaySpeedIndex]}");
+            }
         }
 
-        private void BtnReplaySpeed_Click(object sender, RoutedEventArgs e)
+        private void BtnReplaySlower_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && int.TryParse(btn.Tag?.ToString(), out int ms))
-                _replayDelayMs = ms;
+            if (_replaySpeedIndex <= 0) return;
+            _replaySpeedIndex--;
+            _replayDelayMs = ReplaySpeedStepsMs[_replaySpeedIndex];
+            log($"Replay speed: {ReplaySpeedLabels[_replaySpeedIndex]}");
+        }
+
+        private void BtnReplayFaster_Click(object sender, RoutedEventArgs e)
+        {
+            if (_replaySpeedIndex >= ReplaySpeedStepsMs.Length - 1) return;
+            _replaySpeedIndex++;
+            _replayDelayMs = ReplaySpeedStepsMs[_replaySpeedIndex];
+            log($"Replay speed: {ReplaySpeedLabels[_replaySpeedIndex]}");
         }
 
         private void TimelineBorder_SizeChanged(object sender, SizeChangedEventArgs e) => DrawTimeline();
@@ -1226,9 +1398,13 @@ namespace IMUMoCap
 
             if (_wsServer != null)
             {
+                // "retention": Immediate Retention Test — FPA data collection continues but the AR client
+                // must not render target feedback (Research Overview §2.6).
+                string stageTag = _isRetention ? "retention" : (isTraining ? "training" : "baseline");
+
                 _ = _wsServer.BroadcastJsonAsync(new
                 {
-                    stage = isTraining ? "training" : "baseline",
+                    stage = stageTag,
                     type = "fpa",
                     packetId = result.PacketId,
                     fpaL = result.Fpa_L,
@@ -1242,7 +1418,7 @@ namespace IMUMoCap
                     quality = result.Quality,
                 });
 
-                LogArEvent($"type=fpa  stage={(isTraining ? "training" : "baseline")}  packetId={result.PacketId}  " +
+                LogArEvent($"type=fpa  stage={stageTag}  packetId={result.PacketId}  " +
                     $"L={result.Fpa_L:F1}°({(result.OnTarget_L ? "OK" : "ERR")})  R={result.Fpa_R:F1}°({(result.OnTarget_R ? "OK" : "ERR")})  quality={result.Quality}");
             }
         }

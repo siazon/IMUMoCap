@@ -31,6 +31,9 @@ namespace IMUMoCap.Pipeline
         // ── BaselineProfile（Training 阶段设置，Baseline 阶段为 null）────────
         public BaselineProfile? Baseline { get; set; }
 
+        // ── 容差带系数 α：w = max(w_min, α·SD)，随训练块递减实现渐进式难度 ──────
+        public float ToleranceAlpha { get; set; } = 1.5f;
+
         // ── 步级结果事件：每个真正落地(stance)完成的周期，无论有没有输出 FpaResult ──
         // emitted=true 时 reason 为 null；emitted=false 时 reason 说明被门控排除的原因
         // （用于统计 Turning 等排除比例，供 QoE 分析用，不影响 FpaResult 本身的输出逻辑）
@@ -114,12 +117,12 @@ namespace IMUMoCap.Pipeline
                 if (!float.IsNaN(fpaLDeg))
                 {
                     errorL = fpaLDeg - Baseline.Target_L;
-                    onTargetL = MathF.Abs(errorL) <= Baseline.Tolerance_L;
+                    onTargetL = MathF.Abs(errorL) <= Baseline.ToleranceL(ToleranceAlpha);
                 }
                 if (!float.IsNaN(fpaRDeg))
                 {
                     errorR = fpaRDeg - Baseline.Target_R;
-                    onTargetR = MathF.Abs(errorR) <= Baseline.Tolerance_R;
+                    onTargetR = MathF.Abs(errorR) <= Baseline.ToleranceR(ToleranceAlpha);
                 }
             }
 
@@ -132,8 +135,8 @@ namespace IMUMoCap.Pipeline
                 OnTarget_R = onTargetR,
                 Error_L = errorL,
                 Error_R = errorR,
-                Tolerance_L = Baseline?.Tolerance_L ?? float.NaN,
-                Tolerance_R = Baseline?.Tolerance_R ?? float.NaN,
+                Tolerance_L = Baseline?.ToleranceL(ToleranceAlpha) ?? float.NaN,
+                Tolerance_R = Baseline?.ToleranceR(ToleranceAlpha) ?? float.NaN,
                 ContextConfidence = context.Confidence,
                 PdStability = pd.Stability,
                 Quality = quality,

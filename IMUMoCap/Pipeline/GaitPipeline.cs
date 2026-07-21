@@ -44,6 +44,7 @@ namespace IMUMoCap.Pipeline
         public event Action<string>?           OnLog;
         public event Action<DiagnosticsRow>?   OnDiagnosticsFrame;
         public event Action<string, bool, StepExclusionReason?>? OnStepOutcome;
+        public event Action?                   OnTrainingBlockComplete; // both feet reached TrainingBlockTargetSteps
 
         public GaitPipeline()
         {
@@ -55,6 +56,35 @@ namespace IMUMoCap.Pipeline
         public BaselineProfile?    BaselineProfile    { get; private set; }
         public bool InBaseline  { get; private set; }
         public bool InTraining  { get; private set; }
+
+        /// <summary>
+        /// 只有 Start Condition/Washout 打开录制后才为 true。为 false 时 TriggerCalibration() 不生效，
+        /// 防止操作员在正式开始前误触发校准+baseline，导致这段数据没被录制却已耗尽（数据漏存）。
+        /// </summary>
+        public bool CalibrationArmed { get; set; } = false;
+
+        // 协议 §2.4 渐进式难度：容差带系数 α 随训练块递减（Block1=1.5, Block2=1.0, Block3=0.5）
+        private static readonly float[] TrainingBlockAlphas = { 1.5f, 1.0f, 0.5f };
+        public float CurrentToleranceAlpha => _fpa.ToleranceAlpha;
+
+        // 协议 §2.6：每个 training block 在两脚均达到 150 个有效步时自动结束（另有 5 分钟上限，由 MainWindow 的计时器负责）
+        public const int TrainingBlockTargetSteps = 150;
+        private int  _trainingStepsL, _trainingStepsR;
+        private bool _trainingBlockDone;
+
+        public int TrainingStepsL => _trainingStepsL;
+        public int TrainingStepsR => _trainingStepsR;
+
+        /// <summary>操作员切换到 Training1/2/3 时调用，收紧本训练块的容差带并重置步数计数。</summary>
+        public void SetTrainingBlock(int blockNumber1Based)
+        {
+            int idx = Math.Clamp(blockNumber1Based - 1, 0, TrainingBlockAlphas.Length - 1);
+            _fpa.ToleranceAlpha = TrainingBlockAlphas[idx];
+            _trainingStepsL = _trainingStepsR = 0;
+            _trainingBlockDone = false;
+            OnLog?.Invoke($"Training block {blockNumber1Based}: tolerance α={_fpa.ToleranceAlpha:F1} " +
+                $"(w=max({IMUMoCap.Pipeline.Models.BaselineProfile.ToleranceWMinDeg:F0}°, α·SD)), target {TrainingBlockTargetSteps} valid steps/foot");
+        }
 
         // ── 主入口 ────────────────────────────────────────────────────────────
 
@@ -69,7 +99,6 @@ namespace IMUMoCap.Pipeline
         private void SyncParams()
         {
             // CalibrationProcessor
-            _calibration.StompAccThreshold_ms2 = Params.StompThreshold_ms2;
             _calibration.StaticGyroThreshold   = Params.StaticGyroThreshold;
 
             // GaitEventDetector
@@ -89,23 +118,23 @@ namespace IMUMoCap.Pipeline
         // ── 录制器（可选，仅供录制/测试用）─────────────────────────────────────
         public BundleRecorder? Recorder { get; set; }
 
+        /// <summary>
+        /// 操作员点击触发校准（替代原来的跺脚检测）。仅在 CalibrationArmed 且当前
+        /// 处于 WaitingForStart 时生效，否则返回 false 且不做任何事。
+        /// </summary>
+        public bool TriggerCalibration()
+        {
+            if (!CalibrationArmed) return false;
+            if (_calibration.State != CalibrationState.WaitingForStart) return false;
+            _calibration.TriggerStart();
+            OnCalibrationStateChanged?.Invoke(_calibration.State);
+            return true;
+        }
+
         internal void Process(ImuFrameBundle bundle)
         {
             Recorder?.Record(bundle);
             SyncParams();
-
-            // Step 1 (pre-gate): Stomp detection for calibration trigger.
-            // Stomp frames have StatusWord with all axes clipping + OrientationValid=0,
-            // which DataQualityGate rejects. Stomp detection must run on the raw bundle.
-            if (_calibration.State == CalibrationState.WaitingForStart)
-            {
-                bool stompDetected = _calibration.ProcessPreGate(bundle);
-                if (stompDetected)
-                {
-                    OnCalibrationStateChanged?.Invoke(_calibration.State);
-                    OnLog?.Invoke("Stomp detected — collecting static pose...");
-                }
-            }
 
             // Step 2: DataQualityGate
             var validFrame = _gate.Evaluate(bundle);
@@ -196,7 +225,23 @@ namespace IMUMoCap.Pipeline
 
             // Training 阶段：直接输出供 AR 反馈
             if (InTraining)
+            {
                 OnFpaResult?.Invoke(fpaResult, true);
+
+                // 当前 training block 的两脚有效步数统计，达标（150/foot）后自动通知 MainWindow 结束该 block
+                if (!_trainingBlockDone)
+                {
+                    if (!float.IsNaN(fpaResult.Fpa_L)) _trainingStepsL++;
+                    if (!float.IsNaN(fpaResult.Fpa_R)) _trainingStepsR++;
+
+                    if (_trainingStepsL >= TrainingBlockTargetSteps && _trainingStepsR >= TrainingBlockTargetSteps)
+                    {
+                        _trainingBlockDone = true;
+                        OnLog?.Invoke($"Training block target reached (L={_trainingStepsL} R={_trainingStepsR} valid steps).");
+                        OnTrainingBlockComplete?.Invoke();
+                    }
+                }
+            }
         }
 
         /// <summary>返回诊断数据快照（副本），用于 CSV 导出。不清空缓冲区。</summary>
@@ -240,6 +285,7 @@ namespace IMUMoCap.Pipeline
             if (BaselineProfile == null)
                 throw new InvalidOperationException("Must finalize baseline before starting training.");
             _fpa.Baseline = BaselineProfile;
+            _fpa.ToleranceAlpha = TrainingBlockAlphas[0]; // reset to Block 1 default each time training (re)starts
             _fpa.Reset();
             InTraining = true;
             InBaseline = false;
