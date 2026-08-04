@@ -167,6 +167,40 @@ namespace IMUMoCap
 
                 if (_recorder.IsRecording && !_content.IsPaused)
                     _recorder.WriteRow(row, _currentStage, _stageAttempt.GetValueOrDefault(_currentStage, 1));
+
+                // Debug switch: broadcast the *raw* foot heading (relative to the calibration
+                // reference, no gait-event/gate filtering) on every IMU frame, so the operator can
+                // test the AR client's real-time angle display even while standing still. This is
+                // NOT the true FPA (no progression-direction/gait semantics) — just current foot yaw.
+                // Throttled to 10Hz (frames in between are dropped, not queued) — the source is
+                // 100Hz but WebSocket.SendAsync can't overlap itself, so sending every frame risks
+                // a concurrent-send exception (and client disconnect) if the network can't keep up.
+                long nowTicks = Environment.TickCount64;
+                if (_wsServer != null && ChkLiveAngleToAr.IsChecked == true
+                    && nowTicks - _lastLiveAngleSentTicks >= LiveAngleIntervalMs)
+                {
+                    _lastLiveAngleSentTicks = nowTicks;
+                    // Foot yaw relative to the *current* pelvis heading (not a fixed calibration foot
+                    // ref) — pelvis rotates with a turn, so this stays correct instead of flipping sign
+                    // when the participant turns around. The calibration-time foot/pelvis offset is
+                    // subtracted out (RawFootYawDeg) so it still reads ~0 at calibration.
+                    var calib = _pipeline.CalibrationProfile;
+                    float rawYawL = calib != null
+                        ? RawFootYawDeg(row.LeftQuat, row.PelvisQuat, calib.LeftFootRef, calib.PelvisRef) : float.NaN;
+                    float rawYawR = calib != null
+                        ? RawFootYawDeg(row.RightQuat, row.PelvisQuat, calib.RightFootRef, calib.PelvisRef) : float.NaN;
+
+                    _ = _wsServer.BroadcastJsonAsync(new
+                    {
+                        type = "live",
+                        packetId = row.PacketId,
+                        angleL = rawYawL,
+                        angleR = rawYawR,
+                        confidence = row.MotionConfidence,
+                        stability = row.PdStability,
+                        ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    });
+                }
             });
             _pipeline.OnStepOutcome += (foot, emitted, reason) => Dispatcher.BeginInvoke(() =>
             {
@@ -540,6 +574,10 @@ namespace IMUMoCap
 
         private bool _loggedLiveDuringReplay = false;
 
+        // ChkLiveAngleToAr throttle: source frames are 100Hz, but we only forward at 10Hz.
+        private const long LiveAngleIntervalMs = 100;
+        private long _lastLiveAngleSentTicks = 0;
+
         void OnXsensData(ImuRole sensor, uint deviceId, XsDataPacket packet)
         {
             if (_isReplaying)
@@ -653,6 +691,22 @@ namespace IMUMoCap
             "Training3" => 3,
             _ => 0,
         };
+
+        // Foot yaw relative to pelvis yaw, in degrees, with the calibration-time foot/pelvis mounting
+        // offset removed (reads ~0 at calibration; pelvis is the moving reference so it stays correct
+        // through a turn). No gait-event gating — used only by the ChkLiveAngleToAr debug switch;
+        // NOT the true FPA (see FpaEngine).
+        private static float RawFootYawDeg(System.Numerics.Quaternion footNow, System.Numerics.Quaternion pelvisNow,
+            System.Numerics.Quaternion footRef, System.Numerics.Quaternion pelvisRef)
+        {
+            float yaw = (ExtractYaw(footNow) - ExtractYaw(pelvisNow)) - (ExtractYaw(footRef) - ExtractYaw(pelvisRef));
+            while (yaw > MathF.PI) yaw -= 2f * MathF.PI;
+            while (yaw < -MathF.PI) yaw += 2f * MathF.PI;
+            return yaw * (180f / MathF.PI);
+        }
+
+        private static float ExtractYaw(System.Numerics.Quaternion q)
+            => MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y), 1f - 2f * (q.Y * q.Y + q.Z * q.Z));
 
         // Tells the AR client the operator redid the current stage, so it resets locally-tracked counters.
         private void BroadcastRedo(string stage, int attempt, string reason)

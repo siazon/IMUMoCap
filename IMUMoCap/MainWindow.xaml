@@ -322,6 +322,10 @@
                                     Background="Transparent" BorderThickness="0"
                                     Foreground="{StaticResource Brand.Navy}" Opacity="0.5"
                                     FontSize="13" ToolTip="Clear log">🧹</Button>
+                            <CheckBox x:Name="ChkLiveAngleToAr" Content="Live Angle → AR" FontSize="11"
+                                      Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
+                                      Margin="16,0,0,0" VerticalAlignment="Center"
+                                      ToolTip="调试用：勾选后每帧都把实时FPA角度广播给AR端，不受training/rest阶段限制"/>
                         </StackPanel>
                         <TextBox
                             x:Name="ArEventLogBox"
