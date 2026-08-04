@@ -81,8 +81,24 @@ namespace IMUMoCap
         private readonly Methods.ExperimentRecorder _recorder = new();
         private string _currentStage = "";
         private bool _isRetention = false; // true once _currentStage == "Retention": AR feedback removed
+        private int _retentionStepsL, _retentionStepsR; // valid steps collected during Retention (auto-end at 100/foot)
+        private bool _inRest = false; // true during the 120s rest between Training2 and Training3 (_currentStage stays "Training2")
+
+        // Last broadcast AR state, resent as a snapshot when a client (re)connects.
+        private string _lastState = "waiting";
+        private string _lastCondition = "";
+        private int _lastBlock = 0;
+        private int _lastRestDurationSec = 0;
+        private string _lastReason = "";
         private readonly Dictionary<string, int> _stageAttempt = new();
         private static readonly TimeSpan TrainingBlockMaxDuration = TimeSpan.FromMinutes(5);
+        // Baseline has no step-count fallback of its own (BaselineProcessor's 2x-steps rule can still
+        // stall indefinitely if one foot never gets enough valid steps, e.g. a short corridor with heavy
+        // turning exclusion) — force-finalize after this long so the flow never hangs. Matches the
+        // timeout BaselineProcessor.cs's doc comment already assumed but that was never wired up.
+        private static readonly TimeSpan BaselineMaxDuration = TimeSpan.FromMinutes(3);
+        private const int RetentionTargetSteps = 100; // Retention ends at 100 valid steps/foot or the 5-min cap (Research Overview §2.6)
+        private const int RestDurationSec = 120; // Rest between Training2 and Training3 (Research Overview §2.5)
         private readonly System.Diagnostics.Stopwatch _stageStopwatch = new();
 
         public MainWindow()
@@ -94,7 +110,17 @@ namespace IMUMoCap
             _wsServer.Start(new[] { "http://+:8765/ws/" });
             log("WebSocket server started: ws://192.168.137.1:8765/ws/");
             _wsServer.OnTextMessage += (clientId, text) => HandleWsMessage(clientId, text);
-            _wsServer.OnClientConnected += (id, remote) => { };
+            _wsServer.OnClientConnected += (id, remote) => Dispatcher.BeginInvoke(() =>
+            {
+                log($"WS client connected: {remote}");
+                _content.ConnectedWsClients.Add(remote ?? "unknown");
+                SendStateSnapshot(id); // (re)connect: restore the current state on the client
+            });
+            _wsServer.OnClientDisconnected += (id, remote) => Dispatcher.BeginInvoke(() =>
+            {
+                log($"WS client disconnected: {remote}");
+                _content.ConnectedWsClients.Remove(remote ?? "unknown");
+            });
 
             var imuList = new List<ImuViewModel>
             {
@@ -124,7 +150,11 @@ namespace IMUMoCap
                 if (!_isReplaying) Dispatcher.BeginInvoke(() => OnCalibrationStateChanged(s));
             };
             _pipeline.OnBaselineProgress += (l, r) => Dispatcher.BeginInvoke(() =>
-                log($"Baseline: L={l} steps, R={r} steps"));
+            {
+                log($"Baseline: L={l} steps, R={r} steps");
+                if (!_isReplaying)
+                    BroadcastStepProgress("baseline", l, r, _pipeline.Params.MinBaselineSteps);
+            });
             _pipeline.OnBaselineCompleted += profile =>
             {
                 if (!_isReplaying) Dispatcher.BeginInvoke(() => HandleBaselineCompleted(profile));
@@ -150,8 +180,8 @@ namespace IMUMoCap
             });
             _pipeline.OnTrainingBlockComplete += () => Dispatcher.BeginInvoke(() =>
             {
-                if (!_isReplaying && IsTrainingBlockStage(_currentStage))
-                    AdvanceStage();
+                if (!_isReplaying && !_inRest && IsTrainingBlockStage(_currentStage))
+                    EndTrainingBlock();
             });
 
             _timelineTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
@@ -161,8 +191,12 @@ namespace IMUMoCap
                 _content.StageElapsedDisplay = _stageStopwatch.Elapsed.ToString(@"mm\:ss");
 
                 // Training block max-duration fallback: ends the block at 5 min even if 150 steps/foot wasn't reached.
-                if (!_isReplaying && IsTrainingBlockStage(_currentStage) && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
-                    AdvanceStage();
+                if (!_isReplaying && !_inRest && IsTrainingBlockStage(_currentStage) && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
+                    EndTrainingBlock();
+
+                // Retention max-duration fallback: ends the whole flow at 5 min even if 100 steps/foot wasn't reached.
+                if (!_isReplaying && _isRetention && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
+                    EndFlow("retention 5-min timeout");
             };
             _timelineTimer.Start();
 
@@ -302,7 +336,7 @@ namespace IMUMoCap
                 switch (cmd)
                 {
                     case "ping":
-                        //_ = _wsServer?.BroadcastJsonAsync(new { type = "pong", t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
+                        _ = _wsServer?.SendJsonAsync(clientId, new { type = "pong", ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
                         break;
 
                     case "Start":
@@ -318,9 +352,16 @@ namespace IMUMoCap
                             if (_pipeline.TriggerCalibration())
                                 log("WS: participant signaled ready — calibration triggered.");
                             else
-                                log("WS: participant signaled ready, but calibration isn't armed yet (Start Condition/Washout not open).");
+                                log("WS: participant signaled ready, but calibration isn't armed yet (Start Condition not open).");
                         });
                         break;
+
+                    case "continueTraining":
+                    {
+                        int fromBlock = root.TryGetProperty("fromBlock", out var fb) && fb.TryGetInt32(out var v) ? v : -1;
+                        Dispatcher.Invoke(() => HandleContinueTraining(fromBlock));
+                        break;
+                    }
 
                     case "stop":
                     case "Stop":
@@ -511,6 +552,10 @@ namespace IMUMoCap
                 return;
             }
 
+            // Operator emergency pause freezes the whole pipeline at the data source: step counters,
+            // fpa broadcasts, and CSV rows must all stop advancing while paused.
+            if (_content.IsPaused) return;
+
             // One callback packet becomes a single-IMU sample, then a synchronized 3-IMU frame.
             var (sample, _) = _imuFrameCollector.Process(sensor, deviceId, packet);
             _imuSamples.Add(sample);
@@ -521,11 +566,122 @@ namespace IMUMoCap
 
         private DispatcherTimer? _baselineTimer;
 
-        private void BroadcastArState(string state)
+        // Force-finalizes baseline (insufficient steps → HandleBaselineCompleted reports the error) if
+        // BaselineMaxDuration elapses before the step thresholds are met.
+        private void StartBaselineTimeoutTimer()
+        {
+            _baselineTimer?.Stop();
+            _baselineTimer = new DispatcherTimer { Interval = BaselineMaxDuration };
+            _baselineTimer.Tick += (_, _) =>
+            {
+                _baselineTimer?.Stop();
+                log($"Baseline timed out after {BaselineMaxDuration.TotalMinutes:F0} min — force-finalizing.");
+                _pipeline.FinalizeBaseline();
+            };
+            _baselineTimer.Start();
+        }
+
+        private void BroadcastArState(string state, string reason = "", int restDurationSec = 0, int? blockOverride = null)
         {
             if (_wsServer == null) return;
-            _ = _wsServer.BroadcastJsonAsync(new { type = "state", state });
-            LogArEvent($"type=state  state={state}");
+            string condition = ConditionForAr();
+            int block = blockOverride ?? BlockForStage(_currentStage);
+            var (targetL, directionL, targetR, directionR) = TargetForAr();
+            _lastState = state;
+            _lastCondition = condition;
+            _lastBlock = block;
+            _lastRestDurationSec = restDurationSec;
+            _lastReason = reason;
+            _ = _wsServer.BroadcastJsonAsync(new
+            {
+                type = "state",
+                state,
+                condition,
+                block,
+                restDurationSec,
+                reason,
+                targetL,
+                directionL,
+                targetR,
+                directionR,
+                ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+            LogArEvent($"type=state  state={state}  condition={condition}  block={block}");
+        }
+
+        // Sends the current state to a single (re)connecting client so it restores its display.
+        private void SendStateSnapshot(Guid id)
+        {
+            if (_wsServer == null) return;
+            var (targetL, directionL, targetR, directionR) = TargetForAr();
+            _ = _wsServer.SendJsonAsync(id, new
+            {
+                type = "state",
+                state = _lastState,
+                condition = _lastCondition,
+                block = _lastBlock,
+                restDurationSec = _lastRestDurationSec,
+                reason = _lastReason,
+                targetL,
+                directionL,
+                targetR,
+                directionR,
+                ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+        }
+
+        // EF stepping-stone rotation needs the participant's fixed personalised target angle/direction
+        // (Research Overview §2.3/2.4); it's constant for the whole condition once baseline completes,
+        // so it's read live from BaselineProfile rather than latched like the rest-only fields above.
+        // Sentinel defaults (0f/"") before baseline completes, per the no-nullable-fields design constraint.
+        private (float targetL, string directionL, float targetR, string directionR) TargetForAr()
+        {
+            var bp = _pipeline.BaselineProfile;
+            if (bp == null) return (0f, "", 0f, "");
+            return (bp.Target_L, DirectionForAr(bp.Direction_L), bp.Target_R, DirectionForAr(bp.Direction_R));
+        }
+
+        private static string DirectionForAr(TrainingDirection d) => d == TrainingDirection.ToeIn ? "toe-in" : "toe-out";
+
+        // WS `condition` field: "" before Start Condition is clicked.
+        private string ConditionForAr() => _recorder.Condition is "EF" or "IF" ? _recorder.Condition : "";
+
+        private static int BlockForStage(string stage) => stage switch
+        {
+            "Training1" => 1,
+            "Training2" => 2,
+            "Training3" => 3,
+            _ => 0,
+        };
+
+        // Tells the AR client the operator redid the current stage, so it resets locally-tracked counters.
+        private void BroadcastRedo(string stage, int attempt, string reason)
+        {
+            if (_wsServer == null) return;
+            _ = _wsServer.BroadcastJsonAsync(new
+            {
+                type = "redo",
+                stage,
+                attempt,
+                reason,
+                ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
+        }
+
+        // Drives the AR text-group step-count progress bar during baseline and retention.
+        private void BroadcastStepProgress(string stage, int stepsL, int stepsR, int required)
+        {
+            if (_wsServer == null) return;
+            _ = _wsServer.BroadcastJsonAsync(new
+            {
+                type = "stepProgress",
+                stage,
+                stepsL,
+                stepsR,
+                requiredL = required,
+                requiredR = required,
+                ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            });
         }
 
         private void OnCalibrationStateChanged(CalibrationState state)
@@ -550,12 +706,13 @@ namespace IMUMoCap
                     BroadcastArState("baseline");
                     _sessionState = TestState.Baseline;
                     _content.StatusLabel = "Baseline: Walk until both feet reach 20 steps.";
+                    StartBaselineTimeoutTimer();
                     break;
 
                 case CalibrationState.Failed:
                     _content.StatusLabel = "Calibration failed. Please restart the application.";
                     _sessionState = TestState.Launching;
-                    BroadcastArState("error");
+                    BroadcastArState("error", "Calibration failed");
                     break;
             }
         }
@@ -569,7 +726,7 @@ namespace IMUMoCap
                     ? "insufficient valid steps"
                     : $"L={profile.ValidSteps_L} R={profile.ValidSteps_R} steps (need ≥{profile.MinRequiredSteps} each)";
                 _content.StatusLabel = $"Baseline insufficient ({detail}). Please restart.";
-                BroadcastArState("error");
+                BroadcastArState("error", $"Baseline insufficient ({detail})");
                 return;
             }
             _sessionState = TestState.Step;
@@ -579,11 +736,11 @@ namespace IMUMoCap
                 $"R={profile.Target_R:F1}° ({profile.Direction_R})";
 
             _recorder.SaveBaseline(profile);
-            BroadcastArState("training");
 
             // Advance the experiment stage bookkeeping (Baseline → Training1) so tolerance α, CSV stage
-            // tagging, and the 150-step/5-min auto-termination all pick up correctly. Only meaningful
-            // when a real condition/washout recording is open (Start Condition was clicked first).
+            // tagging, and the 150-step/5-min auto-termination all pick up correctly. AdvanceStage also
+            // broadcasts state=training with block=1. Only meaningful when a real condition recording
+            // is open (Start Condition was clicked first).
             if (_recorder.IsRecording && _currentStage == "Baseline")
             {
                 AdvanceStage();
@@ -591,6 +748,7 @@ namespace IMUMoCap
             else
             {
                 // No recording open (e.g. calibration-only test run) — still show target/tolerance locally.
+                BroadcastArState("training", blockOverride: 1);
                 _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_L})";
                 _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_R})";
             }
@@ -682,9 +840,9 @@ namespace IMUMoCap
             }
             else
             {
-                _content.StatusLabel = "Reset. Click Start Condition/Washout first, then Start Calibration.";
+                _content.StatusLabel = "Reset. Click Start Condition first, then Start Calibration.";
                 BroadcastArState("waiting");
-                log("Calibration reset — not started (click Start Condition/Washout first).");
+                log("Calibration reset — not started (click Start Condition first).");
             }
         }
 
@@ -760,44 +918,9 @@ namespace IMUMoCap
             log($"Started condition {condition} (order {orderGroup}) → {_recorder.CurrentSessionFilePath}");
         }
 
-        private void BtnStartWashout_Click(object sender, RoutedEventArgs e)
-        {
-            string participantId = txtParticipantId.Text.Trim();
-            if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
-            if (_content.DeviceState != States.MEASURING) { log("Start Washout blocked: IMUs are not measuring. Click Measure first."); return; }
-
-            if (Methods.ExperimentRecorder.SessionFileExists(participantId, "Washout"))
-            {
-                var overwrite = MessageBox.Show(
-                    $"P{participantId}_Washout_Session.csv already exists and will be overwritten. Continue?",
-                    "Participant/Washout already exists", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-                if (overwrite != MessageBoxResult.Yes)
-                {
-                    log($"Start Washout cancelled — Washout data for P{participantId} already exists.");
-                    return;
-                }
-            }
-
-            _recorder.StartCondition(participantId, "Washout", null);
-            _pipeline.CalibrationArmed = true;
-            _stageAttempt.Clear();
-            _currentStage = "Washout";
-            _isRetention = false;
-            _stageStopwatch.Restart();
-
-            _content.CurrentStageLabel = _currentStage;
-            _content.CurrentSessionFileName = _recorder.CurrentSessionFilePath ?? "";
-            _content.CurrentMetaFileName = "";
-            _content.CurrentQoeFileName = "";
-            _content.TurningExclusionDisplay = "";
-            BroadcastArState("armed"); // tells the AR client it can show its "ready to calibrate" button
-            log($"Started washout → {_recorder.CurrentSessionFilePath}");
-        }
-
         private void BtnNextStage_Click(object sender, RoutedEventArgs e)
         {
-            if (!_recorder.IsRecording) { log("No active condition/washout recording."); return; }
-            if (_recorder.Condition == "Washout") { log("Washout has no sub-stages."); return; }
+            if (!_recorder.IsRecording) { log("No active condition recording."); return; }
 
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             if (idx < 0 || idx >= ConditionStages.Length - 1) { log("Already at final stage (Retention)."); return; }
@@ -808,6 +931,62 @@ namespace IMUMoCap
         private static bool IsTrainingBlockStage(string stage) =>
             stage is "Training1" or "Training2" or "Training3";
 
+        // A training block finished (150 steps/foot or 5-min). Training2 goes to the 120s rest first;
+        // every other block advances straight to the next stage.
+        // Guards against a duplicate block-completion event for the same block: the 150-steps/foot
+        // pipeline event is queued via Dispatcher.BeginInvoke (background thread), while the 5-min
+        // timeout fires synchronously on the UI thread's DispatcherTimer.Tick — if both conditions are
+        // met near-simultaneously, the queued event can still run after the timer has already advanced
+        // the stage, which would otherwise end the *next* block early. Reset whenever a new training
+        // block is entered (AdvanceStage, in the trainingBlock > 0 branch).
+        private bool _trainingBlockEnding = false;
+
+        private void EndTrainingBlock()
+        {
+            if (_trainingBlockEnding) return; // stale duplicate completion event for this block — ignore
+            _trainingBlockEnding = true;
+
+            if (_currentStage == "Training2")
+                EnterRest();
+            else
+                AdvanceStage();
+        }
+
+        // Enters the 120s rest between Training2 and Training3. Stays in the Training2 recording stage
+        // (rest is not a data stage). Advance to Training3 happens on AR `continueTraining` or the
+        // operator Next Stage button. _stageStopwatch is restarted so the server can enforce the 120s min.
+        private void EnterRest()
+        {
+            _inRest = true;
+            _stageStopwatch.Restart();
+            BroadcastArState("rest", restDurationSec: RestDurationSec, blockOverride: 2);
+            log($"Rest started ({RestDurationSec}s) after Training2 — waiting for participant Continue.");
+        }
+
+        // AR `continueTraining` after the rest countdown. Advances to Training3 only if we are actually
+        // in rest, the just-finished block matches (2), and the 120s minimum has really elapsed — the PC
+        // never trusts the client's own timer for protocol-timing integrity.
+        private void HandleContinueTraining(int fromBlock)
+        {
+            if (!_inRest)
+            {
+                log($"WS: continueTraining ignored — not in rest (fromBlock={fromBlock}).");
+                return;
+            }
+            if (fromBlock != 2)
+            {
+                log($"WS: continueTraining ignored — fromBlock={fromBlock} != 2 (stale/duplicate).");
+                return;
+            }
+            if (_stageStopwatch.Elapsed < TimeSpan.FromSeconds(RestDurationSec))
+            {
+                log($"WS: continueTraining rejected — only {_stageStopwatch.Elapsed.TotalSeconds:F0}s of {RestDurationSec}s rest elapsed.");
+                return;
+            }
+            log("WS: continueTraining accepted → Training3.");
+            AdvanceStage(); // Training2 → Training3 (clears _inRest, broadcasts state=training block=3)
+        }
+
         /// <summary>
         /// Moves _currentStage to the next entry in ConditionStages. Called both manually (Next Stage button)
         /// and automatically — training block auto-completion (150 valid steps/foot) and the 5-minute block
@@ -815,6 +994,7 @@ namespace IMUMoCap
         /// </summary>
         private void AdvanceStage()
         {
+            _inRest = false; // any stage advance ends a pending rest
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             if (idx < 0 || idx >= ConditionStages.Length - 1) return;
 
@@ -834,7 +1014,9 @@ namespace IMUMoCap
             };
             if (trainingBlock > 0)
             {
+                _trainingBlockEnding = false; // fresh block instance — re-arm the completion guard
                 _pipeline.SetTrainingBlock(trainingBlock);
+                BroadcastArState("training"); // block field reflects the just-entered training block (spec #8)
                 if (_pipeline.BaselineProfile is { } bp)
                 {
                     _content.LeftFpaTarget = $"Target {bp.Target_L:F1}° ±{bp.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({bp.Direction_L})";
@@ -845,6 +1027,7 @@ namespace IMUMoCap
             {
                 // Immediate Retention Test: AR feedback removed, FPA data collection continues (Research Overview §2.6).
                 _isRetention = true;
+                _retentionStepsL = _retentionStepsR = 0;
                 BroadcastArState("retention");
             }
 
@@ -853,12 +1036,36 @@ namespace IMUMoCap
 
         private void BtnEndCondition_Click(object sender, RoutedEventArgs e)
         {
+            EndFlow("operator ended");
+        }
+
+        /// <summary>
+        /// Ends the whole condition flow and saves the session file. Called both by the operator End
+        /// button and automatically when Retention hits 100 valid steps/foot or the 5-min cap.
+        /// Idempotent (no-op once the recording is closed).
+        /// </summary>
+        private void EndFlow(string reason)
+        {
+            if (!_recorder.IsRecording) return;
+            _isRetention = false;
+            _inRest = false;
+            _baselineTimer?.Stop();
             _recorder.FlushMeta();
             _recorder.Close();
             _pipeline.CalibrationArmed = false;
             _stageStopwatch.Stop();
-            log($"Recording closed: {_content.CurrentSessionFileName}");
+            BroadcastArState("ended");
+            log($"Recording closed ({reason}): {_content.CurrentSessionFileName}");
         }
+
+        // Maps the current stage to the AR state string, used to restore the AR display after a resume.
+        private static string ArStateForStage(string stage) => stage switch
+        {
+            "Baseline" => "baseline",
+            "Training1" or "Training2" or "Training3" => "training",
+            "Retention" => "retention",
+            _ => "armed",
+        };
 
         private void BtnPauseResume_Click(object sender, RoutedEventArgs e)
         {
@@ -870,6 +1077,7 @@ namespace IMUMoCap
                 _stageStopwatch.Stop();
                 _recorder.BeginPause(_currentStage);
                 BtnPauseResume.Content = "Resume";
+                BroadcastArState("paused"); // operator emergency pause → AR shows its paused display
                 log($"Paused at {_currentStage}");
             }
             else
@@ -885,6 +1093,7 @@ namespace IMUMoCap
                     _recorder.EndPause("Redo", dlg.Reason);
                     _recorder.MarkRedo(_currentStage, nextAttempt);
                     _stageStopwatch.Restart();
+                    BroadcastRedo(_currentStage, nextAttempt, dlg.Reason);
                     log($"Resumed with Redo — {_currentStage} attempt #{nextAttempt}: {dlg.Reason}");
                 }
                 else
@@ -893,6 +1102,10 @@ namespace IMUMoCap
                     _stageStopwatch.Start();
                     log($"Resumed, continuing {_currentStage}: {dlg.Reason}");
                 }
+
+                // Tell AR the participant is resuming: it shows a "keep walking" text prompt for the
+                // current stage and only switches back to the graphic group when the next fpa arrives.
+                BroadcastArState(ArStateForStage(_currentStage));
 
                 _content.IsPaused = false;
                 BtnPauseResume.Content = "Pause";
@@ -903,7 +1116,7 @@ namespace IMUMoCap
         {
             if (_recorder.IsRecording)
             {
-                log("Load IMU Samples blocked: a condition/washout is currently recording — " +
+                log("Load IMU Samples blocked: a condition is currently recording — " +
                     "replaying now would write mislabeled data into that session's CSV. End or pause it first.");
                 return;
             }
@@ -952,6 +1165,13 @@ namespace IMUMoCap
             BtnMeasure.IsEnabled = false;
             _pipeline.Reset();
             _sessionState = TestState.Launching;
+
+            // Replay drives the pipeline directly (no operator click), so arm + trigger
+            // calibration ourselves — otherwise it stays in WaitingForStart and Process()
+            // never gets past the calibration gate (no gait/FPA/diagnostics/timeline output).
+            bool prevCalibrationArmed = _pipeline.CalibrationArmed;
+            _pipeline.CalibrationArmed = true;
+            _pipeline.TriggerCalibration();
 
             void onCalChanged(CalibrationState s)
             {
@@ -1005,6 +1225,7 @@ namespace IMUMoCap
             {
                 _pipeline.OnCalibrationStateChanged -= onCalChanged;
                 _pipeline.OnBaselineCompleted -= onBaselineDone;
+                _pipeline.CalibrationArmed = prevCalibrationArmed;
                 _isReplaying = false;
                 _replayPaused = false;
                 ReplayControls.Visibility = Visibility.Collapsed;
@@ -1396,16 +1617,35 @@ namespace IMUMoCap
                 $"L: {result.Fpa_L:F1}° {(result.OnTarget_L ? "✓" : $"err={result.Error_L:+0.0;-0.0}°")}  " +
                 $"R: {result.Fpa_R:F1}° {(result.OnTarget_R ? "✓" : $"err={result.Error_R:+0.0;-0.0}°")}";
 
-            if (_wsServer != null)
+            // Immediate Retention Test: count valid steps and end the whole flow at 100/foot (the 5-min cap
+            // is handled by the timeline timer). AR feedback is removed, so no fpa is broadcast below.
+            if (_isRetention && _recorder.IsRecording)
             {
-                // "retention": Immediate Retention Test — FPA data collection continues but the AR client
-                // must not render target feedback (Research Overview §2.6).
-                string stageTag = _isRetention ? "retention" : (isTraining ? "training" : "baseline");
+                if (!float.IsNaN(result.Fpa_L)) _retentionStepsL++;
+                if (!float.IsNaN(result.Fpa_R)) _retentionStepsR++;
+                BroadcastStepProgress("retention", _retentionStepsL, _retentionStepsR, RetentionTargetSteps);
+                if (_retentionStepsL >= RetentionTargetSteps && _retentionStepsR >= RetentionTargetSteps)
+                {
+                    EndFlow($"retention target reached ({_retentionStepsL}/{_retentionStepsR} valid steps)");
+                    return;
+                }
+            }
+
+            // fpa feedback is sent only during a training block — not during baseline or retention
+            // (both show the text group + progress bar; the AR client renders no target graphics).
+            if (_wsServer != null && isTraining && !_isRetention && !_inRest)
+            {
+                string stageTag = "training";
+
+                var latencyMs = _pipeline.TakeFrameLatencyMs(result.PacketId); // TEMP：延迟测量，用完删除
+                if (latencyMs.HasValue)
+                    log($"[延迟-temp] 帧→AR广播: {latencyMs.Value} ms (packetId={result.PacketId})");
 
                 _ = _wsServer.BroadcastJsonAsync(new
                 {
                     stage = stageTag,
                     type = "fpa",
+                    block = BlockForStage(_currentStage),
                     packetId = result.PacketId,
                     fpaL = result.Fpa_L,
                     fpaR = result.Fpa_R,
@@ -1416,6 +1656,7 @@ namespace IMUMoCap
                     confidence = result.ContextConfidence,
                     stability = result.PdStability,
                     quality = result.Quality,
+                    ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 });
 
                 LogArEvent($"type=fpa  stage={stageTag}  packetId={result.PacketId}  " +

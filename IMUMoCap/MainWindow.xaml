@@ -17,8 +17,27 @@
 
         <!-- ── HEADER BAR — app identity (global, always visible) ── -->
         <Border DockPanel.Dock="Top" Background="{StaticResource Brand.Navy}" Height="44">
-            <TextBlock Text="IMUMoCap" Foreground="White" FontSize="16" FontWeight="Bold"
-                       Margin="16,0" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+            <DockPanel LastChildFill="False">
+                <TextBlock Text="IMUMoCap" Foreground="White" FontSize="16" FontWeight="Bold"
+                           Margin="16,0" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                <ItemsControl DockPanel.Dock="Right" Margin="0,0,16,0" VerticalAlignment="Center"
+                              ItemsSource="{Binding ConnectedWsClients}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal"/>
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="8,0,0,0">
+                                <Ellipse Width="10" Height="10" Fill="LimeGreen" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding}" Foreground="White" FontSize="12"
+                                           Margin="6,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </DockPanel>
         </Border>
 
         <!-- ── LEFT PANEL — Grid with resizable log row ─────────────────────── -->
@@ -77,16 +96,13 @@
                             </Button>
                         </StackPanel>
 
-                        <UniformGrid Columns="4" Rows="1" Margin="0,0,0,8">
-                            <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnStartWashout_Click" Width="120">
-                                <TextBlock Text="Start Washout" TextWrapping="Wrap" TextAlignment="Center"/>
-                            </Button>
+                        <UniformGrid Columns="3" Rows="1" Margin="0,0,0,8">
                             <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnNextStage_Click" Width="120"
                                     ToolTip="Manual override — only needed if auto-advance doesn't trigger">
                                 <TextBlock Text="Next Stage" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnEndCondition_Click" Width="120"
-                                    ToolTip="End condition/washout recording and close the session file">
+                                    ToolTip="End condition recording and close the session file">
                                 <TextBlock Text="End Recording" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <Button x:Name="BtnPauseResume" Style="{StaticResource PrimaryButtonStyle}" Click="BtnPauseResume_Click" Width="120">Pause</Button>

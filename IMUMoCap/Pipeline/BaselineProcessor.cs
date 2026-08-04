@@ -22,11 +22,17 @@ namespace IMUMoCap.Pipeline
 
         public int CollectedSteps_L => _fpaL.Count;
         public int CollectedSteps_R => _fpaR.Count;
-        // 主条件：两脚都达到阈值（正常情况）
-        // 兜底条件：领先脚超过 2× 阈值时也视为完成，防止单脚长期采不到导致永久卡住
+
+        // 成功条件：两脚都达到阈值
         public bool IsReady =>
-            (_fpaL.Count >= MinValidSteps && _fpaR.Count >= MinValidSteps) ||
-            Math.Max(_fpaL.Count, _fpaR.Count) >= MinValidSteps * 2;
+            _fpaL.Count >= MinValidSteps && _fpaR.Count >= MinValidSteps;
+
+        // 提前止损：领先脚已达阈值，另一脚却不到阈值一半——该脚大概率采集异常（走廊太短/转弯排除过多/
+        // 传感器问题），继续走下去也追不上。直接报失败交给操作员决定是否重来，而不是让领先脚被迫走到
+        // 2× 阈值、用严重失衡的数据硬生生凑出一个 target。
+        public bool IsStalled =>
+            System.Math.Max(_fpaL.Count, _fpaR.Count) >= MinValidSteps &&
+            System.Math.Min(_fpaL.Count, _fpaR.Count) < MinValidSteps / 2;
 
         /// <summary>每次 FpaEngine 输出一个 FpaResult 时调用。</summary>
         public void AddStep(FpaResult result)

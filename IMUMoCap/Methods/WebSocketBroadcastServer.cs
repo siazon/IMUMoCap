@@ -111,6 +111,21 @@ namespace IMUMoCap.Methods
                 }
             }
         }
+        // Sends one JSON message to a single client (used for the on-connect state snapshot).
+        public async Task SendJsonAsync(Guid id, object payload)
+        {
+            if (!IsRunning) return;
+
+            WebSocket? ws;
+            lock (_gate) { if (!_clients.TryGetValue(id, out ws)) return; }
+            if (ws.State != WebSocketState.Open) { RemoveClient(id); return; }
+
+            string json = JsonSerializer.Serialize(payload, _jsonOpts);
+            var seg = new ArraySegment<byte>(Encoding.UTF8.GetBytes(json));
+            try { await ws.SendAsync(seg, WebSocketMessageType.Text, endOfMessage: true, cancellationToken: _cts.Token); }
+            catch { RemoveClient(id); }
+        }
+
         private async Task ReceiveLoopAsync(Guid id, WebSocket ws, string? remote)
         {
             var buffer = new byte[4096];
@@ -140,6 +155,10 @@ namespace IMUMoCap.Methods
                     if (result.MessageType == WebSocketMessageType.Text)
                     {
                         var text = System.Text.Encoding.UTF8.GetString(ms.ToArray());
+                        if (!text.Contains("ping"))
+                        { 
+                        
+                        }
                         OnTextMessage?.Invoke(id, text);
                     }
                     // 二进制消息也可以支持：result.MessageType == WebSocketMessageType.Binary

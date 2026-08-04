@@ -1,5 +1,6 @@
 // IMUMoCap/Pipeline/GaitPipeline.cs
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using IMUMoCap.Methods;
@@ -36,6 +37,9 @@ namespace IMUMoCap.Pipeline
         private const int DiagnosticsCapacity = 120_000;
         private readonly Queue<DiagnosticsRow> _diagnosticsBuffer = new();
 
+        // TEMP：帧时间戳→AR广播延迟测量，用完删除。
+        private readonly ConcurrentDictionary<long, long> _frameEntryTicks = new();
+
         // ── 事件 ──────────────────────────────────────────────────────────────
         public event Action<FpaResult,bool >?        OnFpaResult;
         public event Action<CalibrationState>? OnCalibrationStateChanged;
@@ -58,7 +62,7 @@ namespace IMUMoCap.Pipeline
         public bool InTraining  { get; private set; }
 
         /// <summary>
-        /// 只有 Start Condition/Washout 打开录制后才为 true。为 false 时 TriggerCalibration() 不生效，
+        /// 只有 Start Condition 打开录制后才为 true。为 false 时 TriggerCalibration() 不生效，
         /// 防止操作员在正式开始前误触发校准+baseline，导致这段数据没被录制却已耗尽（数据漏存）。
         /// </summary>
         public bool CalibrationArmed { get; set; } = false;
@@ -133,6 +137,8 @@ namespace IMUMoCap.Pipeline
 
         internal void Process(ImuFrameBundle bundle)
         {
+            _frameEntryTicks[bundle.PacketId] = Environment.TickCount64; // TEMP：延迟测量起点
+
             Recorder?.Record(bundle);
             SyncParams();
 
@@ -220,6 +226,13 @@ namespace IMUMoCap.Pipeline
                     FinalizeBaseline();
                     OnLog?.Invoke("Baseline auto-finalized.");
                 }
+                // 提前止损：一脚已达阈值、另一脚严重滞后——TryFinalize() 因 IsReady 为 false 会返回
+                // null，走既有的失败上报路径，交给操作员决定是否重新开始 baseline。
+                else if (_baseline.IsStalled)
+                {
+                    FinalizeBaseline();
+                    OnLog?.Invoke($"Baseline stalled (L={_baseline.CollectedSteps_L} R={_baseline.CollectedSteps_R}) — reporting failure.");
+                }
                 return;
             }
 
@@ -247,6 +260,10 @@ namespace IMUMoCap.Pipeline
         /// <summary>返回诊断数据快照（副本），用于 CSV 导出。不清空缓冲区。</summary>
         public List<DiagnosticsRow> GetDiagnosticsSnapshot()
             => [.._diagnosticsBuffer];
+
+        // TEMP：帧时间戳→AR广播延迟测量，用完删除。取出并清除该 PacketId 对应的耗时（ms）。
+        public long? TakeFrameLatencyMs(long packetId) =>
+            _frameEntryTicks.TryRemove(packetId, out var t0) ? Environment.TickCount64 - t0 : null;
 
         // ── 阶段控制（由 MainWindow 的状态机调用）────────────────────────────
 
@@ -304,6 +321,7 @@ namespace IMUMoCap.Pipeline
             BaselineProfile = null;
             InBaseline = InTraining = false;
             _diagnosticsBuffer.Clear();
+            _frameEntryTicks.Clear(); // TEMP：延迟测量，用完删除。
         }
     }
 }

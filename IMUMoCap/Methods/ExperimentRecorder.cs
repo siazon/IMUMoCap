@@ -9,14 +9,14 @@ namespace IMUMoCap.Methods
 {
     /// <summary>
     /// 按 Participant/Condition 管理实验数据落盘。
-    /// 一个 condition（EF/IF/Washout）对应一个连续写入的 Session CSV，
-    /// EF/IF 各自额外对应一个 Meta JSON（BaselineProfile + 暂停记录 + Redo标记）。
+    /// 一个 condition（EF/IF）对应一个连续写入的 Session CSV，
+    /// 各自额外对应一个 Meta JSON（BaselineProfile + 暂停记录 + Redo标记）。
     /// Session CSV 采用流式写入（每帧直接 append），不在内存里攒整段再导出。
     /// </summary>
     public sealed class ExperimentRecorder : IDisposable
     {
         public string ParticipantId { get; private set; } = "";
-        public string Condition { get; private set; } = ""; // "EF" | "IF" | "Washout"
+        public string Condition { get; private set; } = ""; // "EF" | "IF"
         public string? OrderGroup { get; private set; }
 
         public string? CurrentSessionFilePath { get; private set; }
@@ -55,17 +55,14 @@ namespace IMUMoCap.Methods
             Directory.CreateDirectory(dir);
 
             CurrentSessionFilePath = Path.Combine(dir, $"P{participantId}_{condition}_Session.csv");
-            bool hasMeta = condition != "Washout";
-            CurrentMetaFilePath = hasMeta ? Path.Combine(dir, $"P{participantId}_{condition}_Meta.json") : null;
-            CurrentQoeFilePath = hasMeta ? Path.Combine(dir, $"P{participantId}_{condition}_QoE.csv") : null;
+            CurrentMetaFilePath = Path.Combine(dir, $"P{participantId}_{condition}_Meta.json");
+            CurrentQoeFilePath = Path.Combine(dir, $"P{participantId}_{condition}_QoE.csv");
 
             _sessionWriter = new StreamWriter(CurrentSessionFilePath, append: false, Encoding.UTF8);
             _sessionWriter.WriteLine(DiagnosticsRow.CsvHeader);
             _sessionWriter.Flush();
 
-            _meta = hasMeta
-                ? new ConditionMeta { ParticipantId = participantId, Condition = condition, OrderGroup = orderGroup ?? "" }
-                : null;
+            _meta = new ConditionMeta { ParticipantId = participantId, Condition = condition, OrderGroup = orderGroup ?? "" };
         }
 
         public void WriteRow(DiagnosticsRow row, string stage, int attempt)

@@ -128,6 +128,18 @@ namespace IMUMoCap
                 OnPropertyChanged(nameof(ConnectedMtws));
             }
         }
+
+        private ObservableCollection<string> _connectedWsClients = new ObservableCollection<string>();
+
+        public ObservableCollection<string> ConnectedWsClients
+        {
+            get { return _connectedWsClients; }
+            set
+            {
+                _connectedWsClients = value;
+                OnPropertyChanged(nameof(ConnectedWsClients));
+            }
+        }
         private string _error;
 
         public string Error
