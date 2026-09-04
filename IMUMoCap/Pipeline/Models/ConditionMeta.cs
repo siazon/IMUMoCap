@@ -37,8 +37,18 @@ namespace IMUMoCap.Pipeline.Models
     }
 
     /// <summary>
+    /// 某个 stage 的耗时：起止墙钟时间 + 活跃时长（已扣除该阶段内的操作员暂停时长）。
+    /// </summary>
+    public sealed class StageTiming
+    {
+        public DateTime StartTime { get; set; }
+        public DateTime? EndTime { get; set; }
+        public double ActiveSeconds { get; set; }
+    }
+
+    /// <summary>
     /// 每个 condition（EF/IF）一份的元数据文件内容：
-    /// 个性化基线/目标参数 + 暂停记录 + 各阶段的最终有效 Attempt 号 + 各阶段 step 排除统计。
+    /// 个性化基线/目标参数 + 暂停记录 + 各阶段的最终有效 Attempt 号 + 各阶段 step 排除统计 + 各阶段耗时。
     /// </summary>
     public sealed class ConditionMeta
     {
@@ -49,5 +59,6 @@ namespace IMUMoCap.Pipeline.Models
         public List<PauseEvent> PauseEvents { get; set; } = new();
         public Dictionary<string, int> FinalAttempt { get; set; } = new();
         public Dictionary<string, StepExclusionStats> StageStepStats { get; set; } = new();
+        public Dictionary<string, StageTiming> StageTimings { get; set; } = new();
     }
 }

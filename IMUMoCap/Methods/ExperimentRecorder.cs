@@ -104,6 +104,25 @@ namespace IMUMoCap.Methods
             SaveMeta();
         }
 
+        public void BeginStage(string stage)
+        {
+            if (_meta == null) return;
+            _meta.StageTimings[stage] = new StageTiming { StartTime = DateTime.Now };
+        }
+
+        /// <summary>结算 stage 的活跃时长：墙钟时长减去该阶段内已结束的操作员暂停时长。</summary>
+        public void EndStage(string stage)
+        {
+            if (_meta == null) return;
+            if (!_meta.StageTimings.TryGetValue(stage, out var timing)) return;
+            timing.EndTime = DateTime.Now;
+            double pausedSeconds = 0;
+            foreach (var p in _meta.PauseEvents)
+                if (p.Stage == stage && p.EndTime.HasValue)
+                    pausedSeconds += (p.EndTime.Value - p.StartTime).TotalSeconds;
+            timing.ActiveSeconds = (timing.EndTime.Value - timing.StartTime).TotalSeconds - pausedSeconds;
+        }
+
         /// <summary>
         /// 每个 step 判定结果调用一次（emitted 或被排除）。只更新内存计数，不落盘——
         /// 高频调用不适合每次都写文件，落盘统一在 FlushMeta() 里做（阶段切换/关闭时调用）。

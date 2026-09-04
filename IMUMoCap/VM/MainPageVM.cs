@@ -257,6 +257,27 @@ namespace IMUMoCap
             }
         }
 
+        private int _pelvisGapCount;
+        public int PelvisGapCount
+        {
+            get { return _pelvisGapCount; }
+            set { _pelvisGapCount = value; OnPropertyChanged(nameof(PelvisGapCount)); }
+        }
+
+        private int _leftGapCount;
+        public int LeftGapCount
+        {
+            get { return _leftGapCount; }
+            set { _leftGapCount = value; OnPropertyChanged(nameof(LeftGapCount)); }
+        }
+
+        private int _rightGapCount;
+        public int RightGapCount
+        {
+            get { return _rightGapCount; }
+            set { _rightGapCount = value; OnPropertyChanged(nameof(RightGapCount)); }
+        }
+
         private string _StanceSummary;
 
         public string StanceSummary
@@ -456,6 +477,13 @@ namespace IMUMoCap
         {
             get { return _turningExclusionDisplay; }
             set { _turningExclusionDisplay = value; OnPropertyChanged(nameof(TurningExclusionDisplay)); }
+        }
+
+        private string _blockStepsDisplay = "";
+        public string BlockStepsDisplay
+        {
+            get { return _blockStepsDisplay; }
+            set { _blockStepsDisplay = value; OnPropertyChanged(nameof(BlockStepsDisplay)); }
         }
 
         private string _currentSessionFileName = "";

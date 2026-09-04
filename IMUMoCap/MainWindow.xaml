@@ -96,7 +96,7 @@
                             </Button>
                         </StackPanel>
 
-                        <UniformGrid Columns="3" Rows="1" Margin="0,0,0,8">
+                        <UniformGrid Columns="4" Rows="1" Margin="0,0,0,8">
                             <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnNextStage_Click" Width="120"
                                     ToolTip="Manual override — only needed if auto-advance doesn't trigger">
                                 <TextBlock Text="Next Stage" TextWrapping="Wrap" TextAlignment="Center"/>
@@ -106,6 +106,10 @@
                                 <TextBlock Text="End Recording" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <Button x:Name="BtnPauseResume" Style="{StaticResource PrimaryButtonStyle}" Click="BtnPauseResume_Click" Width="120">Pause</Button>
+                            <Button x:Name="BtnContinueRest" Style="{StaticResource PrimaryButtonStyle}" Click="BtnContinueRest_Click" Width="120" IsEnabled="False"
+                                    ToolTip="Advance from the Training1 rest to Training2 (same as the AR client's Continue button); enabled once the 120s rest starts">
+                                <TextBlock Text="Continue Rest" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
                         </UniformGrid>
 
                         <TextBlock Margin="0,0,0,4">
@@ -204,16 +208,19 @@
                             <Ellipse x:Name="PelvisStatusDot" Width="16" Height="16" Fill="Gray"
                                      Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="PelvisStatusText" Text="Pelvis" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding PelvisGapCount, StringFormat=' 丢{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
                             <Ellipse x:Name="LeftStatusDot" Width="16" Height="16" Fill="Gray"
                                      Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="LeftStatusText" Text="Left" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding LeftGapCount, StringFormat=' 丢{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="RightStatusDot" Width="16" Height="16" Fill="Gray"
                                      Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="RightStatusText" Text="Right" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding RightGapCount, StringFormat=' 丢{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -234,6 +241,10 @@
                         <StackPanel Margin="0,0,24,0">
                             <TextBlock Text="Gate Reject:" Style="{StaticResource CaptionTextStyle}"/>
                             <TextBlock Text="{Binding PelvisRejectStreak}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+                        </StackPanel>
+                        <StackPanel Margin="0,0,24,0">
+                            <TextBlock Text="Block Steps:" Style="{StaticResource CaptionTextStyle}"/>
+                            <TextBlock Text="{Binding BlockStepsDisplay}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
                         </StackPanel>
                         <StackPanel>
                             <TextBlock Text="Gait:" Style="{StaticResource CaptionTextStyle}"/>
@@ -325,7 +336,8 @@
                             <CheckBox x:Name="ChkLiveAngleToAr" Content="Live Angle → AR" FontSize="11"
                                       Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
                                       Margin="16,0,0,0" VerticalAlignment="Center"
-                                      ToolTip="调试用：勾选后每帧都把实时FPA角度广播给AR端，不受training/rest阶段限制"/>
+                                      IsChecked="True"
+                                      ToolTip="默认开启：将实时角度广播给AR端，不受training/rest阶段限制；如遇网络问题可取消勾选临时关闭"/>
                         </StackPanel>
                         <TextBox
                             x:Name="ArEventLogBox"
