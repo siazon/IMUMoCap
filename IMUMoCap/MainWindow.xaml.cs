@@ -77,13 +77,12 @@ namespace IMUMoCap
         private readonly ImuFrameCollector _imuFrameCollector = new();
 
         // Experiment session recording (participant/condition/stage → file)
-        // TEMP：临时去掉 Training3，只保留 2 个训练块（rest 提前到 block1 之后）。
-        private static readonly string[] ConditionStages = { "Baseline", "Training1", "Training2", "Retention" };
+        private static readonly string[] ConditionStages = { "Baseline", "Training1", "Training2", "Training3", "Retention" };
         private readonly Methods.ExperimentRecorder _recorder = new();
         private string _currentStage = "";
         private bool _isRetention = false; // true once _currentStage == "Retention": AR feedback removed
         private int _retentionStepsL, _retentionStepsR; // valid steps collected during Retention (auto-end at 100/foot)
-        private bool _inRest = false; // true during the 120s rest between Training1 and Training2 (_currentStage stays "Training1")
+        private bool _inRest = false; // true during the 120s rest between Training2 and Training3 (_currentStage stays "Training2")
 
         // Last broadcast AR state, resent as a snapshot when a client (re)connects.
         private string _lastState = "waiting";
@@ -92,14 +91,18 @@ namespace IMUMoCap
         private int _lastRestDurationSec = 0;
         private string _lastReason = "";
         private readonly Dictionary<string, int> _stageAttempt = new();
-        private static readonly TimeSpan TrainingBlockMaxDuration = TimeSpan.FromMinutes(5);
+        // Pure stall-prevention safety net, not a co-equal exit criterion — every step-count-gated stage's
+        // real exit criterion is a fixed 100 valid steps/foot. Widened from 5min (which was tuned for the
+        // old 150-steps/foot target) to give a 100-step block enough headroom.
+        // ASSUMPTION: exact fallback duration isn't specified by the protocol doc — flagged for researcher confirmation.
+        private static readonly TimeSpan TrainingBlockMaxDuration = TimeSpan.FromMinutes(10);
         // Baseline has no step-count fallback of its own (BaselineProcessor's 2x-steps rule can still
         // stall indefinitely if one foot never gets enough valid steps, e.g. a short corridor with heavy
-        // turning exclusion) — force-finalize after this long so the flow never hangs. Matches the
-        // timeout BaselineProcessor.cs's doc comment already assumed but that was never wired up.
-        private static readonly TimeSpan BaselineMaxDuration = TimeSpan.FromMinutes(3);
-        private const int RetentionTargetSteps = 100; // Retention ends at 100 valid steps/foot or the 5-min cap (Research Overview §2.6)
-        private const int RestDurationSec = 120; // TEMP: rest between Training1 and Training2 (Research Overview §2.5 originally had this between Training2/Training3)
+        // turning exclusion) — force-finalize after this long so the flow never hangs. Widened alongside
+        // TrainingBlockMaxDuration for the same 100-step-target reason; same assumption applies.
+        private static readonly TimeSpan BaselineMaxDuration = TimeSpan.FromMinutes(10);
+        private const int RetentionTargetSteps = 100; // Retention ends at 100 valid steps/foot; TrainingBlockMaxDuration is the stall-prevention fallback (Research Overview §2.6)
+        private const int RestDurationSec = 120; // Rest between Training2 and Training3 (Research Overview §2.5)
         private readonly System.Diagnostics.Stopwatch _stageStopwatch = new();
 
         public MainWindow()
@@ -233,13 +236,13 @@ namespace IMUMoCap
                 _content.LeftGapCount = frameQuality.LeftFootGapFrames;
                 _content.RightGapCount = frameQuality.RightFootGapFrames;
 
-                // Training block max-duration fallback: ends the block at 5 min even if 150 steps/foot wasn't reached.
+                // Training block stall-prevention fallback: ends the block at the timeout even if 100 steps/foot wasn't reached.
                 if (!_isReplaying && !_inRest && IsTrainingBlockStage(_currentStage) && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
                     EndTrainingBlock();
 
-                // Retention max-duration fallback: ends the whole flow at 5 min even if 100 steps/foot wasn't reached.
+                // Retention stall-prevention fallback: ends the whole flow at the timeout even if 100 steps/foot wasn't reached.
                 if (!_isReplaying && _isRetention && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
-                    EndFlow("retention 5-min timeout");
+                    EndFlow("retention stall-prevention timeout");
             };
             _timelineTimer.Start();
 
@@ -697,6 +700,7 @@ namespace IMUMoCap
         {
             "Training1" => 1,
             "Training2" => 2,
+            "Training3" => 3,
             _ => 0,
         };
 
@@ -767,7 +771,7 @@ namespace IMUMoCap
                     _pipeline.StartBaseline();
                     BroadcastArState("baseline");
                     _sessionState = TestState.Baseline;
-                    _content.StatusLabel = "Baseline: Walk until both feet reach 20 steps.";
+                    _content.StatusLabel = "Baseline: Walk until both feet reach 100 steps.";
                     StartBaselineTimeoutTimer();
                     break;
 
@@ -800,9 +804,9 @@ namespace IMUMoCap
             _recorder.SaveBaseline(profile);
 
             // Advance the experiment stage bookkeeping (Baseline → Training1) so tolerance α, CSV stage
-            // tagging, and the 150-step/5-min auto-termination all pick up correctly. AdvanceStage also
-            // broadcasts state=training with block=1. Only meaningful when a real condition recording
-            // is open (Start Condition was clicked first).
+            // tagging, and the 100-step auto-termination (with stall-prevention timeout fallback) all pick
+            // up correctly. AdvanceStage also broadcasts state=training with block=1. Only meaningful when
+            // a real condition recording is open (Start Condition was clicked first).
             if (_recorder.IsRecording && _currentStage == "Baseline")
             {
                 AdvanceStage();
@@ -993,14 +997,13 @@ namespace IMUMoCap
         }
 
         private static bool IsTrainingBlockStage(string stage) =>
-            stage is "Training1" or "Training2";
+            stage is "Training1" or "Training2" or "Training3";
 
-        // TEMP：临时只剩 2 个训练块，rest 从"Training2 之后"提前到"Training1 之后"。
-        // A training block finished (150 steps/foot or 5-min). Training1 goes to the 120s rest first;
-        // every other block advances straight to the next stage.
-        // Guards against a duplicate block-completion event for the same block: the 150-steps/foot
-        // pipeline event is queued via Dispatcher.BeginInvoke (background thread), while the 5-min
-        // timeout fires synchronously on the UI thread's DispatcherTimer.Tick — if both conditions are
+        // A training block finished (100 steps/foot or the stall-prevention timeout). Training2 goes to
+        // the 120s rest first (Research Overview §2.5); every other block advances straight to the next stage.
+        // Guards against a duplicate block-completion event for the same block: the 100-steps/foot
+        // pipeline event is queued via Dispatcher.BeginInvoke (background thread), while the timeout
+        // fires synchronously on the UI thread's DispatcherTimer.Tick — if both conditions are
         // met near-simultaneously, the queued event can still run after the timer has already advanced
         // the stage, which would otherwise end the *next* block early. Reset whenever a new training
         // block is entered (AdvanceStage, in the trainingBlock > 0 branch).
@@ -1011,14 +1014,14 @@ namespace IMUMoCap
             if (_trainingBlockEnding) return; // stale duplicate completion event for this block — ignore
             _trainingBlockEnding = true;
 
-            if (_currentStage == "Training1")
+            if (_currentStage == "Training2")
                 EnterRest();
             else
                 AdvanceStage();
         }
 
-        // Enters the 120s rest between Training1 and Training2. Stays in the Training1 recording stage
-        // (rest is not a data stage). Advance to Training2 happens on AR `continueTraining` or the
+        // Enters the 120s rest between Training2 and Training3. Stays in the Training2 recording stage
+        // (rest is not a data stage). Advance to Training3 happens on AR `continueTraining` or the
         // operator Next Stage button. _stageStopwatch is restarted so the server can enforce the 120s min.
         private void EnterRest()
         {
@@ -1026,12 +1029,12 @@ namespace IMUMoCap
             BtnContinueRest.IsEnabled = true;
             _content.CurrentStageLabel = $"{_currentStage} (Resting)";
             _stageStopwatch.Restart();
-            BroadcastArState("rest", restDurationSec: RestDurationSec, blockOverride: 1);
-            log($"Rest started ({RestDurationSec}s) after Training1 — waiting for participant Continue.");
+            BroadcastArState("rest", restDurationSec: RestDurationSec, blockOverride: 2);
+            log($"Rest started ({RestDurationSec}s) after Training2 — waiting for participant Continue.");
         }
 
-        // AR `continueTraining` after the rest countdown. Advances to Training2 only if we are actually
-        // in rest, the just-finished block matches (1), and the 120s minimum has really elapsed — the PC
+        // AR `continueTraining` after the rest countdown. Advances to Training3 only if we are actually
+        // in rest, the just-finished block matches (2), and the 120s minimum has really elapsed — the PC
         // never trusts the client's own timer for protocol-timing integrity.
         private void HandleContinueTraining(int fromBlock)
         {
@@ -1040,9 +1043,9 @@ namespace IMUMoCap
                 log($"WS: continueTraining ignored — not in rest (fromBlock={fromBlock}).");
                 return;
             }
-            if (fromBlock != 1)
+            if (fromBlock != 2)
             {
-                log($"WS: continueTraining ignored — fromBlock={fromBlock} != 1 (stale/duplicate).");
+                log($"WS: continueTraining ignored — fromBlock={fromBlock} != 2 (stale/duplicate).");
                 return;
             }
             if (_stageStopwatch.Elapsed < TimeSpan.FromSeconds(RestDurationSec))
@@ -1050,20 +1053,20 @@ namespace IMUMoCap
                 log($"WS: continueTraining rejected — only {_stageStopwatch.Elapsed.TotalSeconds:F0}s of {RestDurationSec}s rest elapsed.");
                 return;
             }
-            log("WS: continueTraining accepted → Training2.");
-            AdvanceStage(); // Training1 → Training2 (clears _inRest, broadcasts state=training block=2)
+            log("WS: continueTraining accepted → Training3.");
+            AdvanceStage(); // Training2 → Training3 (clears _inRest, broadcasts state=training block=3)
         }
 
         // Operator-side equivalent of the AR client's Continue button — goes through the same
         // HandleContinueTraining() guards (must be in rest, 120s minimum elapsed).
         private void BtnContinueRest_Click(object sender, RoutedEventArgs e)
         {
-            HandleContinueTraining(1);
+            HandleContinueTraining(2);
         }
 
         /// <summary>
         /// Moves _currentStage to the next entry in ConditionStages. Called both manually (Next Stage button)
-        /// and automatically — training block auto-completion (150 valid steps/foot) and the 5-minute block
+        /// and automatically — training block auto-completion (100 valid steps/foot) and the stall-prevention
         /// timeout both call this too (Research Overview §2.6).
         /// </summary>
         private void AdvanceStage()
@@ -1083,11 +1086,11 @@ namespace IMUMoCap
             _content.BlockStepsDisplay = "L 0 · R 0";
 
             // Progressive-difficulty tolerance narrowing across the training blocks (Research Overview §2.4).
-            // TEMP：临时只剩 2 个训练块，Training3 去掉。
             int trainingBlock = _currentStage switch
             {
                 "Training1" => 1,
                 "Training2" => 2,
+                "Training3" => 3,
                 _ => 0,
             };
             if (trainingBlock > 0)
@@ -1119,7 +1122,7 @@ namespace IMUMoCap
 
         /// <summary>
         /// Ends the whole condition flow and saves the session file. Called both by the operator End
-        /// button and automatically when Retention hits 100 valid steps/foot or the 5-min cap.
+        /// button and automatically when Retention hits 100 valid steps/foot or the stall-prevention timeout.
         /// Idempotent (no-op once the recording is closed).
         /// </summary>
         private void EndFlow(string reason)
@@ -1142,7 +1145,7 @@ namespace IMUMoCap
         private static string ArStateForStage(string stage) => stage switch
         {
             "Baseline" => "baseline",
-            "Training1" or "Training2" => "training",
+            "Training1" or "Training2" or "Training3" => "training",
             "Retention" => "retention",
             _ => "armed",
         };
@@ -1700,8 +1703,8 @@ namespace IMUMoCap
             if (inTraining && !_isRetention)
                 _content.BlockStepsDisplay = $"L {_pipeline.TrainingStepsL} · R {_pipeline.TrainingStepsR}";
 
-            // Immediate Retention Test: count valid steps and end the whole flow at 100/foot (the 5-min cap
-            // is handled by the timeline timer). AR feedback is removed, so no fpa is broadcast below.
+            // Immediate Retention Test: count valid steps and end the whole flow at 100/foot (the stall-prevention
+            // timeout is handled by the timeline timer). AR feedback is removed, so no fpa is broadcast below.
             if (_isRetention && _recorder.IsRecording)
             {
                 if (!float.IsNaN(result.Fpa_L)) _retentionStepsL++;

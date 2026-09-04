@@ -71,8 +71,8 @@ namespace IMUMoCap.Pipeline
         private static readonly float[] TrainingBlockAlphas = { 1.5f, 1.0f, 0.5f };
         public float CurrentToleranceAlpha => _fpa.ToleranceAlpha;
 
-        // 协议 §2.6：每个 training block 在两脚均达到 150 个有效步时自动结束（另有 5 分钟上限，由 MainWindow 的计时器负责）
-        public const int TrainingBlockTargetSteps = 150;
+        // 协议 §2.6：每个 training block 在两脚均达到 100 个有效步时自动结束（另有停滞保护超时上限，由 MainWindow 的计时器负责，非并列退出条件）
+        public const int TrainingBlockTargetSteps = 100;
         private int  _trainingStepsL, _trainingStepsR;
         private bool _trainingBlockDone;
 
@@ -241,7 +241,7 @@ namespace IMUMoCap.Pipeline
             {
                 OnFpaResult?.Invoke(fpaResult, true);
 
-                // 当前 training block 的两脚有效步数统计，达标（150/foot）后自动通知 MainWindow 结束该 block
+                // 当前 training block 的两脚有效步数统计，达标（100/foot）后自动通知 MainWindow 结束该 block
                 if (!_trainingBlockDone)
                 {
                     if (!float.IsNaN(fpaResult.Fpa_L)) _trainingStepsL++;

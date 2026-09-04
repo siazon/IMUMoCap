@@ -10,11 +10,11 @@ namespace IMUMoCap.Pipeline
     ///
     /// 只接受来自 FpaEngine 的有效 FpaResult（已经过四重门控）。
     /// 达到 MinValidSteps 后可提前调用 TryFinalize 生成结果；
-    /// 3 分钟时间到后由 GaitPipeline 强制调用 TryFinalize。
+    /// 超时（停滞保护，由 MainWindow 计时器负责）后强制调用 TryFinalize。
     /// </summary>
     public sealed class BaselineProcessor
     {
-        public int MinValidSteps { get; set; } = 20;
+        public int MinValidSteps { get; set; } = 100;
         public float ImbalanceRatioThreshold { get; set; } = 0.7f;
 
         private readonly List<float> _fpaL = new();

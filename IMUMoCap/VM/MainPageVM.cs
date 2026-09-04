@@ -406,7 +406,7 @@ namespace IMUMoCap
             set { _pdStabilityThreshold = value; OnPropertyChanged(nameof(PdStabilityThreshold)); }
         }
 
-        private int _minBaselineSteps = 5;
+        private int _minBaselineSteps = 100;
         public int MinBaselineSteps
         {
             get { return _minBaselineSteps; }

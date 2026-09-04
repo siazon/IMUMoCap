@@ -36,7 +36,7 @@
 
         <!-- 6. Min baseline steps -->
         <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
-        <Slider Minimum="10" Maximum="50" SmallChange="1" LargeChange="5"
+        <Slider Minimum="50" Maximum="150" SmallChange="1" LargeChange="5"
                 IsSnapToTickEnabled="True" TickFrequency="1"
                 Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
 

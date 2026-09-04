@@ -20,7 +20,7 @@ namespace IMUMoCap.Pipeline.Models
         public float PdStabilityThreshold    { get; set; } = 0.7f;  // 0.3–1.0
 
         // BaselineProcessor
-        public int   MinBaselineSteps        { get; set; } = 20;   // 10–50
+        public int   MinBaselineSteps        { get; set; } = 100;  // 50–150
         public float BaselineImbalanceRatioThreshold { get; set; } = 0.7f;  // 0.3–1.0，L/R步数比低于此值时警示
     }
 }

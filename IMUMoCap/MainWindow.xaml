@@ -107,7 +107,7 @@
                             </Button>
                             <Button x:Name="BtnPauseResume" Style="{StaticResource PrimaryButtonStyle}" Click="BtnPauseResume_Click" Width="120">Pause</Button>
                             <Button x:Name="BtnContinueRest" Style="{StaticResource PrimaryButtonStyle}" Click="BtnContinueRest_Click" Width="120" IsEnabled="False"
-                                    ToolTip="Advance from the Training1 rest to Training2 (same as the AR client's Continue button); enabled once the 120s rest starts">
+                                    ToolTip="Advance from the Training2 rest to Training3 (same as the AR client's Continue button); enabled once the 120s rest starts">
                                 <TextBlock Text="Continue Rest" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                         </UniformGrid>
