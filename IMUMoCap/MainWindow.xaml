@@ -106,10 +106,6 @@
                                 <TextBlock Text="End Recording" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <Button x:Name="BtnPauseResume" Style="{StaticResource PrimaryButtonStyle}" Click="BtnPauseResume_Click" Width="120">Pause</Button>
-                            <Button x:Name="BtnContinueRest" Style="{StaticResource PrimaryButtonStyle}" Click="BtnContinueRest_Click" Width="120" IsEnabled="False"
-                                    ToolTip="Advance from the Training2 rest to Training3 (same as the AR client's Continue button); enabled once the 120s rest starts">
-                                <TextBlock Text="Continue Rest" TextWrapping="Wrap" TextAlignment="Center"/>
-                            </Button>
                         </UniformGrid>
 
                         <TextBlock Margin="0,0,0,4">
@@ -119,12 +115,38 @@
                         <TextBlock Text="{Binding TurningExclusionDisplay}" FontSize="12" Opacity="0.7"
                                     Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
 
-                        <TextBlock Text="Session file:" Style="{StaticResource CaptionTextStyle}"/>
-                        <TextBlock Text="{Binding CurrentSessionFileName}" FontSize="11" Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                        <TextBlock Text="Meta file:" Style="{StaticResource CaptionTextStyle}"/>
-                        <TextBlock Text="{Binding CurrentMetaFileName}" FontSize="11" Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                        <TextBlock Text="QoE file (fill in externally):" Style="{StaticResource CaptionTextStyle}"/>
-                        <TextBlock Text="{Binding CurrentQoeFileName}" FontSize="11" Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                        <TextBlock Text="Flow:" Style="{StaticResource CaptionTextStyle}"/>
+                        <ItemsControl ItemsSource="{Binding FlowChecklist}" Margin="0,2,0,8"
+                                      ToolTip="Gray = not reached yet, green = done, orange = audit marker due but not yet clicked">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,10,4">
+                                        <Ellipse Width="9" Height="9" Fill="{Binding DotBrush}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{Binding Label}" FontSize="11" Margin="4,0,0,0"
+                                                   Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                                        <!-- Only rendered on the 3 rows backed by a manual audit marker (MarkerStage != null) -->
+                                        <Button Content="Mark" Click="BtnMarkFlowItem_Click"
+                                                Style="{StaticResource SecondaryButtonStyle}"
+                                                Visibility="{Binding IsMarkable, Converter={StaticResource BoolToVis}}"
+                                                IsEnabled="{Binding CanMark}"
+                                                Width="42" MinHeight="16" Padding="0" FontSize="9" Margin="4,0,0,0"
+                                                ToolTip="Audit-trail marker only — timestamps that the RA administered this on paper; doesn't render the instrument itself"/>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Button x:Name="BtnOpenDataFolder" Click="BtnOpenDataFolder_Click"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                HorizontalAlignment="Left" Width="150" Margin="0,0,0,10"
+                                ToolTip="Open the folder containing the Session/Meta/QoE files for the current participant/condition">
+                            📁 Open Data Folder
+                        </Button>
 
                         <!-- ── Tools (folded into Session) ──────────────────────────── -->
                         <TextBlock Text="Tools" FontWeight="Bold" FontSize="12" Foreground="{StaticResource Brand.Navy}" Margin="0,4,0,6"/>
@@ -208,19 +230,19 @@
                             <Ellipse x:Name="PelvisStatusDot" Width="16" Height="16" Fill="Gray"
                                      Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="PelvisStatusText" Text="Pelvis" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding PelvisGapCount, StringFormat=' 丢{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding PelvisGapCount, StringFormat=' Lost{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,16,0">
                             <Ellipse x:Name="LeftStatusDot" Width="16" Height="16" Fill="Gray"
                                      Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="LeftStatusText" Text="Left" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding LeftGapCount, StringFormat=' 丢{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding LeftGapCount, StringFormat=' Lost{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="RightStatusDot" Width="16" Height="16" Fill="Gray"
                                      Margin="0,0,6,0" VerticalAlignment="Center"/>
                             <TextBlock x:Name="RightStatusText" Text="Right" FontSize="12" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding RightGapCount, StringFormat=' 丢{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding RightGapCount, StringFormat=' Lost{0}'}" FontSize="11" Opacity="0.6" Foreground="{StaticResource Brand.Navy}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -333,11 +355,6 @@
                                     Background="Transparent" BorderThickness="0"
                                     Foreground="{StaticResource Brand.Navy}" Opacity="0.5"
                                     FontSize="13" ToolTip="Clear log">🧹</Button>
-                            <CheckBox x:Name="ChkLiveAngleToAr" Content="Live Angle → AR" FontSize="11"
-                                      Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
-                                      Margin="16,0,0,0" VerticalAlignment="Center"
-                                      IsChecked="True"
-                                      ToolTip="默认开启：将实时角度广播给AR端，不受training/rest阶段限制；如遇网络问题可取消勾选临时关闭"/>
                         </StackPanel>
                         <TextBox
                             x:Name="ArEventLogBox"

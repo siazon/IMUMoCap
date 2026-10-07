@@ -11,11 +11,13 @@ namespace IMUMoCap.Pipeline
     ///
     /// 采集与输出分离：
     ///   采集：只要脚在 stance 就持续采集 yaw，gate 失败不丢弃已采集数据。
-    ///   输出：swing→stance 后累积 MinStanceFramesForSettle 帧 AND 当前帧 gate 全通过
-    ///         → 立即输出 FPA，本 stance 周期不再重复输出。
+    ///   输出：数据驱动结算——落地满 MinStanceFramesFloor 帧后，一旦该脚角速度连续
+    ///         SettleQuietFrames 帧低于 SettleGyroThreshold（真正静止，不是固定帧数瞎猜）
+    ///         AND 当前帧 gate 全通过 → 立即输出 FPA；若一直不安静，到 MaxStanceFramesForSettle
+    ///         硬上限强制结算，防止个别落地冲击大的步子卡住不输出。
     ///
     /// FPA 计算：
-    ///   FPA = mean(foot_yaw，落地后前 n 帧) - PD.DirectionRad，转换为度
+    ///   FPA = mean(foot_yaw，落地到结算这段帧) - PD.DirectionRad，转换为度
     ///   正值 = toe-out，负值 = toe-in
     /// </summary>
     public sealed class FpaEngine
@@ -24,9 +26,18 @@ namespace IMUMoCap.Pipeline
         public float ContextConfidenceThreshold { get; set; } = 0.7f;
         public float PdStabilityThreshold { get; set; } = 0.7f;
 
-        // ── 结算参数 ──────────────────────────────────────────────────────────
-        // swing→stance 后累积此帧数再输出 FPA（@100Hz，10帧=100ms）
-        public int MinStanceFramesForSettle { get; set; } = 10;
+        // ── 结算参数（数据驱动）──────────────────────────────────────────────
+        // 落地后至少攒够这么多帧才可能结算，防止单帧抖动/刚过 debounce 边界那一帧被当成"已安静"
+        public int MinStanceFramesFloor { get; set; } = 2;
+        // 角速度模长连续低于此值达到 SettleQuietFrames 帧，才认为脚真正静止（比 GaitEventDetector
+        // 判定"算不算落地"用的 GyroThreshold=1.0 更紧）。0.35 是在两份真实录制（一份转身较多的
+        // 测试走动、一份 188s 的 Baseline+Training 正式录制）上验证过的值：0.2 时正常走路(Straight)
+        // 下仍有 4-8% 的落地因为一直没连续 3 帧低于阈值而被静默丢弃（docs/task12、task13），
+        // 0.3-0.4 基本消除该风险，0.35 取中间留一点余量。
+        public float SettleGyroThreshold { get; set; } = 0.35f; // rad/s
+        public int SettleQuietFrames { get; set; } = 3;
+        // 硬上限：即使一直不安静也不能无限等（落地冲击大/有回弹的步子），到点强制结算
+        public int MaxStanceFramesForSettle { get; set; } = 20; // frames (200ms @ 100Hz)
 
         // ── BaselineProfile（Training 阶段设置，Baseline 阶段为 null）────────
         public BaselineProfile? Baseline { get; set; }
@@ -52,7 +63,8 @@ namespace IMUMoCap.Pipeline
             if (gait.LeftStance)
                 _leftSampler.AddFrame(NormalizeAngle(
                     ExtractYaw(frame.LeftFoot.Quaternion) -
-                    ExtractYaw(calibration?.LeftFootRef ?? System.Numerics.Quaternion.Identity)));
+                    ExtractYaw(calibration?.LeftFootRef ?? System.Numerics.Quaternion.Identity)),
+                    frame.LeftFoot.RateOfTurn.Length(), SettleGyroThreshold);
             else
             {
                 var excludedL = _leftSampler.MarkSwing();
@@ -62,7 +74,8 @@ namespace IMUMoCap.Pipeline
             if (gait.RightStance)
                 _rightSampler.AddFrame(NormalizeAngle(
                     ExtractYaw(frame.RightFoot.Quaternion) -
-                    ExtractYaw(calibration?.RightFootRef ?? System.Numerics.Quaternion.Identity)));
+                    ExtractYaw(calibration?.RightFootRef ?? System.Numerics.Quaternion.Identity)),
+                    frame.RightFoot.RateOfTurn.Length(), SettleGyroThreshold);
             else
             {
                 var excludedR = _rightSampler.MarkSwing();
@@ -82,17 +95,17 @@ namespace IMUMoCap.Pipeline
                 _ /* Straight 但 confidence 不够，或 pd 不合格 */ =>
                     contextOk ? StepExclusionReason.PdInvalid : StepExclusionReason.LowConfidence,
             };
-            _leftSampler.NoteGate(MinStanceFramesForSettle, contextOk && pdOk, blockReason);
-            _rightSampler.NoteGate(MinStanceFramesForSettle, contextOk && pdOk, blockReason);
+            _leftSampler.NoteGate(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle, contextOk && pdOk, blockReason);
+            _rightSampler.NoteGate(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle, contextOk && pdOk, blockReason);
 
             if (!contextOk || !pdOk) return null;
             // 两脚都在 swing（双悬空）时无意义，不输出
             if (!gait.LeftStance && !gait.RightStance) return null;
 
-            // ── Step 3: 尝试结算：落地后 n 帧已满 + gate 通过 → 输出 ──────────
-            float? fpaL = _leftSampler.TrySettle(MinStanceFramesForSettle);
+            // ── Step 3: 尝试结算：脚已安静（或触发硬上限）+ gate 通过 → 输出 ──────
+            float? fpaL = _leftSampler.TrySettle(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle);
             if (fpaL.HasValue) OnStepOutcome?.Invoke("L", true, null);
-            float? fpaR = _rightSampler.TrySettle(MinStanceFramesForSettle);
+            float? fpaR = _rightSampler.TrySettle(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle);
             if (fpaR.HasValue) OnStepOutcome?.Invoke("R", true, null);
 
             if (fpaL == null && fpaR == null) return null;
@@ -165,7 +178,8 @@ namespace IMUMoCap.Pipeline
         private static float RadToDeg(float rad) => rad * (180f / MathF.PI);
 
         // ── StanceSampler（内嵌私有类）────────────────────────────────────────
-        // 单脚状态机：检测 swing→stance 转换，落地后采集 n 帧，输出一次 FPA。
+        // 单脚状态机：检测 swing→stance 转换，落地后采集，直到脚真正安静下来（或触发硬上限）
+        // 再输出一次 FPA。
 
         private sealed class StanceSampler
         {
@@ -179,7 +193,10 @@ namespace IMUMoCap.Pipeline
             private bool _reachedReady = false;
             private StepExclusionReason? _pendingReason = null;
 
-            public void AddFrame(float yaw)
+            // ── 数据驱动结算：角速度连续低于阈值的帧数 ──────────────────────────
+            private int _quietStreak = 0;
+
+            public void AddFrame(float yaw, float gyroMagRadPerSec, float settleGyroThreshold)
             {
                 if (!_inStance)
                 {
@@ -190,16 +207,23 @@ namespace IMUMoCap.Pipeline
                     _cosSum = 0f;
                     _sinSum = 0f;
                     _count = 0;
+                    _quietStreak = 0;
                 }
                 _cosSum += MathF.Cos(yaw);
                 _sinSum += MathF.Sin(yaw);
                 _count++;
+                _quietStreak = gyroMagRadPerSec < settleGyroThreshold ? _quietStreak + 1 : 0;
             }
 
-            /// <summary>每帧调用一次，记录门控状态；帧数达标但门控未过时，暂存排除原因。</summary>
-            public void NoteGate(int minFrames, bool gateOk, StepExclusionReason reasonIfBlocked)
+            // 已达最小帧数下限，且（连续 settleQuietFrames 帧真正安静 或 触及硬上限）→ 可以结算。
+            private bool HasSettled(int minFramesFloor, int settleQuietFrames, int maxFrames) =>
+                _count >= minFramesFloor && (_quietStreak >= settleQuietFrames || _count >= maxFrames);
+
+            /// <summary>每帧调用一次，记录门控状态；已安静但门控未过时，暂存排除原因。</summary>
+            public void NoteGate(int minFramesFloor, int settleQuietFrames, int maxFrames,
+                                  bool gateOk, StepExclusionReason reasonIfBlocked)
             {
-                if (!_inStance || _emittedThisStance || _count < minFrames) return;
+                if (!_inStance || _emittedThisStance || !HasSettled(minFramesFloor, settleQuietFrames, maxFrames)) return;
                 _reachedReady = true;
                 _pendingReason = gateOk ? null : reasonIfBlocked;
             }
@@ -220,10 +244,10 @@ namespace IMUMoCap.Pipeline
                 return excludedReason;
             }
 
-            public float? TrySettle(int minFrames)
+            public float? TrySettle(int minFramesFloor, int settleQuietFrames, int maxFrames)
             {
                 if (!_inStance || _emittedThisStance) return null;
-                if (_count < minFrames) return null;
+                if (!HasSettled(minFramesFloor, settleQuietFrames, maxFrames)) return null;
 
                 _emittedThisStance = true;
                 return MathF.Atan2(_sinSum, _cosSum);
@@ -237,6 +261,7 @@ namespace IMUMoCap.Pipeline
                 _emittedThisStance = false;
                 _reachedReady = false;
                 _pendingReason = null;
+                _quietStreak = 0;
             }
         }
     }

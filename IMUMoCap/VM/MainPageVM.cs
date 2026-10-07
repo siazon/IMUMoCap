@@ -140,6 +140,10 @@ namespace IMUMoCap
                 OnPropertyChanged(nameof(ConnectedWsClients));
             }
         }
+
+        // Experiment-flow-at-a-glance checklist (see Model/ChecklistItem.cs). Populated once in
+        // MainWindow's constructor; items are never added/removed after that, only their Status mutates.
+        public ObservableCollection<ChecklistItem> FlowChecklist { get; } = new ObservableCollection<ChecklistItem>();
         private string _error;
 
         public string Error
@@ -420,6 +424,24 @@ namespace IMUMoCap
             set { _baselineImbalanceRatioThreshold = value; OnPropertyChanged(nameof(BaselineImbalanceRatioThreshold)); }
         }
 
+        // ── IF render mode (bound to ParamsDialog checkboxes; mutual exclusivity and the
+        // actual state.ifRenderMode broadcast are handled in MainWindow.xaml.cs's
+        // SyncIfRenderModeFromVm, same pattern as the pipeline sliders above) ─────────────────
+
+        private bool _isIfLiveMode = false;
+        public bool IsIfLiveMode
+        {
+            get { return _isIfLiveMode; }
+            set { _isIfLiveMode = value; OnPropertyChanged(nameof(IsIfLiveMode)); }
+        }
+
+        private bool _isIfLastResultMode = true;
+        public bool IsIfLastResultMode
+        {
+            get { return _isIfLastResultMode; }
+            set { _isIfLastResultMode = value; OnPropertyChanged(nameof(IsIfLastResultMode)); }
+        }
+
         // ── Panel visibility ──────────────────────────────────────────────────
 
         private bool _logPanelVisible = true;
@@ -491,20 +513,6 @@ namespace IMUMoCap
         {
             get { return _currentSessionFileName; }
             set { _currentSessionFileName = value; OnPropertyChanged(nameof(CurrentSessionFileName)); }
-        }
-
-        private string _currentMetaFileName = "";
-        public string CurrentMetaFileName
-        {
-            get { return _currentMetaFileName; }
-            set { _currentMetaFileName = value; OnPropertyChanged(nameof(CurrentMetaFileName)); }
-        }
-
-        private string _currentQoeFileName = "";
-        public string CurrentQoeFileName
-        {
-            get { return _currentQoeFileName; }
-            set { _currentQoeFileName = value; OnPropertyChanged(nameof(CurrentQoeFileName)); }
         }
 
         private bool _isPaused;

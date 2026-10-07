@@ -25,8 +25,8 @@ namespace IMUMoCap.Pipeline
     {
         // ── 可调参数 ──────────────────────────────────────────────────────────
         public float StaticGyroThreshold     { get; set; } = 0.3f; // rad/s
-        public int   StaticRequiredFrames    { get; set; } = 30;   // 0.3s 连续静止才开始采集
-        public int   StaticCollectFrames     { get; set; } = 300; // 采集 3s 数据
+        public int   StaticRequiredFrames    { get; set; } = 20;   // 0.2s 连续静止才开始采集
+        public int   StaticCollectFrames     { get; set; } = 200; // 采集 2s 数据
         public int   StaticTimeoutFrames     { get; set; } = 1000; // 10s 超时 → Failed
 
         // ── 状态 ──────────────────────────────────────────────────────────────

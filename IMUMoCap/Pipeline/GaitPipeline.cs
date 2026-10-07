@@ -67,6 +67,16 @@ namespace IMUMoCap.Pipeline
         /// </summary>
         public bool CalibrationArmed { get; set; } = false;
 
+        /// <summary>
+        /// MainWindow 在"等待参与者站定、触发下一个 stage 前的重新校准"期间设为 true。
+        /// InTraining 在这段等待期内本来就是 true（StartTraining 早就调过），如果不在这里拦一下，
+        /// Process() 会继续用旧校准产出 FpaResult 并触发 OnFpaResult——AR 端收到 fpa 广播后
+        /// OnFpaUpdate() 会调 ShowGraphicGroup()，把刚弹出的"Tap Start"确认按钮盖掉。
+        /// 一旦参与者真正点击开始（TriggerRecalibration 把 _calibration.State 拨出 Completed），
+        /// 下面既有的"校准完成前不运行后续模块"检查会自动接管，这个 flag 只覆盖"武装等待点击"这一小段。
+        /// </summary>
+        public bool AwaitingRecalibration { get; set; } = false;
+
         // 协议 §2.4 渐进式难度：容差带系数 α 随训练块递减（Block1=1.5, Block2=1.0, Block3=0.5）
         private static readonly float[] TrainingBlockAlphas = { 1.5f, 1.0f, 0.5f };
         public float CurrentToleranceAlpha => _fpa.ToleranceAlpha;
@@ -135,6 +145,22 @@ namespace IMUMoCap.Pipeline
             return true;
         }
 
+        /// <summary>
+        /// 在每个 training block / Retention 开始前重新校准零点，对抗 IMU 长时间漂移。
+        /// 与 TriggerCalibration() 不同：只重置校准本身 + 依赖校准参考的内部状态（PD 历史、
+        /// FPA 结算采样），不touch BaselineProfile/_fpa.Baseline，训练目标保留。
+        /// </summary>
+        public bool TriggerRecalibration()
+        {
+            if (_calibration.State != CalibrationState.Completed) return false;
+            _calibration.Reset();
+            _pd.Reset();
+            _fpa.Reset();
+            _calibration.TriggerStart();
+            OnCalibrationStateChanged?.Invoke(_calibration.State);
+            return true;
+        }
+
         internal void Process(ImuFrameBundle bundle)
         {
             _frameEntryTicks[bundle.PacketId] = Environment.TickCount64; // TEMP：延迟测量起点
@@ -164,6 +190,7 @@ namespace IMUMoCap.Pipeline
             }
 
             var profile = _calibration.Profile!;
+            if (AwaitingRecalibration) return;
 
             // Step 4: GaitEventDetector
             var gaitEvent = _gait.Detect(validFrame, profile);

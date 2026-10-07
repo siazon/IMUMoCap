@@ -78,9 +78,24 @@ namespace IMUMoCap
 
         // Experiment session recording (participant/condition/stage → file)
         private static readonly string[] ConditionStages = { "Baseline", "Training1", "Training2", "Training3", "Retention" };
+
+        // Row order for the at-a-glance flow checklist (MainWindow "Flow" panel) — mirrors the full
+        // protocol sequence including the Rest+MC/questionnaire windows that aren't in ConditionStages.
+        // MarkerStage non-null → the row renders an inline Mark button (see BtnMarkFlowItem_Click).
+        private static readonly (string Label, string? MarkerStage)[] ChecklistDefs =
+        {
+            ("Baseline", null), ("Training1", null), ("MC (Block1)", "ManipulationCheck_AfterBlock1"),
+            ("Training2", null), ("Training3", null), ("MC (Block3)", "ManipulationCheck_AfterBlock3"),
+            ("NASA-TLX #1", "NASA-TLX_Admin1"), ("IMI-PC", "IMI-PC"),
+            ("Retention", null), ("NASA-TLX #2", "NASA-TLX_Admin2"),
+        };
         private readonly Methods.ExperimentRecorder _recorder = new();
         private string _currentStage = "";
         private bool _isRetention = false; // true once _currentStage == "Retention": AR feedback removed
+        // True once Retention's 100/foot target (or the stall-prevention timeout) is reached. Data collection
+        // and step counting stop, but the recording stays open — the operator still has to mark NASA-TLX
+        // Admin 2 and click End Recording manually (Retention -> [NASA-TLX(2) marker] -> Ended).
+        private bool _retentionComplete = false;
         private int _retentionStepsL, _retentionStepsR; // valid steps collected during Retention (auto-end at 100/foot)
         private bool _inRest = false; // true during the 120s rest between Training2 and Training3 (_currentStage stays "Training2")
 
@@ -90,6 +105,26 @@ namespace IMUMoCap
         private int _lastBlock = 0;
         private int _lastRestDurationSec = 0;
         private string _lastReason = "";
+
+        // IF render-mode toggle (ParamsDialog checkboxes bound to MainPageVM.IsIfLiveMode /
+        // IsIfLastResultMode, mutually exclusive): tells the AR client which rendering mode to
+        // use for IF — "placeholder" (current shipped behavior, idle pose + terminal flash that
+        // reverts), "live" (continuous rotation driven by the `live` stream below), or
+        // "lastResult" (terminal flash that never reverts — the AR client just keeps showing the
+        // previous step's result until the next one). Does NOT gate whether `live` is broadcast —
+        // see OnDiagnosticsFrame — only which mode the AR client renders in. Default
+        // "lastResult", matching MainPageVM.IsIfLastResultMode's default value.
+        private string _ifRenderMode = "lastResult";
+
+        // Throttle-independent: most recently broadcast `live` angle per foot, kept so
+        // OnFpaResult's live-vs-fpa consistency log always has the latest value to compare
+        // against, even while rendering in placeholder mode.
+        private float _lastLiveAngleL = float.NaN;
+        private float _lastLiveAngleR = float.NaN;
+
+        // The `live` stream's throttle: source frames are 100Hz, but we only forward at 10Hz.
+        private const long LiveAngleIntervalMs = 100;
+        private long _lastLiveAngleSentTicks = 0;
         private readonly Dictionary<string, int> _stageAttempt = new();
         // Pure stall-prevention safety net, not a co-equal exit criterion — every step-count-gated stage's
         // real exit criterion is a fixed 100 valid steps/foot. Widened from 5min (which was tuned for the
@@ -102,7 +137,11 @@ namespace IMUMoCap
         // TrainingBlockMaxDuration for the same 100-step-target reason; same assumption applies.
         private static readonly TimeSpan BaselineMaxDuration = TimeSpan.FromMinutes(10);
         private const int RetentionTargetSteps = 100; // Retention ends at 100 valid steps/foot; TrainingBlockMaxDuration is the stall-prevention fallback (Research Overview §2.6)
-        private const int RestDurationSec = 120; // Rest between Training2 and Training3 (Research Overview §2.5)
+        private const int RestDurationSec = 120; // Rest+MC window after Training1 (Research Overview §2.5)
+        // Rest+MC+NASA-TLX Admin1(~5min)+IMI-PC window after Training3, before Retention.
+        // ASSUMPTION: exact floor not specified by the protocol doc (only the ~5min instrument portion is) —
+        // flagged for researcher confirmation.
+        private const int PostBlock3RestDurationSec = 300;
         private readonly System.Diagnostics.Stopwatch _stageStopwatch = new();
 
         public MainWindow()
@@ -130,6 +169,7 @@ namespace IMUMoCap
             {
                 new ImuViewModel(imuPelvis) { DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis },
                 new ImuViewModel(imuL)      { DeviceId = 0x10b41913, Role = ImuRole.Left   },
+                //new ImuViewModel(imuR)      { DeviceId = 0x00B43B3F, Role = ImuRole.Right  },
                 new ImuViewModel(imuR)      { DeviceId = 0x10B41904, Role = ImuRole.Right  },
             };
             _slotRegistry = new ImuSlotRegistry(imuList);
@@ -146,6 +186,9 @@ namespace IMUMoCap
             _content.StatusLabel = "Ready to calibration";
             _imuFrameCollector.SampleRateHz = _sampleRateHz;
             UpdateImuStatusIndicators();
+
+            foreach (var (label, markerStage) in ChecklistDefs)
+                _content.FlowChecklist.Add(new Model.ChecklistItem(label, markerStage));
 
             // 流水线事件订阅
             _pipeline.OnLog += msg => Dispatcher.BeginInvoke(() => log(msg));
@@ -173,40 +216,41 @@ namespace IMUMoCap
                 if (_recorder.IsRecording && !_content.IsPaused)
                     _recorder.WriteRow(row, _currentStage, _stageAttempt.GetValueOrDefault(_currentStage, 1));
 
-                // Broadcast the *raw* foot heading (relative to the calibration reference, no
-                // gait-event/gate filtering) on every IMU frame. This is NOT the true FPA (no
-                // progression-direction/gait semantics) — just current foot yaw. EF and IF both
-                // drive their live rotation from it. ChkLiveAngleToAr defaults to checked so this
-                // just works out of the box; the operator can uncheck it as a manual kill switch
-                // (e.g. if the network can't keep up) — unchecking always stops it, regardless of stage.
-                // Throttled to 10Hz (frames in between are dropped, not queued) — the source is
-                // 100Hz but WebSocket.SendAsync can't overlap itself, so sending every frame risks
-                // a concurrent-send exception (and client disconnect) if the network can't keep up.
-                long nowTicks = Environment.TickCount64;
-                if (_wsServer != null && ChkLiveAngleToAr.IsChecked == true
-                    && nowTicks - _lastLiveAngleSentTicks >= LiveAngleIntervalMs)
+                // IF-only real-time angle stream for AR ("live"), throttled to 10Hz (source
+                // is 100Hz). Sent unconditionally whenever IF/training/not-retention/not-rest —
+                // independent of _ifRenderMode, which only tells the AR client which rendering mode
+                // to use. Keeps `live` flowing even in placeholder mode so OnFpaResult's
+                // live-vs-fpa consistency log always has a recent value to compare against.
+                bool inTrainingForLive = _sessionState == TestState.Step;
+                if (_wsServer != null && ConditionForAr() == "IF" && inTrainingForLive && !_isRetention && !_inRest)
                 {
-                    _lastLiveAngleSentTicks = nowTicks;
-                    // Foot yaw relative to the *current* pelvis heading (not a fixed calibration foot
-                    // ref) — pelvis rotates with a turn, so this stays correct instead of flipping sign
-                    // when the participant turns around. The calibration-time foot/pelvis offset is
-                    // subtracted out (RawFootYawDeg) so it still reads ~0 at calibration.
-                    var calib = _pipeline.CalibrationProfile;
-                    float rawYawL = calib != null
-                        ? RawFootYawDeg(row.LeftQuat, row.PelvisQuat, calib.LeftFootRef, calib.PelvisRef) : float.NaN;
-                    float rawYawR = calib != null
-                        ? RawFootYawDeg(row.RightQuat, row.PelvisQuat, calib.RightFootRef, calib.PelvisRef) : float.NaN;
-
-                    _ = _wsServer.BroadcastJsonAsync(new
+                    long nowTicks = Environment.TickCount64;
+                    if (nowTicks - _lastLiveAngleSentTicks >= LiveAngleIntervalMs)
                     {
-                        type = "live",
-                        packetId = row.PacketId,
-                        angleL = rawYawL,
-                        angleR = rawYawR,
-                        confidence = row.MotionConfidence,
-                        stability = row.PdStability,
-                        ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    });
+                        _lastLiveAngleSentTicks = nowTicks;
+                        // Foot yaw relative to the *current* pelvis heading (not a fixed calibration foot
+                        // ref) — pelvis rotates with a turn, so this stays correct instead of flipping sign
+                        // when the participant turns around. The calibration-time foot/pelvis offset is
+                        // subtracted out (RawFootYawDeg) so it still reads ~0 at calibration.
+                        var calib = _pipeline.CalibrationProfile;
+                        float rawYawL = calib != null
+                            ? RawFootYawDeg(row.LeftQuat, row.PelvisQuat, calib.LeftFootRef, calib.PelvisRef) : float.NaN;
+                        float rawYawR = calib != null
+                            ? RawFootYawDeg(row.RightQuat, row.PelvisQuat, calib.RightFootRef, calib.PelvisRef) : float.NaN;
+                        _lastLiveAngleL = rawYawL;
+                        _lastLiveAngleR = rawYawR;
+
+                        _ = _wsServer.BroadcastJsonAsync(new
+                        {
+                            type = "live",
+                            packetId = row.PacketId,
+                            angleL = rawYawL,
+                            angleR = rawYawR,
+                            confidence = row.MotionConfidence,
+                            stability = row.PdStability,
+                            ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                        });
+                    }
                 }
             });
             _pipeline.OnStepOutcome += (foot, emitted, reason) => Dispatcher.BeginInvoke(() =>
@@ -236,18 +280,36 @@ namespace IMUMoCap
                 _content.LeftGapCount = frameQuality.LeftFootGapFrames;
                 _content.RightGapCount = frameQuality.RightFootGapFrames;
 
+                // Rest window auto-advance: once the minimum duration has elapsed, move on by itself —
+                // no participant/operator "Continue" tap needed, since AdvanceStage() immediately arms
+                // the pre-stage recalibration prompt ("Tap Ready"), which already serves as the resume
+                // signal. The PC's own stopwatch is the only timer trusted for protocol-timing integrity.
+                if (!_isReplaying && _inRest)
+                {
+                    int requiredRestSec = _restBlockJustFinished == 3 ? PostBlock3RestDurationSec : RestDurationSec;
+                    if (_stageStopwatch.Elapsed >= TimeSpan.FromSeconds(requiredRestSec))
+                    {
+                        log($"Rest complete ({requiredRestSec}s elapsed) — advancing to recalibration.");
+                        AdvanceStage();
+                    }
+                }
+
                 // Training block stall-prevention fallback: ends the block at the timeout even if 100 steps/foot wasn't reached.
                 if (!_isReplaying && !_inRest && IsTrainingBlockStage(_currentStage) && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
                     EndTrainingBlock();
 
-                // Retention stall-prevention fallback: ends the whole flow at the timeout even if 100 steps/foot wasn't reached.
-                if (!_isReplaying && _isRetention && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
-                    EndFlow("retention stall-prevention timeout");
+                // Retention stall-prevention fallback: stops data collection at the timeout even if 100 steps/foot
+                // wasn't reached; the operator still finishes the flow manually via End Recording after NASA-TLX Admin 2.
+                if (!_isReplaying && _isRetention && !_retentionComplete && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
+                    CompleteRetention("retention stall-prevention timeout");
+
+                RefreshChecklist();
             };
             _timelineTimer.Start();
 
             // 参数同步：VM 属性变化时推入 pipeline
             _content.PropertyChanged += (_, e) => SyncParamToPipeline(e.PropertyName);
+            _content.PropertyChanged += (_, e) => SyncIfRenderModeFromVm(e.PropertyName);
             LoadParamsIfExists();
 
             StartScanAsync();
@@ -395,19 +457,19 @@ namespace IMUMoCap
                     case "ReadyForCalibration":
                         Dispatcher.Invoke(() =>
                         {
-                            if (_pipeline.TriggerCalibration())
+                            if (_pendingStageEntry != null)
+                            {
+                                if (_pipeline.TriggerRecalibration())
+                                    log($"WS: participant signaled ready — recalibration triggered before {_pendingStageEntry}.");
+                                else
+                                    log("WS: participant signaled ready for recalibration, but pipeline rejected it.");
+                            }
+                            else if (_pipeline.TriggerCalibration())
                                 log("WS: participant signaled ready — calibration triggered.");
                             else
                                 log("WS: participant signaled ready, but calibration isn't armed yet (Start Condition not open).");
                         });
                         break;
-
-                    case "continueTraining":
-                    {
-                        int fromBlock = root.TryGetProperty("fromBlock", out var fb) && fb.TryGetInt32(out var v) ? v : -1;
-                        Dispatcher.Invoke(() => HandleContinueTraining(fromBlock));
-                        break;
-                    }
 
                     case "stop":
                     case "Stop":
@@ -586,10 +648,6 @@ namespace IMUMoCap
 
         private bool _loggedLiveDuringReplay = false;
 
-        // ChkLiveAngleToAr throttle: source frames are 100Hz, but we only forward at 10Hz.
-        private const long LiveAngleIntervalMs = 100;
-        private long _lastLiveAngleSentTicks = 0;
-
         void OnXsensData(ImuRole sensor, uint deviceId, XsDataPacket packet)
         {
             if (_isReplaying)
@@ -654,6 +712,7 @@ namespace IMUMoCap
                 directionL,
                 targetR,
                 directionR,
+                ifRenderMode = _ifRenderMode,
                 ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             });
             LogArEvent($"type=state  state={state}  condition={condition}  block={block}");
@@ -676,6 +735,7 @@ namespace IMUMoCap
                 directionL,
                 targetR,
                 directionR,
+                ifRenderMode = _ifRenderMode,
                 ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             });
         }
@@ -693,20 +753,9 @@ namespace IMUMoCap
 
         private static string DirectionForAr(TrainingDirection d) => d == TrainingDirection.ToeIn ? "toe-in" : "toe-out";
 
-        // WS `condition` field: "" before Start Condition is clicked.
-        private string ConditionForAr() => _recorder.Condition is "EF" or "IF" ? _recorder.Condition : "";
-
-        private static int BlockForStage(string stage) => stage switch
-        {
-            "Training1" => 1,
-            "Training2" => 2,
-            "Training3" => 3,
-            _ => 0,
-        };
-
         // Foot yaw relative to pelvis yaw, in degrees, with the calibration-time foot/pelvis mounting
         // offset removed (reads ~0 at calibration; pelvis is the moving reference so it stays correct
-        // through a turn). No gait-event gating — used only by the ChkLiveAngleToAr debug switch;
+        // through a turn). No gait-event gating — used only by the `live` stream;
         // NOT the true FPA (see FpaEngine).
         private static float RawFootYawDeg(System.Numerics.Quaternion footNow, System.Numerics.Quaternion pelvisNow,
             System.Numerics.Quaternion footRef, System.Numerics.Quaternion pelvisRef)
@@ -719,6 +768,17 @@ namespace IMUMoCap
 
         private static float ExtractYaw(System.Numerics.Quaternion q)
             => MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y), 1f - 2f * (q.Y * q.Y + q.Z * q.Z));
+
+        // WS `condition` field: "" before Start Condition is clicked.
+        private string ConditionForAr() => _recorder.Condition is "EF" or "IF" ? _recorder.Condition : "";
+
+        private static int BlockForStage(string stage) => stage switch
+        {
+            "Training1" => 1,
+            "Training2" => 2,
+            "Training3" => 3,
+            _ => 0,
+        };
 
         // Tells the AR client the operator redid the current stage, so it resets locally-tracked counters.
         private void BroadcastRedo(string stage, int attempt, string reason)
@@ -759,26 +819,50 @@ namespace IMUMoCap
                     break;
 
                 case CalibrationState.CollectingStaticPose:
-                    _content.StatusLabel = "Calibrating... Stand still.";
                     _sessionState = TestState.Calibrating;
-                    BroadcastArState("calibrating");
+                    if (_pendingStageEntry != null)
+                    {
+                        _content.StatusLabel = $"Recalibrating before {_pendingStageEntry}... Stand still.";
+                        BroadcastArState("calibrating", reason: "Quick recheck — please stand still for a moment before continuing.");
+                    }
+                    else
+                    {
+                        _content.StatusLabel = "Calibrating... Stand still.";
+                        BroadcastArState("calibrating");
+                    }
                     break;
 
                 case CalibrationState.Completed:
-                    _content.StatusLabel = "Calibration done. Starting baseline walk.";
-                    _content.CalibrationState = "Calibrated";
-                    _sessionState = TestState.Calibrated;
-                    _pipeline.StartBaseline();
-                    BroadcastArState("baseline");
-                    _sessionState = TestState.Baseline;
-                    _content.StatusLabel = "Baseline: Walk until both feet reach 100 steps.";
-                    StartBaselineTimeoutTimer();
+                    if (_pendingStageEntry is { } nextStage)
+                    {
+                        _pendingStageEntry = null;
+                        EnterStage(nextStage);
+                    }
+                    else
+                    {
+                        _content.StatusLabel = "Calibration done. Starting baseline walk.";
+                        _content.CalibrationState = "Calibrated";
+                        _sessionState = TestState.Calibrated;
+                        _pipeline.StartBaseline();
+                        BroadcastArState("baseline");
+                        _sessionState = TestState.Baseline;
+                        _content.StatusLabel = "Baseline: Walk until both feet reach 100 steps.";
+                        StartBaselineTimeoutTimer();
+                    }
                     break;
 
                 case CalibrationState.Failed:
-                    _content.StatusLabel = "Calibration failed. Please restart the application.";
-                    _sessionState = TestState.Launching;
-                    BroadcastArState("error", "Calibration failed");
+                    if (_pendingStageEntry != null)
+                    {
+                        _content.StatusLabel = $"Recalibration before {_pendingStageEntry} failed — please stand still and try again.";
+                        BroadcastArState("armed", reason: "Quick recheck before continuing.\nTap Ready when you are.");
+                    }
+                    else
+                    {
+                        _content.StatusLabel = "Calibration failed. Please restart the application.";
+                        _sessionState = TestState.Launching;
+                        BroadcastArState("error", "Calibration failed");
+                    }
                     break;
             }
         }
@@ -797,16 +881,15 @@ namespace IMUMoCap
             }
             _sessionState = TestState.Step;
             _pipeline.StartTraining(); // resets tolerance α to the Block 1 default before we display it below
-            _content.StatusLabel =
-                $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
-                $"R={profile.Target_R:F1}° ({profile.Direction_R})";
-
             _recorder.SaveBaseline(profile);
 
             // Advance the experiment stage bookkeeping (Baseline → Training1) so tolerance α, CSV stage
             // tagging, and the 100-step auto-termination (with stall-prevention timeout fallback) all pick
             // up correctly. AdvanceStage also broadcasts state=training with block=1. Only meaningful when
             // a real condition recording is open (Start Condition was clicked first).
+            // StatusLabel is NOT set to "Training started..." here — AdvanceStage() arms the recalibration
+            // gate first (see _pendingStageEntry), so that message belongs in EnterStage() once training
+            // actually begins, not before the participant has even stood still for recalibration.
             if (_recorder.IsRecording && _currentStage == "Baseline")
             {
                 AdvanceStage();
@@ -814,6 +897,9 @@ namespace IMUMoCap
             else
             {
                 // No recording open (e.g. calibration-only test run) — still show target/tolerance locally.
+                _content.StatusLabel =
+                    $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
+                    $"R={profile.Target_R:F1}° ({profile.Direction_R})";
                 BroadcastArState("training", blockOverride: 1);
                 _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_L})";
                 _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_R})";
@@ -945,6 +1031,55 @@ namespace IMUMoCap
             }
         }
 
+        private void BtnOpenDataFolder_Click(object sender, RoutedEventArgs e)
+        {
+            var sessionPath = _recorder.CurrentSessionFilePath;
+            if (string.IsNullOrEmpty(sessionPath))
+            {
+                log("Open Data Folder: no condition started yet.");
+                return;
+            }
+            var dir = Path.GetDirectoryName(sessionPath);
+            if (dir == null || !Directory.Exists(dir))
+            {
+                log($"Open Data Folder: folder not found ({dir}).");
+                return;
+            }
+            System.Diagnostics.Process.Start("explorer.exe", dir);
+        }
+
+        // Guards SyncIfRenderModeFromVm's own IsIfLiveMode/IsIfLastResultMode writes (enforcing
+        // mutual exclusivity below) from re-entering itself via the _content.PropertyChanged
+        // subscription.
+        private bool _suppressIfRenderModeSync = false;
+
+        // Reacts to the ParamsDialog checkboxes (bound to MainPageVM.IsIfLiveMode/
+        // IsIfLastResultMode) via _content.PropertyChanged — switches which rendering mode the AR
+        // client uses for IF (placeholder / live-angle / last-result-sticky). Takes effect
+        // immediately, no pause/reconnect needed: updates _ifRenderMode and re-broadcasts the
+        // current state right away so a connected client picks it up without waiting for the next
+        // natural state transition. The two VM properties are mutually exclusive (setting one
+        // clears the other) since the AR client only supports one IF render mode at a time.
+        private void SyncIfRenderModeFromVm(string? propName)
+        {
+            if (propName != nameof(MainPageVM.IsIfLiveMode) && propName != nameof(MainPageVM.IsIfLastResultMode))
+                return;
+            if (_suppressIfRenderModeSync) return;
+
+            _suppressIfRenderModeSync = true;
+            if (propName == nameof(MainPageVM.IsIfLiveMode) && _content.IsIfLiveMode)
+                _content.IsIfLastResultMode = false;
+            else if (propName == nameof(MainPageVM.IsIfLastResultMode) && _content.IsIfLastResultMode)
+                _content.IsIfLiveMode = false;
+            _suppressIfRenderModeSync = false;
+
+            _ifRenderMode = _content.IsIfLiveMode ? "live"
+                          : _content.IsIfLastResultMode ? "lastResult"
+                          : "placeholder";
+            log($"[IF] Render mode switched to '{_ifRenderMode}'.");
+            BroadcastArState(_lastState, _lastReason, _lastRestDurationSec, _lastBlock);
+        }
+
         // ── 实验会话：Participant/Condition/Stage → 文件 ─────────────────────────
 
         private void BtnStartCondition_Click(object sender, RoutedEventArgs e)
@@ -969,17 +1104,32 @@ namespace IMUMoCap
             }
 
             _recorder.StartCondition(participantId, condition, orderGroup);
+            // Clears BaselineProfile and all per-module internal state (gait/motion/PD/FPA) left over
+            // from whatever ran before — without this, RefreshChecklist() reads the PREVIOUS
+            // participant/condition's BaselineProfile and shows Baseline as already done.
+            _pipeline.Reset();
             _pipeline.CalibrationArmed = true;
             _stageAttempt.Clear();
             _currentStage = ConditionStages[0];
             _isRetention = false;
+            _retentionComplete = false;
+            _restBlockJustFinished = 0;
+            if (FindMarkerItem("ManipulationCheck_AfterBlock1") is { } mc1) mc1.CanMark = false;
+            if (FindMarkerItem("ManipulationCheck_AfterBlock3") is { } mc3) mc3.CanMark = false;
+            if (FindMarkerItem("NASA-TLX_Admin1") is { } tlx1) tlx1.CanMark = false;
+            if (FindMarkerItem("IMI-PC") is { } imiPc) imiPc.CanMark = false;
+            if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = false;
+            _mc1Marked = false;
+            _mc3Marked = false;
+            _nasaTlx1Marked = false;
+            _imiPcMarked = false;
+            _nasaTlx2Marked = false;
             _stageStopwatch.Restart();
             _recorder.BeginStage(_currentStage);
+            RefreshChecklist();
 
             _content.CurrentStageLabel = _currentStage;
             _content.CurrentSessionFileName = _recorder.CurrentSessionFilePath ?? "";
-            _content.CurrentMetaFileName = _recorder.CurrentMetaFilePath ?? "";
-            _content.CurrentQoeFileName = _recorder.CurrentQoeFilePath ?? "";
             _content.TurningExclusionDisplay = "";
             _content.BlockStepsDisplay = "L 0 · R 0";
             BroadcastArState("armed"); // tells the AR client it can show its "ready to calibrate" button
@@ -999,8 +1149,9 @@ namespace IMUMoCap
         private static bool IsTrainingBlockStage(string stage) =>
             stage is "Training1" or "Training2" or "Training3";
 
-        // A training block finished (100 steps/foot or the stall-prevention timeout). Training2 goes to
-        // the 120s rest first (Research Overview §2.5); every other block advances straight to the next stage.
+        // A training block finished (100 steps/foot or the stall-prevention timeout). Training1 and Training3
+        // each go to a Rest+MC window first (Research Overview §2.5); Training2 advances straight to Training3
+        // (no rest/MC between Block2 and Block3 by design).
         // Guards against a duplicate block-completion event for the same block: the 100-steps/foot
         // pipeline event is queued via Dispatcher.BeginInvoke (background thread), while the timeout
         // fires synchronously on the UI thread's DispatcherTimer.Tick — if both conditions are
@@ -1014,70 +1165,133 @@ namespace IMUMoCap
             if (_trainingBlockEnding) return; // stale duplicate completion event for this block — ignore
             _trainingBlockEnding = true;
 
-            if (_currentStage == "Training2")
-                EnterRest();
-            else
-                AdvanceStage();
+            switch (_currentStage)
+            {
+                case "Training1":
+                    EnterRest(blockJustFinished: 1, durationSec: RestDurationSec);
+                    break;
+                case "Training3":
+                    EnterRest(blockJustFinished: 3, durationSec: PostBlock3RestDurationSec);
+                    break;
+                default: // Training2 → Training3: no rest/MC window by design
+                    AdvanceStage();
+                    break;
+            }
         }
 
-        // Enters the 120s rest between Training2 and Training3. Stays in the Training2 recording stage
-        // (rest is not a data stage). Advance to Training3 happens on AR `continueTraining` or the
-        // operator Next Stage button. _stageStopwatch is restarted so the server can enforce the 120s min.
-        private void EnterRest()
+        // Which training block the current rest window follows (1 or 3) — decides the required rest
+        // duration (_timelineTimer's auto-advance check below) and which block number is broadcast
+        // to the AR client.
+        private int _restBlockJustFinished;
+
+        // Enters the Rest+MC window after Training1 or Training3. Stays in the just-finished training stage
+        // (rest is not a data stage). _stageStopwatch is restarted so the server can enforce the minimum
+        // duration; _timelineTimer's tick auto-advances (via AdvanceStage(), which now also arms the
+        // pre-stage recalibration prompt) once that duration has elapsed — no separate participant/operator
+        // "Continue" tap is needed, since the recalibration "Tap Ready" prompt that follows already serves
+        // as the resume signal.
+        // MC (Manipulation Check) is a real RA-administered questionnaire, same as NASA-TLX/IMI-PC — it is
+        // NOT auto-logged; the operator marks it via its own inline Mark button once the RA actually
+        // administers it (see BtnMarkFlowItem_Click).
+        private void EnterRest(int blockJustFinished, int durationSec)
         {
             _inRest = true;
-            BtnContinueRest.IsEnabled = true;
+            _restBlockJustFinished = blockJustFinished;
+            bool isPostBlock3 = blockJustFinished == 3;
+            if (FindMarkerItem("ManipulationCheck_AfterBlock1") is { } mc1) mc1.CanMark = blockJustFinished == 1;
+            if (FindMarkerItem("ManipulationCheck_AfterBlock3") is { } mc3) mc3.CanMark = isPostBlock3;
+            if (FindMarkerItem("NASA-TLX_Admin1") is { } tlx1) tlx1.CanMark = isPostBlock3;
+            if (FindMarkerItem("IMI-PC") is { } imiPc) imiPc.CanMark = isPostBlock3;
             _content.CurrentStageLabel = $"{_currentStage} (Resting)";
             _stageStopwatch.Restart();
-            BroadcastArState("rest", restDurationSec: RestDurationSec, blockOverride: 2);
-            log($"Rest started ({RestDurationSec}s) after Training2 — waiting for participant Continue.");
+            BroadcastArState("rest", restDurationSec: durationSec, blockOverride: blockJustFinished);
+            log($"Rest started ({durationSec}s) after Training{blockJustFinished} — auto-advances to recalibration when elapsed. Manipulation Check due.");
         }
 
-        // AR `continueTraining` after the rest countdown. Advances to Training3 only if we are actually
-        // in rest, the just-finished block matches (2), and the 120s minimum has really elapsed — the PC
-        // never trusts the client's own timer for protocol-timing integrity.
-        private void HandleContinueTraining(int fromBlock)
+        // Pure audit-trail markers for RA-administered instruments (paper/RA-administered, not rendered by
+        // this app) — just timestamps the moment into the Meta JSON so it doesn't build questionnaire UI.
+        // The five "was it clicked" flags below back the End Recording completeness check (see BtnEndCondition_Click)
+        // — they only ever get cleared in BtnStartCondition_Click, never on stage advance/pause/redo, since a
+        // marker represents a real paper-instrument event that stays true regardless of later data-collection redos.
+        private bool _mc1Marked = false;
+        private bool _mc3Marked = false;
+        private bool _nasaTlx1Marked = false;
+        private bool _imiPcMarked = false;
+        private bool _nasaTlx2Marked = false;
+
+        // Single handler for every inline Mark button rendered in the Flow checklist (see MainWindow.xaml's
+        // ItemsControl.ItemTemplate) — which marker it logs comes from the clicked row's own MarkerStage,
+        // read off the Button's DataContext (the bound ChecklistItem), not from separate named handlers.
+        private void BtnMarkFlowItem_Click(object sender, RoutedEventArgs e)
         {
-            if (!_inRest)
+            if ((sender as FrameworkElement)?.DataContext is not Model.ChecklistItem { MarkerStage: { } stage } item) return;
+
+            _recorder.MarkStageEvent(stage);
+            switch (stage)
             {
-                log($"WS: continueTraining ignored — not in rest (fromBlock={fromBlock}).");
-                return;
+                case "ManipulationCheck_AfterBlock1": _mc1Marked = true; break;
+                case "ManipulationCheck_AfterBlock3": _mc3Marked = true; break;
+                case "NASA-TLX_Admin1": _nasaTlx1Marked = true; break;
+                case "IMI-PC": _imiPcMarked = true; break;
+                case "NASA-TLX_Admin2": _nasaTlx2Marked = true; break;
             }
-            if (fromBlock != 2)
-            {
-                log($"WS: continueTraining ignored — fromBlock={fromBlock} != 2 (stale/duplicate).");
-                return;
-            }
-            if (_stageStopwatch.Elapsed < TimeSpan.FromSeconds(RestDurationSec))
-            {
-                log($"WS: continueTraining rejected — only {_stageStopwatch.Elapsed.TotalSeconds:F0}s of {RestDurationSec}s rest elapsed.");
-                return;
-            }
-            log("WS: continueTraining accepted → Training3.");
-            AdvanceStage(); // Training2 → Training3 (clears _inRest, broadcasts state=training block=3)
+            log($"Marker logged: {stage}");
+            RefreshChecklist(); // instant feedback instead of waiting for the next 60ms timer tick
         }
 
-        // Operator-side equivalent of the AR client's Continue button — goes through the same
-        // HandleContinueTraining() guards (must be in rest, 120s minimum elapsed).
-        private void BtnContinueRest_Click(object sender, RoutedEventArgs e)
-        {
-            HandleContinueTraining(2);
-        }
+        private Model.ChecklistItem? FindMarkerItem(string markerStage) =>
+            _content.FlowChecklist.FirstOrDefault(i => i.MarkerStage == markerStage);
+
+        // Set while waiting for the pre-stage recalibration (see AdvanceStage/EnterStage) to complete —
+        // holds the stage name we're about to enter once CalibrationState.Completed fires again.
+        private string? _pendingStageEntry;
 
         /// <summary>
         /// Moves _currentStage to the next entry in ConditionStages. Called both manually (Next Stage button)
         /// and automatically — training block auto-completion (100 valid steps/foot) and the stall-prevention
         /// timeout both call this too (Research Overview §2.6).
+        ///
+        /// Every stage entered this way first requires a fresh calibration (IMU yaw drift bounding —
+        /// see docs/task19_calibration_duration_tuning.py analysis): this method only closes out the
+        /// current stage and arms the recalibration prompt; EnterStage() (the old tail of this method)
+        /// runs once the participant has stood still and CalibrationState.Completed fires again.
         /// </summary>
         private void AdvanceStage()
         {
+            if (_pendingStageEntry != null) return; // already awaiting recalibration for the next stage
             _inRest = false; // any stage advance ends a pending rest
-            BtnContinueRest.IsEnabled = false;
+            if (FindMarkerItem("ManipulationCheck_AfterBlock1") is { } mc1) mc1.CanMark = false;
+            if (FindMarkerItem("ManipulationCheck_AfterBlock3") is { } mc3) mc3.CanMark = false;
+            if (FindMarkerItem("NASA-TLX_Admin1") is { } tlx1) tlx1.CanMark = false;
+            if (FindMarkerItem("IMI-PC") is { } imiPc) imiPc.CanMark = false;
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             if (idx < 0 || idx >= ConditionStages.Length - 1) return;
 
             _recorder.EndStage(_currentStage);
-            _currentStage = ConditionStages[idx + 1];
+            string nextStage = ConditionStages[idx + 1];
+            _pendingStageEntry = nextStage;
+            _pipeline.AwaitingRecalibration = true; // freeze fpa/training output until the participant taps Ready (see GaitPipeline.AwaitingRecalibration)
+            _content.CurrentStageLabel = $"{_currentStage} → {nextStage} (Recalibrating)";
+            _content.StatusLabel = $"Recalibrating before {nextStage} — waiting for participant to tap Ready.";
+            _recorder.MarkStageEvent($"Recalibrate_Before{nextStage}");
+            BroadcastArState("armed", reason: "Quick recheck before continuing.\nTap Ready when you are.");
+            log($"Recalibrating before {nextStage} — waiting for participant ready signal.");
+        }
+
+        /// <summary>
+        /// Actually begins `stage` — the old tail of AdvanceStage(), run once the pre-stage recalibration
+        /// (armed above) completes. Unchanged from before the recalibration gate was added.
+        /// </summary>
+        private void EnterStage(string stage)
+        {
+            _pipeline.AwaitingRecalibration = false;
+            // OnCalibrationStateChanged's CollectingStaticPose case set _sessionState = Calibrating for
+            // the recalibration we just finished; restore it to Step so inTraining/inTrainingForLive
+            // checks (BlockStepsDisplay, on-target backgrounds, the IF live-angle broadcast) resume —
+            // otherwise they stay stuck off for the rest of the condition after the very first
+            // recalibration gate (Baseline→Training1 included).
+            _sessionState = TestState.Step;
+            _currentStage = stage;
             _recorder.BeginStage(_currentStage);
             _recorder.FlushMeta();
             _stageStopwatch.Restart();
@@ -1100,6 +1314,9 @@ namespace IMUMoCap
                 BroadcastArState("training"); // block field reflects the just-entered training block (spec #8)
                 if (_pipeline.BaselineProfile is { } bp)
                 {
+                    _content.StatusLabel =
+                        $"Training started. Target L={bp.Target_L:F1}° ({bp.Direction_L})  " +
+                        $"R={bp.Target_R:F1}° ({bp.Direction_R})";
                     _content.LeftFpaTarget = $"Target {bp.Target_L:F1}° ±{bp.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({bp.Direction_L})";
                     _content.RightFpaTarget = $"Target {bp.Target_R:F1}° ±{bp.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({bp.Direction_R})";
                 }
@@ -1108,7 +1325,10 @@ namespace IMUMoCap
             {
                 // Immediate Retention Test: AR feedback removed, FPA data collection continues (Research Overview §2.6).
                 _isRetention = true;
+                _retentionComplete = false;
                 _retentionStepsL = _retentionStepsR = 0;
+                if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = false;
+                _content.StatusLabel = "Retention: AR feedback removed, walk naturally.";
                 BroadcastArState("retention");
             }
 
@@ -1117,7 +1337,99 @@ namespace IMUMoCap
 
         private void BtnEndCondition_Click(object sender, RoutedEventArgs e)
         {
+            var missing = MissingExpectedMarkers();
+            if (missing.Count > 0)
+            {
+                var proceed = MessageBox.Show(
+                    $"The following audit markers haven't been logged yet:\n\n{string.Join("\n", missing)}\n\n" +
+                    "If the RA already administered these on paper, go back and click the matching Mark button first. End Recording anyway?",
+                    "Audit markers missing", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                if (proceed != MessageBoxResult.Yes)
+                {
+                    log($"End Recording cancelled — missing markers: {string.Join(", ", missing)}");
+                    return;
+                }
+                log($"End Recording confirmed despite missing markers: {string.Join(", ", missing)}");
+            }
             EndFlow("operator ended");
+        }
+
+        // Recomputes the whole flow checklist from current session state every call (called from the
+        // 60ms timeline timer) rather than being pushed from each individual mutation site — cheap for
+        // 10 rows, and guarantees the panel can never drift out of sync with the state it's reflecting.
+        private void RefreshChecklist()
+        {
+            if (_content.FlowChecklist.Count == 0) return; // not yet initialized
+
+            int idx = Array.IndexOf(ConditionStages, _currentStage);
+            bool baselineDone   = _pipeline.BaselineProfile != null;
+            bool training1Done  = _restBlockJustFinished >= 1; // Block1's rest window opens the instant Training1 finishes
+            bool mc1Due         = _restBlockJustFinished >= 1; // Block1's rest window is MC1's mark-it window
+            bool training2Done  = idx >= Array.IndexOf(ConditionStages, "Training3"); // no rest window follows Block2
+            bool training3Done  = _restBlockJustFinished == 3; // Block3's rest window opens the instant Training3 finishes
+            bool block3WindowDue = _restBlockJustFinished == 3; // MC3/NASA-TLX1/IMI-PC all live in this window
+
+            SetChecklist("Baseline", baselineDone);
+            SetChecklist("Training1", training1Done);
+            SetChecklistMarker("MC (Block1)", mc1Due, _mc1Marked);
+            SetChecklist("Training2", training2Done);
+            SetChecklist("Training3", training3Done);
+            SetChecklistMarker("MC (Block3)", block3WindowDue, _mc3Marked);
+            SetChecklistMarker("NASA-TLX #1", block3WindowDue, _nasaTlx1Marked);
+            SetChecklistMarker("IMI-PC", block3WindowDue, _imiPcMarked);
+            SetChecklist("Retention", _retentionComplete);
+            SetChecklistMarker("NASA-TLX #2", _retentionComplete, _nasaTlx2Marked);
+        }
+
+        private void SetChecklist(string label, bool done) =>
+            SetChecklistStatus(label, done ? Model.ChecklistStatus.Done : Model.ChecklistStatus.Pending);
+
+        // For the 3 manual-click audit markers: Done once clicked, Missing once its window is reached but
+        // not yet clicked, Pending before the window is reached (nothing to do yet, not worth flagging).
+        private void SetChecklistMarker(string label, bool due, bool marked) =>
+            SetChecklistStatus(label, marked ? Model.ChecklistStatus.Done
+                                    : due    ? Model.ChecklistStatus.Missing
+                                             : Model.ChecklistStatus.Pending);
+
+        private void SetChecklistStatus(string label, Model.ChecklistStatus status)
+        {
+            foreach (var item in _content.FlowChecklist)
+            {
+                if (item.Label == label) { item.Status = status; return; }
+            }
+        }
+
+        // Only flags a marker as missing once the stage that's supposed to produce it has actually been
+        // reached — an operator ending early (dropout, equipment failure) before Block3's rest window or
+        // before Retention finished should NOT be nagged about instruments that were never due yet.
+        private List<string> MissingExpectedMarkers()
+        {
+            var missing = new List<string>();
+            if (_restBlockJustFinished >= 1 && !_mc1Marked)
+                missing.Add("Manipulation Check (Block1)");
+            if (_restBlockJustFinished == 3)
+            {
+                if (!_mc3Marked) missing.Add("Manipulation Check (Block3)");
+                if (!_nasaTlx1Marked) missing.Add("NASA-TLX Admin 1");
+                if (!_imiPcMarked) missing.Add("IMI-PC");
+            }
+            if (_retentionComplete && !_nasaTlx2Marked)
+                missing.Add("NASA-TLX Admin 2");
+            return missing;
+        }
+
+        /// <summary>
+        /// Retention's 100/foot target (or the stall-prevention timeout) was reached. Stops step counting
+        /// but does NOT close the recording — Retention -> [NASA-TLX(2) marker] -> Ended still needs the
+        /// operator to mark NASA-TLX Admin 2 and click End Recording. Idempotent.
+        /// </summary>
+        private void CompleteRetention(string reason)
+        {
+            if (_retentionComplete) return;
+            _retentionComplete = true;
+            if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = true;
+            _content.StatusLabel = "Retention complete. Administer NASA-TLX (Admin 2), then click End Recording.";
+            log($"Retention complete ({reason}) — awaiting NASA-TLX Admin 2 before ending. Click End Recording when done.");
         }
 
         /// <summary>
@@ -1130,12 +1442,17 @@ namespace IMUMoCap
             if (!_recorder.IsRecording) return;
             _isRetention = false;
             _inRest = false;
-            BtnContinueRest.IsEnabled = false;
+            _pendingStageEntry = null;
+            _pipeline.AwaitingRecalibration = false;
             _baselineTimer?.Stop();
             _recorder.EndStage(_currentStage);
             _recorder.FlushMeta();
             _recorder.Close();
             _pipeline.CalibrationArmed = false;
+            // Belt-and-suspenders alongside BtnStartCondition_Click's own _pipeline.Reset() — leaves
+            // no stale BaselineProfile/module state lingering in the UI between End Recording and
+            // whenever the operator gets around to starting the next condition.
+            _pipeline.Reset();
             _stageStopwatch.Stop();
             BroadcastArState("ended");
             log($"Recording closed ({reason}): {_content.CurrentSessionFileName}");
@@ -1703,9 +2020,10 @@ namespace IMUMoCap
             if (inTraining && !_isRetention)
                 _content.BlockStepsDisplay = $"L {_pipeline.TrainingStepsL} · R {_pipeline.TrainingStepsR}";
 
-            // Immediate Retention Test: count valid steps and end the whole flow at 100/foot (the stall-prevention
-            // timeout is handled by the timeline timer). AR feedback is removed, so no fpa is broadcast below.
-            if (_isRetention && _recorder.IsRecording)
+            // Immediate Retention Test: count valid steps until 100/foot (the stall-prevention timeout is
+            // handled by the timeline timer). AR feedback is removed, so no fpa is broadcast below. Completion
+            // stops counting but does not close the recording — see CompleteRetention().
+            if (_isRetention && _recorder.IsRecording && !_retentionComplete)
             {
                 if (!float.IsNaN(result.Fpa_L)) _retentionStepsL++;
                 if (!float.IsNaN(result.Fpa_R)) _retentionStepsR++;
@@ -1713,7 +2031,7 @@ namespace IMUMoCap
                 BroadcastStepProgress("retention", _retentionStepsL, _retentionStepsR, RetentionTargetSteps);
                 if (_retentionStepsL >= RetentionTargetSteps && _retentionStepsR >= RetentionTargetSteps)
                 {
-                    EndFlow($"retention target reached ({_retentionStepsL}/{_retentionStepsR} valid steps)");
+                    CompleteRetention($"retention target reached ({_retentionStepsL}/{_retentionStepsR} valid steps)");
                     return;
                 }
             }
@@ -1748,6 +2066,19 @@ namespace IMUMoCap
 
                 LogArEvent($"type=fpa  stage={stageTag}  packetId={result.PacketId}  " +
                     $"L={result.Fpa_L:F1}°({(result.OnTarget_L ? "OK" : "ERR")})  R={result.Fpa_R:F1}°({(result.OnTarget_R ? "OK" : "ERR")})  quality={result.Quality}");
+
+                // Live-vs-fpa consistency log: pairs each settled foot's final fpa value with the
+                // most recent `live` angle received for that foot — offline input only, not shown
+                // in the UI. See ExperimentRecorder.WriteLiveVsFpaConsistency.
+                if (_recorder.IsRecording)
+                {
+                    long tsNow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    var (targetL, _, targetR, _) = TargetForAr();
+                    if (!float.IsNaN(result.Fpa_L))
+                        _recorder.WriteLiveVsFpaConsistency(result.PacketId, tsNow, "L", _lastLiveAngleL, result.Error_L, result.Fpa_L, targetL);
+                    if (!float.IsNaN(result.Fpa_R))
+                        _recorder.WriteLiveVsFpaConsistency(result.PacketId, tsNow, "R", _lastLiveAngleR, result.Error_R, result.Fpa_R, targetR);
+                }
             }
         }
 

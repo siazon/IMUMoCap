@@ -47,8 +47,18 @@ namespace IMUMoCap.Pipeline.Models
     }
 
     /// <summary>
+    /// 纯审计用的时间戳标记：Manipulation Check / NASA-TLX / IMI-PC 等由 RA 在纸面上主持的量表，
+    /// 软件不渲染其内容，只在对应时刻记一笔 {Stage, TimestampUtc}。
+    /// </summary>
+    public sealed class StageMarker
+    {
+        public string Stage { get; set; } = "";
+        public DateTime TimestampUtc { get; set; }
+    }
+
+    /// <summary>
     /// 每个 condition（EF/IF）一份的元数据文件内容：
-    /// 个性化基线/目标参数 + 暂停记录 + 各阶段的最终有效 Attempt 号 + 各阶段 step 排除统计 + 各阶段耗时。
+    /// 个性化基线/目标参数 + 暂停记录 + 各阶段的最终有效 Attempt 号 + 各阶段 step 排除统计 + 各阶段耗时 + 审计标记。
     /// </summary>
     public sealed class ConditionMeta
     {
@@ -60,5 +70,6 @@ namespace IMUMoCap.Pipeline.Models
         public Dictionary<string, int> FinalAttempt { get; set; } = new();
         public Dictionary<string, StepExclusionStats> StageStepStats { get; set; } = new();
         public Dictionary<string, StageTiming> StageTimings { get; set; } = new();
+        public List<StageMarker> StageMarkers { get; set; } = new();
     }
 }

@@ -14,6 +14,7 @@ namespace IMUMoCap
         private void BtnSaveParams_Click(object sender, RoutedEventArgs e)
         {
             SaveParamsClicked?.Invoke(sender, e);
+            Close();
         }
     }
 }

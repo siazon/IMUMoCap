@@ -165,8 +165,12 @@ public class FootWebSocketClient : MonoBehaviour
     {
         // Detect NaN fields before any replacement (server may send "NaN" string or bare NaN).
         // A NaN on either fpa*/error* for a foot means "no data" for that foot this packet.
-        bool fpaLNaN = ContainsNaN(json, "fpaL") || ContainsNaN(json, "errorL") || ContainsNaN(json, "angleL");
-        bool fpaRNaN = ContainsNaN(json, "fpaR") || ContainsNaN(json, "errorR") || ContainsNaN(json, "angleR");
+        bool fpaLNaN = ContainsNaN(json, "fpaL") || ContainsNaN(json, "errorL");
+        bool fpaRNaN = ContainsNaN(json, "fpaR") || ContainsNaN(json, "errorR");
+        // Same pattern for the IF-only "live" stream — NaN on angleL/R means no data for that
+        // foot this packet (e.g. the foot is airborne/no calibration yet on the PC side).
+        bool angleLNaN = ContainsNaN(json, "angleL");
+        bool angleRNaN = ContainsNaN(json, "angleR");
 
         // JSON null/NaN → 0: JsonUtility cannot deserialize these into float fields.
         string jsonAfterReplace = json.Replace(": null", ": 0").Replace(":null", ":0")
@@ -193,17 +197,6 @@ public class FootWebSocketClient : MonoBehaviour
             return;
         }
 
-        if (msg.type == "live")
-        {
-            Debug.Log($"[WS] Recv: {json}");
-            Debug.Log($"[WS] HandleMessage: type={msg.type} ts={msg.ts}" +
-                      (msg.type == "state" ? $" state={msg.state} condition={msg.condition} block={msg.block}" : "") +
-                      (msg.type == "fpa"    ? $" block={msg.block} fpaL={msg.fpaL} fpaR={msg.fpaR} errorL={msg.errorL} errorR={msg.errorR} onTargetL={msg.onTargetL} onTargetR={msg.onTargetR}" : "") +
-                      (msg.type == "live"   ? $" packetId={msg.packetId} angleL={msg.angleL} angleR={msg.angleR} confidence={msg.confidence} stability={msg.stability}" : "") +
-                      (msg.type == "stepProgress" ? $" stage={msg.stage} stepsL={msg.stepsL}/{msg.requiredL} stepsR={msg.stepsR}/{msg.requiredR}" : "") +
-                      (msg.type == "redo" ? $" stage={msg.stage} attempt={msg.attempt} reason={msg.reason}" : ""));
-        }
-
         switch (msg.type)
         {
             case "state":
@@ -226,8 +219,8 @@ public class FootWebSocketClient : MonoBehaviour
                 break;
 
             case "live":
-                msg.fpaLIsNaN = fpaLNaN;
-                msg.fpaRIsNaN = fpaRNaN;
+                msg.angleLIsNaN = angleLNaN;
+                msg.angleRIsNaN = angleRNaN;
                 var capturedLive = msg;
                 mainThreadActions.Enqueue(() => hudController?.OnLiveUpdate(capturedLive));
                 break;
@@ -290,9 +283,6 @@ public class FootWebSocketClient : MonoBehaviour
     // AR→PC commands (spec 2026-07-29-ws-protocol.md)
     public Task SendReadyForCalibrationAsync() => SendTextAsync("{\"cmd\":\"ReadyForCalibration\"}");
 
-    public Task SendContinueTrainingAsync(int fromBlock) =>
-        SendTextAsync($"{{\"cmd\":\"continueTraining\",\"fromBlock\":{fromBlock}}}");
-
     // ── cleanup ───────────────────────────────────────────────────────────────
 
     private async Task SafeCloseAsync(string reason)
@@ -347,6 +337,7 @@ public class ServerMessage
     public string directionL;     // state: "toe-in" | "toe-out"
     public float  targetR;        // state: EF stone target angle, right (deg)
     public string directionR;     // state: "toe-in" | "toe-out"
+    public string ifRenderMode;   // state: "placeholder" | "live" — IF rendering mode; absent/empty → client falls back to "placeholder" (see FootHudController.OnStateChange)
 
     // fpa — per-step feedback, training only
     public string stage;      // fpa/stepProgress/redo: baseline | training | retention | Training2 ...
@@ -360,11 +351,17 @@ public class ServerMessage
     public float  errorL;     // fpa: fpaL - targetL, drives IF footprint rotation
     public float  errorR;     // fpa: fpaR - targetR, drives IF footprint rotation
 
-    // live — real-time footprint angle stream (no on-target color signal)
-    public float  angleL;      // live: left foot angle (degrees), drives footprint rotation
-    public float  angleR;      // live: right foot angle (degrees), drives footprint rotation
-    public float  confidence;  // live
-    public float  stability;   // live
+    // live — IF-only real-time angle stream (10Hz, swing+stance), condition == "IF" only.
+    // Reference frame is relative to *live* pelvis heading, calibration-offset removed — NOT the
+    // same reference frame as fpa.errorL/R (which is relative to the PD-estimated progression
+    // direction). Approximately coincide walking straight, but not exact — see AR-FRONTEND.md
+    // "Known issues". This is a visual swing-phase reference only, not a precise measurement.
+    public float  angleL;       // live: left foot angle (degrees), drives footprint rotation in live mode
+    public float  angleR;       // live: right foot angle (degrees), drives footprint rotation in live mode
+    public bool   angleLIsNaN;  // set by client when server sends NaN for angleL
+    public bool   angleRIsNaN;  // set by client when server sends NaN for angleR
+    public float  confidence;   // live: motion-context confidence (received, not currently rendered)
+    public float  stability;    // live: PD stability (received, not currently rendered)
 
     // stepProgress — baseline/retention step-count bar
     public int stepsL;

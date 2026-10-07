@@ -20,6 +20,11 @@ namespace IMUMoCap.Methods
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly object _gate = new object();
         private readonly Dictionary<Guid, WebSocket> _clients = new Dictionary<Guid, WebSocket>();
+        // One SendAsync at a time per client — WebSocket doesn't support overlapping sends, and the
+        // several independent fire-and-forget BroadcastJsonAsync/SendJsonAsync call sites (live/fpa/
+        // state/redo/stepProgress) can otherwise race each other, throw, and get the client silently
+        // dropped from _clients (see BroadcastJsonAsync's catch) even though its socket is still open.
+        private readonly Dictionary<Guid, SemaphoreSlim> _sendLocks = new Dictionary<Guid, SemaphoreSlim>();
         public event Action<Guid, string>? OnTextMessage;
         public event Action<Guid, string?>? OnClientConnected;
         public event Action<Guid, string?>? OnClientDisconnected;
@@ -62,8 +67,15 @@ namespace IMUMoCap.Methods
             try { _listener.Close(); } catch { }
 
             List<WebSocket> sockets;
-            lock (_gate) sockets = _clients.Values.ToList();
-            lock (_gate) _clients.Clear();
+            List<SemaphoreSlim> locks;
+            lock (_gate)
+            {
+                sockets = _clients.Values.ToList();
+                locks = _sendLocks.Values.ToList();
+                _clients.Clear();
+                _sendLocks.Clear();
+            }
+            foreach (var l in locks) l.Dispose();
 
             foreach (var ws in sockets)
             {
@@ -101,6 +113,10 @@ namespace IMUMoCap.Methods
                     continue;
                 }
 
+                SemaphoreSlim? sendLock;
+                lock (_gate) { if (!_sendLocks.TryGetValue(id, out sendLock)) continue; }
+
+                await sendLock.WaitAsync(_cts.Token);
                 try
                 {
                     await ws.SendAsync(seg, WebSocketMessageType.Text, endOfMessage: true, cancellationToken: _cts.Token);
@@ -108,6 +124,11 @@ namespace IMUMoCap.Methods
                 catch
                 {
                     RemoveClient(id);
+                }
+                finally
+                {
+                    // RemoveClient (above) may have already disposed this lock if the send failed.
+                    try { sendLock.Release(); } catch (ObjectDisposedException) { }
                 }
             }
         }
@@ -117,13 +138,21 @@ namespace IMUMoCap.Methods
             if (!IsRunning) return;
 
             WebSocket? ws;
-            lock (_gate) { if (!_clients.TryGetValue(id, out ws)) return; }
+            SemaphoreSlim? sendLock;
+            lock (_gate)
+            {
+                if (!_clients.TryGetValue(id, out ws)) return;
+                if (!_sendLocks.TryGetValue(id, out sendLock)) return;
+            }
             if (ws.State != WebSocketState.Open) { RemoveClient(id); return; }
 
             string json = JsonSerializer.Serialize(payload, _jsonOpts);
             var seg = new ArraySegment<byte>(Encoding.UTF8.GetBytes(json));
+            await sendLock.WaitAsync(_cts.Token);
             try { await ws.SendAsync(seg, WebSocketMessageType.Text, endOfMessage: true, cancellationToken: _cts.Token); }
             catch { RemoveClient(id); }
+            // RemoveClient (above) may have already disposed this lock if the send failed.
+            finally { try { sendLock.Release(); } catch (ObjectDisposedException) { } }
         }
 
         private async Task ReceiveLoopAsync(Guid id, WebSocket ws, string? remote)
@@ -184,12 +213,14 @@ namespace IMUMoCap.Methods
 
         private void RemoveClient(Guid id)
         {
-            WebSocket? ws = null;
+            SemaphoreSlim? sendLock = null;
             lock (_gate)
             {
-                if (_clients.TryGetValue(id, out ws))
-                    _clients.Remove(id);
+                _clients.Remove(id);
+                if (_sendLocks.TryGetValue(id, out sendLock))
+                    _sendLocks.Remove(id);
             }
+            sendLock?.Dispose();
         }
 
         private async Task AcceptLoopAsync()
@@ -228,7 +259,11 @@ namespace IMUMoCap.Methods
 
                 var ws = wsCtx.WebSocket;
                 var id = Guid.NewGuid();
-                lock (_gate) _clients[id] = ws;
+                lock (_gate)
+                {
+                    _clients[id] = ws;
+                    _sendLocks[id] = new SemaphoreSlim(1, 1);
+                }
 
                 // 记录客户端来源（可能为 null）
                 string? remote = ctx.Request.RemoteEndPoint?.ToString();

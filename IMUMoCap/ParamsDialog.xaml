@@ -36,7 +36,7 @@
 
         <!-- 6. Min baseline steps -->
         <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
-        <Slider Minimum="50" Maximum="150" SmallChange="1" LargeChange="5"
+        <Slider Minimum="1" Maximum="150" SmallChange="1" LargeChange="5"
                 IsSnapToTickEnabled="True" TickFrequency="1"
                 Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
 
@@ -44,6 +44,20 @@
         <TextBlock Text="{Binding BaselineImbalanceRatioThreshold, StringFormat='Baseline Imbalance Ratio: {0:F2}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
         <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
                 Value="{Binding BaselineImbalanceRatioThreshold, Mode=TwoWay}" Margin="0,0,0,12"/>
+
+        <!-- 8. IF render mode (mutually exclusive — enforced in MainWindow's VM-property-changed
+             handler, not here; see MainWindow.xaml.cs SyncIfRenderModeFromVm) -->
+        <TextBlock Text="IF Render Mode" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
+        <CheckBox Content="IF: Live Angle Mode" FontSize="11"
+                  Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
+                  Margin="0,0,0,4" VerticalAlignment="Center"
+                  IsChecked="{Binding IsIfLiveMode, Mode=TwoWay}"
+                  ToolTip="IF 渲染模式，可在运行中随时切换：勾选此项=live 连续旋转模式，用于 pilot 现场对比；两项都不勾=占位模式（静止图标+落地终端闪烁后回落）；与下面的 Last-Result 模式互斥。切换立即广播给AR端，不需要暂停/重连。"/>
+        <CheckBox Content="IF: Last-Result Sticky Mode" FontSize="11"
+                  Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
+                  Margin="0,0,0,12" VerticalAlignment="Center"
+                  IsChecked="{Binding IsIfLastResultMode, Mode=TwoWay}"
+                  ToolTip="默认勾选：脚印落地脉冲（旋转+命中/未命中变色）结束后不再回落到中性姿态，而是一直保持显示上一步的结果，直到下一步 fpa 更新覆盖它（放大效果仍会按原节奏回落）。与上面的 Live Angle Mode 互斥。"/>
 
         <Button x:Name="BtnSaveParams" Style="{StaticResource PrimaryButtonStyle}" Click="BtnSaveParams_Click"
                 Width="220" HorizontalAlignment="Left"

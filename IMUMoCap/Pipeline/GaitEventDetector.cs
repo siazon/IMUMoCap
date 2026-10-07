@@ -25,7 +25,7 @@ namespace IMUMoCap.Pipeline
         public float FreeAccStanceThreshold { get; set; } = 2.5f;   // m/s²，free acc 模长
         public float GyroThreshold          { get; set; } = 1.0f;   // rad/s
         public float FootPitchThreshold     { get; set; } = 0.35f;   // rad，~20°，与校准参考的重力方向偏转上限（10°对转弯后left foot过紧）
-        public int   MinStanceFrames        { get; set; } = 5;
+        public int   MinStanceFrames        { get; set; } = 2;
         public int   WalkingWindowFrames    { get; set; } = 300;     // 3s @100Hz
 
         // ── 内部状态 ──────────────────────────────────────────────────────────
