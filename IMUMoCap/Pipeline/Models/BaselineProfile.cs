@@ -18,21 +18,24 @@ namespace IMUMoCap.Pipeline.Models
         public int   ValidSteps_L { get; init; }
         public int   ValidSteps_R { get; init; }
 
-        // 训练目标：Tᵢ = μᵢ ± k·SDᵢ（k 固定 = 1.0，个体化偏移量，见 Research Overview §2.4）
-        public const float TargetK          = 1.0f;
-        public const float ToleranceWMinDeg = 4f;   // w_min
+        // 训练目标：Tᵢ = μᵢ − Δ（统一 ToeIn，Δ 为固定值，与 SD 无关）；容差为固定半宽
+        public const float TargetDeltaDeg = 10f;   // Δ
+        public const float ToleranceDeg   = 4f;    // 容差半宽 w
+        public const float TargetMinDeg   = -25f;  // target 下限（过度内八保护）：μ−Δ 低于它时截断（实际 Δ < TargetDeltaDeg）；μ 本身低于它时改为 ToeOut
 
         public float Target_L    { get; init; }
         public float Target_R    { get; init; }
+        /// <summary>实际生效的 Δ = μ − Target（ToeIn 为正；未被截断时等于 TargetDeltaDeg；ToeOut 时为负），分析时作为协变量。</summary>
+        public float ActualDelta_L => MeanFpa_L - Target_L;
+        public float ActualDelta_R => MeanFpa_R - Target_R;
         public TrainingDirection Direction_L { get; init; }
         public TrainingDirection Direction_R { get; init; }
 
         /// <summary>
-        /// 当前训练块的容差半宽：w = max(w_min, α·SD)。α 随训练块递减实现渐进式难度，
-        /// 由调用方（FpaEngine.ToleranceAlpha）传入，与 target 的 k 解耦，故不作为固定字段存储。
+        /// 容差半宽：所有训练块使用同一个固定值 ToleranceDeg，与 SD 无关。
         /// </summary>
-        public float ToleranceL(float alpha) => MathF.Max(ToleranceWMinDeg, alpha * SdFpa_L);
-        public float ToleranceR(float alpha) => MathF.Max(ToleranceWMinDeg, alpha * SdFpa_R);
+        public float ToleranceL => ToleranceDeg;
+        public float ToleranceR => ToleranceDeg;
 
         public int  MinRequiredSteps { get; init; }
         public bool IsValid => ValidSteps_L >= MinRequiredSteps && ValidSteps_R >= MinRequiredSteps;
@@ -44,9 +47,8 @@ namespace IMUMoCap.Pipeline.Models
 
         /// <summary>
         /// 从统计数据计算训练目标，规则：
-        /// μ > 10° → ToeIn，T = μ - k·SD
-        /// μ ≤ 10° → ToeOut，T = μ + k·SD
-        /// （方向判定规则本身文档未规定，沿用既有的 10° 阈值；偏移量按文档改为 k·SD）
+        /// 默认 ToeIn，T = max(μ − Δ, TargetMinDeg)（Δ = TargetDeltaDeg），不使用 SD。
+        /// 若 μ 本身已低于 TargetMinDeg（过度内八），改为 ToeOut，T = μ + Δ。
         /// </summary>
         public static BaselineProfile Create(
             float meanL, float sdL, int stepsL,
@@ -54,16 +56,13 @@ namespace IMUMoCap.Pipeline.Models
             int minRequiredSteps = 20,
             float imbalanceRatioThreshold = 0.7f)
         {
-            static (float target, TrainingDirection dir) ComputeTarget(float mean, float sd)
-            {
-                if (mean > 10f)
-                    return (mean - TargetK * sd, TrainingDirection.ToeIn);
-                else
-                    return (mean + TargetK * sd, TrainingDirection.ToeOut);
-            }
+            static (float target, TrainingDirection dir) ComputeTarget(float mean) =>
+                mean < TargetMinDeg
+                    ? (mean + TargetDeltaDeg, TrainingDirection.ToeOut)
+                    : (MathF.Max(mean - TargetDeltaDeg, TargetMinDeg), TrainingDirection.ToeIn);
 
-            var (tL, dL) = ComputeTarget(meanL, sdL);
-            var (tR, dR) = ComputeTarget(meanR, sdR);
+            var (tL, dL) = ComputeTarget(meanL);
+            var (tR, dR) = ComputeTarget(meanR);
 
             float stepRatio = (stepsL == 0 || stepsR == 0)
                 ? 0f

@@ -77,10 +77,6 @@ namespace IMUMoCap.Pipeline
         /// </summary>
         public bool AwaitingRecalibration { get; set; } = false;
 
-        // 协议 §2.4 渐进式难度：容差带系数 α 随训练块递减（Block1=1.5, Block2=1.0, Block3=0.5）
-        private static readonly float[] TrainingBlockAlphas = { 1.5f, 1.0f, 0.5f };
-        public float CurrentToleranceAlpha => _fpa.ToleranceAlpha;
-
         // 协议 §2.6：每个 training block 在两脚均达到 100 个有效步时自动结束（另有停滞保护超时上限，由 MainWindow 的计时器负责，非并列退出条件）
         public const int TrainingBlockTargetSteps = 100;
         private int  _trainingStepsL, _trainingStepsR;
@@ -89,15 +85,13 @@ namespace IMUMoCap.Pipeline
         public int TrainingStepsL => _trainingStepsL;
         public int TrainingStepsR => _trainingStepsR;
 
-        /// <summary>操作员切换到 Training1/2/3 时调用，收紧本训练块的容差带并重置步数计数。</summary>
+        /// <summary>操作员切换到 Training1/2/3 时调用，重置步数计数（容差为所有训练块共用的固定值）。</summary>
         public void SetTrainingBlock(int blockNumber1Based)
         {
-            int idx = Math.Clamp(blockNumber1Based - 1, 0, TrainingBlockAlphas.Length - 1);
-            _fpa.ToleranceAlpha = TrainingBlockAlphas[idx];
             _trainingStepsL = _trainingStepsR = 0;
             _trainingBlockDone = false;
-            OnLog?.Invoke($"Training block {blockNumber1Based}: tolerance α={_fpa.ToleranceAlpha:F1} " +
-                $"(w=max({IMUMoCap.Pipeline.Models.BaselineProfile.ToleranceWMinDeg:F0}°, α·SD)), target {TrainingBlockTargetSteps} valid steps/foot");
+            OnLog?.Invoke($"Training block {blockNumber1Based}: tolerance w={IMUMoCap.Pipeline.Models.BaselineProfile.ToleranceDeg:F0}° (fixed), " +
+                $"target {TrainingBlockTargetSteps} valid steps/foot");
         }
 
         // ── 主入口 ────────────────────────────────────────────────────────────
@@ -329,7 +323,6 @@ namespace IMUMoCap.Pipeline
             if (BaselineProfile == null)
                 throw new InvalidOperationException("Must finalize baseline before starting training.");
             _fpa.Baseline = BaselineProfile;
-            _fpa.ToleranceAlpha = TrainingBlockAlphas[0]; // reset to Block 1 default each time training (re)starts
             _fpa.Reset();
             InTraining = true;
             InBaseline = false;

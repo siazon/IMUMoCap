@@ -15,14 +15,14 @@ earlier docs/task*.py scripts -- several of those turned out to encode now-outda
   FpaEngine.cs               -- data-driven settle -> FpaResult (own hardcoded-Z ExtractYaw,
                                 NOT the axis-aware heading ProgressionDirEstimator uses internally)
   BaselineProcessor.cs + Models/BaselineProfile.cs -- Target/SD/Tolerance
-  GaitPipeline.cs            -- block/stage orchestration: TrainingBlockAlphas={1.5,1.0,0.5},
+  GaitPipeline.cs            -- block/stage orchestration: fixed tolerance for all blocks,
                                 100 valid steps/foot per stage (Baseline/Block1/2/3/Retention)
 
 Stage boundaries are NOT in the raw CSV (no stage column) -- GaitPipeline only ever exposes
 "how many valid steps this block has collected", not wall-clock stage transitions. So stages here
 are inferred purely by COUNTING valid settled steps in chronological order: first 100/foot ->
-Baseline; next 100/foot -> Training1 (alpha=1.5); next 100/foot -> Training2 (alpha=1.0); next
-100/foot -> Training3 (alpha=0.5); next 100/foot -> Retention. This assumes the two ~120s rest
+Baseline; next 100/foot -> Training1; next 100/foot -> Training2; next
+100/foot -> Training3; next 100/foot -> Retention. This assumes the two ~120s rest
 periods between blocks don't themselves generate 100 "valid" (Straight context, stable PD) steps
 of their own -- a safe assumption since rests in this recording involve walking to a laptop and
 turning (see task16's analysis), which should mostly fail the Straight-context gate. Flagged
@@ -47,7 +47,7 @@ ACC_DELTA_THR = 100.0   # m/s^2
 GYRO_DELTA_THR = 20.0   # rad/s
 
 # ── CalibrationProcessor.cs ──────────────────────────────────────────────────────────────────
-STATIC_GYRO_THR, STATIC_REQUIRED_F, STATIC_COLLECT_F, STATIC_TIMEOUT_F = 0.3, 30, 300, 1000
+STATIC_GYRO_THR, STATIC_REQUIRED_F, STATIC_COLLECT_F, STATIC_TIMEOUT_F = 0.3, 20, 200, 1000
 
 # ── GaitEventDetector.cs ─────────────────────────────────────────────────────────────────────
 FREE_ACC_THR, GYRO_THR, FOOT_PITCH_THR, MIN_STANCE_F = 2.5, 1.0, 0.35, 2
@@ -66,10 +66,9 @@ CONTEXT_CONFIDENCE_THR, PD_STABILITY_THR = 0.7, 0.7
 MIN_STANCE_FLOOR, SETTLE_GYRO_THR, SETTLE_QUIET_F, MAX_STANCE_FOR_SETTLE = 2, 0.35, 3, 20
 
 # ── BaselineProfile.cs / GaitPipeline.cs ─────────────────────────────────────────────────────
-TARGET_K, TOLERANCE_W_MIN_DEG = 1.0, 4.0
+TARGET_DELTA_DEG, TOLERANCE_DEG, TARGET_MIN_DEG = 10.0, 4.0, -25.0   # BaselineProfile.TargetDeltaDeg / ToleranceDeg / TargetMinDeg
 MIN_BASELINE_STEPS = 100
 TRAINING_BLOCK_TARGET_STEPS = 100
-TRAINING_BLOCK_ALPHAS = [1.5, 1.0, 0.5]
 RETENTION_TARGET_STEPS = 100
 
 
@@ -90,7 +89,8 @@ def q_norm(q):
     return (x/n, y/n, z/n, w/n)
 
 def relative_quat(now, ref):
-    return q_mul(q_inv(ref), now)
+    """ProgressionDirEstimator.WorldHeading: world-frame delta q * inv(ref)."""
+    return q_mul(now, q_inv(ref))
 
 def vec3_transform(v, q):
     x, y, z, w = q; vx, vy, vz = v
@@ -115,11 +115,10 @@ def detect_heading_axis(sensor_ref):
     return 2
 
 def extract_heading(q, axis):
-    """ProgressionDirEstimator.ExtractHeading: axis-aware heading of a (relative) quaternion."""
+    """ProgressionDirEstimator.WorldHeading: twist about world vertical (Z); `axis` is unused."""
     x, y, z, w = q
-    if axis == 0: return math.atan2(2*(w*x+y*z), 1-2*(x*x+y*y))
-    if axis == 1: return math.asin(max(-1.0, min(1.0, 2*(w*y-z*x))))
-    return math.atan2(2*(w*z+x*y), 1-2*(y*y+z*z))
+    if w < 0: z, w = -z, -w
+    return 2.0 * math.atan2(z, w)
 
 def norm_rad(r):
     while r > math.pi: r -= 2*math.pi
@@ -404,13 +403,13 @@ class StanceSampler:
 
 # ── BaselineProfile ──────────────────────────────────────────────────────────────────────────
 
-def compute_target(mean, sd):
-    if mean > 10.0:
-        return mean - TARGET_K * sd, 'ToeIn'
-    return mean + TARGET_K * sd, 'ToeOut'
+def compute_target(mean):
+    if mean < TARGET_MIN_DEG:
+        return mean + TARGET_DELTA_DEG, 'ToeOut'
+    return max(mean - TARGET_DELTA_DEG, TARGET_MIN_DEG), 'ToeIn'
 
-def tolerance(sd, alpha):
-    return max(TOLERANCE_W_MIN_DEG, alpha * sd)
+def tolerance():
+    return TOLERANCE_DEG
 
 
 def main():
@@ -506,7 +505,21 @@ def main():
     stage_boundary_t = {}  # stage_name -> (t_start, t_end)
     stage_open_t = {name: None for name, _ in stage_targets}
 
+    # GaitPipeline.cs:244-263 -- Baseline keeps collecting until BOTH feet have >= MIN_BASELINE_STEPS,
+    # then finalizes at that instant using ALL collected steps (the leading foot may exceed 100).
+    # Later stages start counting from 0 (SetTrainingBlock resets the counters).
+    baseline_open = True
     for frame_idx, foot, fpa_deg, t_sec in step_events:
+        if baseline_open:
+            if stage_open_t['Baseline'] is None:
+                stage_open_t['Baseline'] = t_sec
+            stages['Baseline'][foot].append(fpa_deg)
+            counts[foot] += 1
+            if all(len(stages['Baseline'][f]) >= MIN_BASELINE_STEPS for f in ('L', 'R')):
+                baseline_open = False
+                stage_boundary_t['Baseline'] = [None, t_sec]
+                stage_idx = {'L': 1, 'R': 1}
+            continue
         if stage_idx[foot] >= len(stage_targets):
             continue  # ran out of stages (not enough data for 500 steps/foot)
         name, target = stage_targets[stage_idx[foot]]
@@ -541,9 +554,9 @@ def main():
     print("BASELINE")
     print("=" * 78)
     for foot in ('L', 'R'):
-        vals = stages['Baseline'][foot][:MIN_BASELINE_STEPS]
+        vals = stages['Baseline'][foot]
         m, sd = mean_sd(vals)
-        target, direction = compute_target(m, sd)
+        target, direction = compute_target(m)
         targets[foot], sds[foot], dirs[foot] = target, sd, direction
         print(f"  {foot}: mean={m:6.2f}°  SD={sd:5.2f}°  n={len(vals)}  ->  Target={target:6.2f}° ({direction})")
 
@@ -552,14 +565,13 @@ def main():
         if len(stages[name]['L']) < TRAINING_BLOCK_TARGET_STEPS or len(stages[name]['R']) < TRAINING_BLOCK_TARGET_STEPS:
             print(f"{name}: incomplete, skipping stats.\n")
             continue
-        alpha = TRAINING_BLOCK_ALPHAS[int(name[-1]) - 1]
-        print(f"{name} (tolerance alpha={alpha}):")
+        print(f"{name} (fixed tolerance ±{TOLERANCE_DEG:.1f}°):")
         for foot in ('L', 'R'):
             vals = stages[name][foot][:TRAINING_BLOCK_TARGET_STEPS]
             m, sd = mean_sd(vals)
             errors = [v - targets[foot] for v in vals]
             mae = sum(abs(e) for e in errors) / len(errors)
-            tol = tolerance(sds[foot], alpha)
+            tol = tolerance()
             on_target_pct = 100 * sum(1 for e in errors if abs(e) <= tol) / len(errors)
             print(f"  {foot}: mean={m:6.2f}°  SD={sd:5.2f}°  mean|error from target|={mae:5.2f}°  "
                   f"on-target(±{tol:.1f}°)={on_target_pct:5.1f}%  n={len(vals)}")
@@ -580,20 +592,19 @@ def main():
         m, sd = mean_sd(vals)
         errors = [v - targets[foot] for v in vals]
         mae = sum(abs(e) for e in errors) / len(errors)
-        # |mean_baseline - target| == SD_baseline exactly, by construction (target = mean +/- 1*SD)
-        # -- so this ratio directly says "how many baseline-SDs away from target is retention's
+        # |mean_baseline - target| == TARGET_DELTA_DEG exactly, by construction (target = mean - Delta)
+        # -- so this ratio directly says "how many Deltas away from target is retention's
         # mean", with 1.0 being "no net change from baseline" and 0 being "landed exactly on target".
-        baseline_gap_sd_units = abs(m - targets[foot]) / sds[foot] if sds[foot] > 0 else float('nan')
-        print(f"  {foot}: Baseline mean={stages['Baseline'][foot] and mean_sd(stages['Baseline'][foot][:MIN_BASELINE_STEPS])[0]:.2f}°"
+        baseline_gap_sd_units = abs(m - targets[foot]) / TARGET_DELTA_DEG   # NB: the cap can make the baseline gap < Delta
+        print(f"  {foot}: Baseline mean={stages['Baseline'][foot] and mean_sd(stages['Baseline'][foot])[0]:.2f}°"
               f"  ->  Retention mean={m:6.2f}°  (SD={sd:5.2f}°, n={len(vals)})")
         print(f"       Target={targets[foot]:6.2f}°  Retention mean error from Target={m-targets[foot]:+6.2f}°  "
               f"mean|error|={mae:5.2f}°")
         print(f"       Retention mean is {baseline_gap_sd_units:4.2f}x the original Baseline-to-Target gap "
               f"(1.0 = no change from Baseline, 0 = landed exactly on Target, >1 = moved further away)")
-        for alpha, label in ((1.5, 'Block1-loose'), (0.5, 'Block3-tight')):
-            tol = tolerance(sds[foot], alpha)
-            pct = 100 * sum(1 for e in errors if abs(e) <= tol) / len(errors)
-            print(f"       on-target @ alpha={alpha} ({label}, ±{tol:.1f}°): {pct:5.1f}%")
+        tol = tolerance()
+        pct = 100 * sum(1 for e in errors if abs(e) <= tol) / len(errors)
+        print(f"       on-target (fixed ±{tol:.1f}°): {pct:5.1f}%")
         print()
 
 

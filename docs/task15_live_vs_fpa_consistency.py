@@ -52,9 +52,9 @@ STABILITY_WINDOW, STABILITY_THR, MIN_STEPS_VALID, PELVIS_AGREE_THR_DEG = 10, 0.8
 
 CONTEXT_CONFIDENCE_THR, PD_STABILITY_THR = 0.7, 0.7
 MIN_STANCE_FLOOR, SETTLE_GYRO_THR, SETTLE_QUIET_F, MAX_STANCE_FOR_SETTLE = 2, 0.35, 3, 20
-TOLERANCE_ALPHA = 1.5          # FpaEngine.ToleranceAlpha default
-TOLERANCE_W_MIN_DEG = 4.0      # BaselineProfile.ToleranceWMinDeg
-TARGET_K = 1.0                 # BaselineProfile.TargetK
+TARGET_DELTA_DEG = 10.0        # BaselineProfile.TargetDeltaDeg
+TARGET_MIN_DEG = -25.0         # BaselineProfile.TargetMinDeg
+TOLERANCE_DEG = 4.0            # BaselineProfile.ToleranceDeg
 MIN_BASELINE_STEPS = 100       # PipelineParams.MinBaselineSteps / BaselineProcessor default
 
 LIVE_INTERVAL_FRAMES = int(round((100.0 / 10.0)))  # 10Hz throttle on a 100Hz source, same as PC side
@@ -76,7 +76,7 @@ def q_norm(q):
     return (x/n, y/n, z/n, w/n)
 
 def relative_quat(now, ref):
-    return q_mul(q_inv(ref), now)
+    return q_mul(now, q_inv(ref))   # world-frame delta (ProgressionDirEstimator.WorldHeading)
 
 def vec3_transform(v, q):
     x, y, z, w = q; vx, vy, vz = v
@@ -102,13 +102,10 @@ def detect_heading_axis(sensor_ref):
     return 2
 
 def extract_heading(q, axis):
-    """ProgressionDirEstimator.ExtractHeading: axis-aware heading of a (usually relative) quaternion."""
+    """ProgressionDirEstimator.WorldHeading: twist about world vertical (Z); `axis` is unused."""
     x, y, z, w = q
-    if axis == 0:
-        return math.atan2(2*(w*x + y*z), 1 - 2*(x*x + y*y))
-    if axis == 1:
-        return math.asin(max(-1.0, min(1.0, 2*(w*y - z*x))))
-    return math.atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z))
+    if w < 0: z, w = -z, -w
+    return 2.0 * math.atan2(z, w)
 
 def norm_rad(r):
     while r > math.pi: r -= 2*math.pi
@@ -460,13 +457,13 @@ print(f"Settled fpa steps: L={sum(1 for e in step_events if e[1]=='L')}  "
 # ── BaselineProcessor + BaselineProfile: first MIN_BASELINE_STEPS settled steps per foot
 # define Target/SD — exactly mirrors the real pipeline's "first N valid steps" collection,
 # just without a separate experimental Baseline stage boundary in this raw recording. ──
-def compute_target(mean, sd):
-    if mean > 10.0:
-        return mean - TARGET_K * sd  # ToeIn
-    return mean + TARGET_K * sd      # ToeOut
+def compute_target(mean):
+    if mean < TARGET_MIN_DEG:
+        return mean + TARGET_DELTA_DEG  # ToeOut
+    return max(mean - TARGET_DELTA_DEG, TARGET_MIN_DEG)  # ToeIn
 
-def tolerance(sd):
-    return max(TOLERANCE_W_MIN_DEG, TOLERANCE_ALPHA * sd)
+def tolerance(sd=None):
+    return TOLERANCE_DEG
 
 fpa_by_foot = defaultdict(list)   # foot -> [(frame_idx, fpa_deg, live_deg)]
 for frame_idx, foot, fpa_deg, live_deg in step_events:
@@ -483,7 +480,7 @@ for foot in ('L', 'R'):
     baseline_fpa = [e[1] for e in events[:n_baseline]]
     mean_b = sum(baseline_fpa) / len(baseline_fpa) if baseline_fpa else float('nan')
     sd_b = (sum((v-mean_b)**2 for v in baseline_fpa) / (len(baseline_fpa)-1)) ** 0.5 if len(baseline_fpa) > 1 else 0.0
-    target = compute_target(mean_b, sd_b)
+    target = compute_target(mean_b)
     targets[foot] = target; sds[foot] = sd_b
 
     for frame_idx, fpa_deg, live_deg in events[n_baseline:]:
@@ -494,7 +491,7 @@ for foot in ('L', 'R'):
 print("Per-foot baseline (first up to {} settled steps used as Target/SD proxy):".format(MIN_BASELINE_STEPS))
 for foot in ('L', 'R'):
     print(f"  {foot}: n_baseline={baseline_n[foot]:3d}  Target={targets[foot]:6.2f} deg  SD={sds[foot]:5.2f} deg  "
-          f"Tolerance(alpha={TOLERANCE_ALPHA})={tolerance(sds[foot]):4.2f} deg")
+          f"Tolerance(fixed)={tolerance():4.2f} deg")
     if baseline_n[foot] < MIN_BASELINE_STEPS:
         print(f"     NOTE: only {baseline_n[foot]} settled steps available — short of the real "
               f"experiment's MinBaselineSteps={MIN_BASELINE_STEPS}; Target/SD here are a pilot proxy, not production-grade.")

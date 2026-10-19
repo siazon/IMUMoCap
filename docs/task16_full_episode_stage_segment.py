@@ -14,12 +14,11 @@ PELVIS_W, LEFT_W, RIGHT_W = 0.6, 0.2, 0.2
 STABILITY_WINDOW, STABILITY_THR, MIN_STEPS_VALID, PELVIS_AGREE_THR_DEG = 10, 0.85, 2, 15.0
 CONTEXT_CONFIDENCE_THR, PD_STABILITY_THR = 0.7, 0.7
 MIN_STANCE_FLOOR, SETTLE_GYRO_THR, SETTLE_QUIET_F, MAX_STANCE_FOR_SETTLE = 2, 0.35, 3, 20
-TOLERANCE_W_MIN_DEG = 4.0
-TARGET_K = 1.0
+TARGET_DELTA_DEG, TOLERANCE_DEG, TARGET_MIN_DEG = 10.0, 4.0, -25.0   # BaselineProfile.TargetDeltaDeg / ToleranceDeg / TargetMinDeg
 BASELINE_TARGET = 100
 TRAINING_BLOCK_TARGET = 100
 RETENTION_TARGET = 100
-BLOCK_ALPHAS = [1.5, 1.0, 0.5]
+N_TRAINING_BLOCKS = 3
 
 def q_mul(a, b):
     ax, ay, az, aw = a; bx, by, bz, bw = b
@@ -36,7 +35,7 @@ def q_norm(q):
     return (x/n, y/n, z/n, w/n)
 
 def relative_quat(now, ref):
-    return q_mul(q_inv(ref), now)
+    return q_mul(now, q_inv(ref))   # world-frame delta (ProgressionDirEstimator.WorldHeading)
 
 def vec3_transform(v, q):
     x, y, z, w = q; vx, vy, vz = v
@@ -60,12 +59,10 @@ def detect_heading_axis(sensor_ref):
     return 2
 
 def extract_heading(q, axis):
+    """Twist about world vertical (Z); `axis` is unused (ProgressionDirEstimator.WorldHeading)."""
     x, y, z, w = q
-    if axis == 0:
-        return math.atan2(2*(w*x + y*z), 1 - 2*(x*x + y*y))
-    if axis == 1:
-        return math.asin(max(-1.0, min(1.0, 2*(w*y - z*x))))
-    return math.atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z))
+    if w < 0: z, w = -z, -w
+    return 2.0 * math.atan2(z, w)
 
 def norm_rad(r):
     while r > math.pi: r -= 2*math.pi
@@ -377,13 +374,13 @@ def mean_sd(vals):
     sd = (sum((v-m)**2 for v in vals) / (n-1)) ** 0.5
     return m, sd
 
-def compute_target(mean, sd):
-    if mean > 10.0:
-        return mean - TARGET_K * sd, 'ToeIn'
-    return mean + TARGET_K * sd, 'ToeOut'
+def compute_target(mean):
+    if mean < TARGET_MIN_DEG:
+        return mean + TARGET_DELTA_DEG, 'ToeOut'
+    return max(mean - TARGET_DELTA_DEG, TARGET_MIN_DEG), 'ToeIn'
 
-def tolerance(sd, alpha):
-    return max(TOLERANCE_W_MIN_DEG, alpha * sd)
+def tolerance():
+    return TOLERANCE_DEG
 
 def block_stats(block_events, target, tol):
     errs = {'L': [], 'R': []}
@@ -402,8 +399,8 @@ fpaL_b = [e[3] for e in baseline_block if e[2]=='L']
 fpaR_b = [e[3] for e in baseline_block if e[2]=='R']
 meanL, sdL = mean_sd(fpaL_b)
 meanR, sdR = mean_sd(fpaR_b)
-targetL, dirL = compute_target(meanL, sdL)
-targetR, dirR = compute_target(meanR, sdR)
+targetL, dirL = compute_target(meanL)
+targetR, dirR = compute_target(meanR)
 t0 = baseline_block[0][1] if baseline_block else None
 t1 = baseline_block[-1][1] if baseline_block else None
 print("="*90)
@@ -414,20 +411,20 @@ print(f"  R: mu={meanR:6.2f} SD={sdR:5.2f} -> Target={targetR:6.2f} ({dirR})")
 
 stage_names = ["Training1", "Training2", "Training3"]
 prev_end_pid = t1
-for bi, alpha in enumerate(BLOCK_ALPHAS):
+for bi in range(N_TRAINING_BLOCKS):
     block, ptr, cl, cr = consume_block(step_events, ptr, TRAINING_BLOCK_TARGET)
     if not block:
         print(f"\n{stage_names[bi]}: NO DATA (recording ended before this block completed)")
         continue
     bt0, bt1 = block[0][1], block[-1][1]
     gap_s = (bt0 - prev_end_pid) / FS_HZ if prev_end_pid is not None else float('nan')
-    tolL = tolerance(sdL, alpha); tolR = tolerance(sdR, alpha)
+    tolL = tolerance(); tolR = tolerance()
     errs, on = block_stats(block, targetL, tolL)  # placeholder, fixed below per-foot
     errsL = [e[3]-targetL for e in block if e[2]=='L']
     errsR = [e[3]-targetR for e in block if e[2]=='R']
     onL = sum(1 for e in errsL if abs(e) <= tolL)
     onR = sum(1 for e in errsR if abs(e) <= tolR)
-    print(f"\n{stage_names[bi]}  (alpha={alpha}, steps L={cl} R={cr}, tol L={tolL:.2f} R={tolR:.2f})")
+    print(f"\n{stage_names[bi]}  (fixed tol, steps L={cl} R={cr}, tol L={tolL:.2f} R={tolR:.2f})")
     print(f"  gap since previous block end: {gap_s:.1f}s  [protocol expects ~0s before Training3 if bi==2, ~120s rest before this if bi==1]")
     print(f"  time span: {(bt1-bt0)/FS_HZ:.1f}s")
     print(f"  L: mean error={sum(errsL)/len(errsL) if errsL else float('nan'):+.2f} deg   on-target={onL}/{len(errsL)} ({100*onL/len(errsL) if errsL else 0:.0f}%)")
@@ -438,8 +435,7 @@ retention_block, ptr, rl, rr = consume_block(step_events, ptr, RETENTION_TARGET)
 if retention_block:
     rt0, rt1 = retention_block[0][1], retention_block[-1][1]
     gap_s = (rt0 - prev_end_pid) / FS_HZ if prev_end_pid is not None else float('nan')
-    alpha_ret = BLOCK_ALPHAS[-1]
-    tolL = tolerance(sdL, alpha_ret); tolR = tolerance(sdR, alpha_ret)
+    tolL = tolerance(); tolR = tolerance()
     errsL = [e[3]-targetL for e in retention_block if e[2]=='L']
     errsR = [e[3]-targetR for e in retention_block if e[2]=='R']
     onL = sum(1 for e in errsL if abs(e) <= tolL)

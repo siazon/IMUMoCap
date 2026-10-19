@@ -748,10 +748,13 @@ namespace IMUMoCap
         {
             var bp = _pipeline.BaselineProfile;
             if (bp == null) return (0f, "", 0f, "");
-            return (bp.Target_L, DirectionForAr(bp.Direction_L), bp.Target_R, DirectionForAr(bp.Direction_R));
+            // AR rotates the stone by (side == "toe-in" ? -|target| : |target|), i.e. it expects a magnitude plus a side.
+            // Target_L/R are signed FPA (negative = toe-in), so send |target| and derive the side from its sign
+            // (not from the training direction: a toe-out target for a very toed-in person can still be negative).
+            return (MathF.Abs(bp.Target_L), SideForAr(bp.Target_L), MathF.Abs(bp.Target_R), SideForAr(bp.Target_R));
         }
 
-        private static string DirectionForAr(TrainingDirection d) => d == TrainingDirection.ToeIn ? "toe-in" : "toe-out";
+        private static string SideForAr(float signedTarget) => signedTarget < 0f ? "toe-in" : "toe-out";
 
         // Foot yaw relative to pelvis yaw, in degrees, with the calibration-time foot/pelvis mounting
         // offset removed (reads ~0 at calibration; pelvis is the moving reference so it stays correct
@@ -901,8 +904,8 @@ namespace IMUMoCap
                     $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
                     $"R={profile.Target_R:F1}° ({profile.Direction_R})";
                 BroadcastArState("training", blockOverride: 1);
-                _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_L})";
-                _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_R})";
+                _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL:F1}° ({profile.Direction_L})";
+                _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR:F1}° ({profile.Direction_R})";
             }
         }
 
@@ -1317,8 +1320,8 @@ namespace IMUMoCap
                     _content.StatusLabel =
                         $"Training started. Target L={bp.Target_L:F1}° ({bp.Direction_L})  " +
                         $"R={bp.Target_R:F1}° ({bp.Direction_R})";
-                    _content.LeftFpaTarget = $"Target {bp.Target_L:F1}° ±{bp.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({bp.Direction_L})";
-                    _content.RightFpaTarget = $"Target {bp.Target_R:F1}° ±{bp.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({bp.Direction_R})";
+                    _content.LeftFpaTarget = $"Target {bp.Target_L:F1}° ±{bp.ToleranceL:F1}° ({bp.Direction_L})";
+                    _content.RightFpaTarget = $"Target {bp.Target_R:F1}° ±{bp.ToleranceR:F1}° ({bp.Direction_R})";
                 }
             }
             else if (_currentStage == "Retention")
@@ -1591,8 +1594,8 @@ namespace IMUMoCap
                 Dispatcher.BeginInvoke(() =>
                 {
                     _sessionState = TestState.Step;
-                    _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_L})";
-                    _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR(_pipeline.CurrentToleranceAlpha):F1}° ({profile.Direction_R})";
+                    _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL:F1}° ({profile.Direction_L})";
+                    _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR:F1}° ({profile.Direction_R})";
                     _content.StatusLabel =
                         $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
                         $"R={profile.Target_R:F1}° ({profile.Direction_R})";
@@ -2073,7 +2076,8 @@ namespace IMUMoCap
                 if (_recorder.IsRecording)
                 {
                     long tsNow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    var (targetL, _, targetR, _) = TargetForAr();
+                    float targetL = _pipeline.BaselineProfile?.Target_L ?? 0f;   // signed FPA target (TargetForAr sends |target| to AR)
+                    float targetR = _pipeline.BaselineProfile?.Target_R ?? 0f;
                     if (!float.IsNaN(result.Fpa_L))
                         _recorder.WriteLiveVsFpaConsistency(result.PacketId, tsNow, "L", _lastLiveAngleL, result.Error_L, result.Fpa_L, targetL);
                     if (!float.IsNaN(result.Fpa_R))

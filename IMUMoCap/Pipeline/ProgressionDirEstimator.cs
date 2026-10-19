@@ -56,11 +56,6 @@ namespace IMUMoCap.Pipeline
         private float _lastLeftYaw = 0f;
         private float _lastRightYaw = 0f;
 
-        private bool _axisDetected = false;
-        private int _pelvisAxis = 2;      // detected from PelvisRef: 0=X(Roll), 1=Y(Pitch), 2=Z(Yaw)
-        private int _leftFootAxis = 2;
-        private int _rightFootAxis = 2;
-
         public PdEstimate Update(ValidFrame frame, GaitEvent gait,
                                  MotionContext context, MotionContextDetector contextDetector,
                                  CalibrationProfile? calibration = null)
@@ -95,16 +90,8 @@ namespace IMUMoCap.Pipeline
             }
             _prevContextState = context.State;
 
-            if (!_axisDetected && calibration != null)
-            {
-                _pelvisAxis    = DetectHeadingAxis(calibration.PelvisRef);
-                _leftFootAxis  = DetectHeadingAxis(calibration.LeftFootRef);
-                _rightFootAxis = DetectHeadingAxis(calibration.RightFootRef);
-                _axisDetected  = true;
-            }
-
             float pelvisYaw = frame.Pelvis.HasQuaternion
-                ? ExtractHeading(CalibrateQuaternion(frame.Pelvis.Quaternion, calibration?.PelvisRef), _pelvisAxis)
+                ? WorldHeading(frame.Pelvis.Quaternion, calibration?.PelvisRef)
                 : _currentPd;
 
             TrackStanceYaw(frame, gait, calibration);
@@ -144,8 +131,6 @@ namespace IMUMoCap.Pipeline
             _leftYawReady = _rightYawReady = false;
             _lastLeftYaw = _lastRightYaw = 0f;
             _prevContextState = ContextState.Straight;
-            _axisDetected = false;
-            _pelvisAxis = _leftFootAxis = _rightFootAxis = 2;
         }
 
         // ── 私有方法 ──────────────────────────────────────────────────────────
@@ -155,7 +140,7 @@ namespace IMUMoCap.Pipeline
             if (gait.LeftStance && frame.LeftFoot.HasQuaternion)
             {
                 if (!_leftInStance) { _leftInStance = true; _leftStanceCosSum = 0f; _leftStanceSinSum = 0f; _leftStanceFrames = 0; }
-                float ly = ExtractHeading(CalibrateQuaternion(frame.LeftFoot.Quaternion, calibration?.LeftFootRef), _leftFootAxis);
+                float ly = WorldHeading(frame.LeftFoot.Quaternion, calibration?.LeftFootRef);
                 _leftStanceCosSum += MathF.Cos(ly);
                 _leftStanceSinSum += MathF.Sin(ly);
                 _leftStanceFrames++;
@@ -170,7 +155,7 @@ namespace IMUMoCap.Pipeline
             if (gait.RightStance && frame.RightFoot.HasQuaternion)
             {
                 if (!_rightInStance) { _rightInStance = true; _rightStanceCosSum = 0f; _rightStanceSinSum = 0f; _rightStanceFrames = 0; }
-                float ry = ExtractHeading(CalibrateQuaternion(frame.RightFoot.Quaternion, calibration?.RightFootRef), _rightFootAxis);
+                float ry = WorldHeading(frame.RightFoot.Quaternion, calibration?.RightFootRef);
                 _rightStanceCosSum += MathF.Cos(ry);
                 _rightStanceSinSum += MathF.Sin(ry);
                 _rightStanceFrames++;
@@ -244,34 +229,19 @@ namespace IMUMoCap.Pipeline
             };
         }
 
-        // Identifies which sensor axis is vertical (aligned with world Z / gravity) from the static
-        // reference quaternion captured at calibration. That axis carries the body heading signal.
-        private static int DetectHeadingAxis(System.Numerics.Quaternion sensorRef)
-        {
-            var g = System.Numerics.Vector3.Transform(
-                        -System.Numerics.Vector3.UnitZ,
-                        System.Numerics.Quaternion.Inverse(sensorRef));
-            float ax = MathF.Abs(g.X), ay = MathF.Abs(g.Y), az = MathF.Abs(g.Z);
-            return (ax >= ay && ax >= az) ? 0 : (ay >= ax && ay >= az) ? 1 : 2;
-        }
-
-        private static float ExtractHeading(System.Numerics.Quaternion q, int axis) => axis switch
-        {
-            0 => MathF.Atan2(2f * (q.W * q.X + q.Y * q.Z),
-                             1f - 2f * (q.X * q.X + q.Y * q.Y)),   // Roll  — X vertical
-            1 => MathF.Asin(Math.Clamp(2f * (q.W * q.Y - q.Z * q.X), -1f, 1f)), // Pitch — Y vertical
-            _ => MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y),
-                             1f - 2f * (q.Y * q.Y + q.Z * q.Z)),   // Yaw   — Z vertical (default)
-        };
         /// <summary>
-        /// 用校准参考四元数修正测量四元数。
-        /// 返回相对参考姿态的相对旋转：q_corrected = Inverse(q_ref) * q_measured
+        /// 相对校准姿态绕世界竖直轴(Z)的转角（twist）：Δq = q_measured · Inverse(q_ref)，heading = 2·atan2(Δq.z, Δq.w)。
+        /// 在世界系取差，不依赖传感器哪根轴朝上；旧实现取传感器轴上的欧拉角，对 180° 折返会低估约 4°，
+        /// 造成往返方向的 FPA 差异（见 docs/task21_multicalib_pd_replay.py）。
         /// </summary>
-        private static System.Numerics.Quaternion CalibrateQuaternion(System.Numerics.Quaternion measured,
-                                                                       System.Numerics.Quaternion? reference)
+        private static float WorldHeading(System.Numerics.Quaternion measured, System.Numerics.Quaternion? reference)
         {
-            if (!reference.HasValue) return measured;
-            return System.Numerics.Quaternion.Multiply(System.Numerics.Quaternion.Inverse(reference.Value), measured);
+            var dq = reference.HasValue
+                ? System.Numerics.Quaternion.Multiply(measured, System.Numerics.Quaternion.Inverse(reference.Value))
+                : measured;
+            float z = dq.Z, w = dq.W;
+            if (w < 0f) { z = -z; w = -w; }
+            return 2f * MathF.Atan2(z, w);
         }
 
         private static float AngleDiffDeg(float aRad, float bRad)
