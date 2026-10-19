@@ -137,11 +137,24 @@ docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 
 **FPA 值与目标比对**(仅 Training 阶段,`Baseline != null` 时):
 - `Error = FPA - Baseline.Target`(带符号,供 AR 端做左/右偏纠正提示)
-- 容差带 `w = max(w_min, α·SD)`(`w_min`=4°,`α` = `FpaEngine.ToleranceAlpha`,随训练 block 从 1.5→1.0→0.5 递减,难度递增)
+- 【2026-10-19 起已改为固定 ±4°,见下方新规则】容差带 `w = max(w_min, α·SD)`(`w_min`=4°,`α` = `FpaEngine.ToleranceAlpha`,随训练 block 从 1.5→1.0→0.5 递减,难度递增)
 - `OnTarget = |Error| <= w`
 - 质量标签 `Quality`:`context.Confidence` 或 `pd.Stability` 任一项距离各自阈值不到 0.1 时标记 `"Marginal"`,否则 `"High"`(即便通过了 gate,余量小也会被标注,供事后按质量过滤数据)
 
-**Baseline 阶段的目标角计算**(`BaselineProfile.Create`,由 `BaselineProcessor` 在采够 `MinRequiredSteps`(默认 100,2026-09-06 起由 20 调整为 100)步后调用):对每只脚的基线 FPA 样本求均值 `μ` 和标准差 `SD`;若 `μ > 10°` 判定该脚习惯性 toe-out,训练方向定为 `ToeIn`,目标 `T = μ - SD`;若 `μ ≤ 10°` 判定习惯性 toe-in/中性,训练方向定为 `ToeOut`,目标 `T = μ + SD`(即让受试者始终朝"回到中性区间"的方向调整,`k` 固定为 1.0)。同时计算左右步数比 `StepCountRatio = min(stepsL,stepsR)/max(...)`,低于 `ImbalanceRatioThresholdUsed`(默认 0.7)会标 `StepCountImbalanceWarning`,提示双脚数据量不均衡。
+**Baseline 阶段的目标角计算【2026-10-19 起已被下方新规则取代,本段仅作旧规则记录】**(`BaselineProfile.Create`,由 `BaselineProcessor` 在采够 `MinRequiredSteps`(默认 100,2026-09-06 起由 20 调整为 100)步后调用):对每只脚的基线 FPA 样本求均值 `μ` 和标准差 `SD`;若 `μ > 10°` 判定该脚习惯性 toe-out,训练方向定为 `ToeIn`,目标 `T = μ - SD`;若 `μ ≤ 10°` 判定习惯性 toe-in/中性,训练方向定为 `ToeOut`,目标 `T = μ + SD`(即让受试者始终朝"回到中性区间"的方向调整,`k` 固定为 1.0)。同时计算左右步数比 `StepCountRatio = min(stepsL,stepsR)/max(...)`,低于 `ImbalanceRatioThresholdUsed`(默认 0.7)会标 `StepCountImbalanceWarning`,提示双脚数据量不均衡。
+
+**2026-10-19 起生效的 target / 容差规则(取代上文旧规则,代码见提交 `16f5496c`)**:
+- Target:默认 ToeIn,`T = max(μ − Δ, TargetMinDeg)`,`Δ = TargetDeltaDeg = 10°`,`TargetMinDeg = −25°`;若 `μ < −25°`(过度内八)改为 ToeOut,`T = μ + Δ`。不再使用 `μ > 10°` 判方向,也不再使用 `SD`(`SD` 仍计算并记录)。`BaselineProfile.ActualDelta_L/R = μ − Target` 记录实际生效的 Δ(被截断者 < 10°,ToeOut 者为负),分析时作为协变量。
+- 容差:所有训练 block 共用固定 `ToleranceDeg = ±4°`(`OnTarget = |Error| <= 4°`),已删除 `FpaEngine.ToleranceAlpha` 与 `GaitPipeline.TrainingBlockAlphas`。
+- PD 朝向:`ProgressionDirEstimator.WorldHeading` 取相对校准姿态绕世界竖直轴的 twist,取代按传感器轴取欧拉角(旧法对 180° 折返低估约 4°,造成往返方向 FPA 差异 2–5°;新法 ≤2°,依据 `task21_multicalib_pd_replay.py`)。
+- AR 端:`TargetForAr()` 发送 `|target|`,`directionL/R` 按 target 符号定(负 = `"toe-in"`),因为 AR 的 `SignedTargetAngle` 把 target 当幅值、由 direction 决定旋转符号。
+- 未处理(用户 2026-10-19 决定暂缓):baseline 100 步内 FPA 并不平稳(示例录制中 L 约 +11°/min、R 约 −9°/min,两脚都在向 0 靠近,疑为行为适应而非传感器漂移),`μ`/`SD` 是被趋势平均后的值。
+
+**设计决策:全部被试统一以 toe-in 为 target 方向(2026-10-19 14:04 记录)**。保持统一方向的理由(用户给出):(1) 内部效度——固定方向使 Δ 在被试间可比;(2) 健康成人以 toe-out 为主、toe-in 人群少(用户 2026-10-19 补充确认),因此多数被试的 toe-in 目标方向有调整空间;μ 本身已很内八者(μ < −25°)按上述规则改为 toe-out。研究问题是"AR 反馈能否让人达到 target",不主张 toe-in 带来生物力学/健康收益。
+
+**已接受的两个代价(2026-10-19 14:04 记录)**:
+1. **无法回答"为什么选 toe-in"。** 审稿人可合理追问,而目前没有针对健康人的证据支持 toe-in 优于 toe-out。已核实的相反方向证据:Uhlrich 等 2018(DOI 10.1016/j.jbiomech.2017.11.003)、2022(10.1016/j.jbiomech.2022.111312)、2025(10.1016/S2665-9913(25)00151-1)均显示个体化的 toe-in/toe-out 优于统一方案(结局为膝 OA 患者的 KAM,不是"达到 target 的能力",因此不直接否定本设计,但论文中不得声称统一 toe-in 更优或有健康收益)。
+2. **结论无法外推到 toe-out。** 统一方向意味着无法说明"AR 反馈帮助达到 target"的结果对 toe-out 目标是否同样成立;论文需把它列为局限。若日后要补,可改为方向平衡分配,但需要同时为 toe-out 一侧加对称上限(现在只有 `−25°` 下限)。
 
 ### 3.8 Pipeline 数据流总览(`GaitPipeline.ProcessPacket` 为主入口,每包调用一次)
 
@@ -273,6 +286,6 @@ Manipulation Check / NASA-TLX / IMI-PC 等纸面量表**不通过 WebSocket 传�
 ## 6. 给 prime-agent 的要点提示
 
 - 这是单机 WPF 应用(`IMUMoCap/`)+ 独立 Unity/XREAL AR 客户端(`IMUARFPA/`)的两段式架构,两者通过 WebSocket(端口 8765,PC 是服务端)解耦通信,协议双端均已落地并交叉验证一致。
-- 训练流程为 3 个 training block(每 block 100 步/脚为退出标准,容差 α 依次 1.5→1.0→0.5),Block1 后与 Block3 后各有一个 Rest+问卷窗口(Block3 后还含 NASA-TLX Admin1 + IMI-PC),Block2→Block3 之间无窗口;Retention 完成后需操作员手动标记 NASA-TLX Admin2 并点击 End Recording 才真正结束(详见 §3.8)。这套时间线和步数目标目前有几处**研究者尚未最终确认的假设值**(停滞保护超时的具体分钟数、Block3 后窗口下限秒数)——继续改动这部分时应提醒用户复核。
+- 训练流程为 3 个 training block(每 block 100 步/脚为退出标准,容差 α 依次 1.5→1.0→0.5【2026-10-19 起三个 block 共用固定 ±4°,见 §3.7】),Block1 后与 Block3 后各有一个 Rest+问卷窗口(Block3 后还含 NASA-TLX Admin1 + IMI-PC),Block2→Block3 之间无窗口;Retention 完成后需操作员手动标记 NASA-TLX Admin2 并点击 End Recording 才真正结束(详见 §3.8)。这套时间线和步数目标目前有几处**研究者尚未最终确认的假设值**(停滞保护超时的具体分钟数、Block3 后窗口下限秒数)——继续改动这部分时应提醒用户复核。
 - `MainWindow.xaml.cs` 是事实上的"上帝类",承载了大部分业务逻辑而非分散在 ViewModel/Command 中 —— 这是当前代码的既有风格,不是缺陷。
 - AR 前端(`IMUARFPA/`)的 `FootHudController`/`FootWebSocketClient` 对协议字段(尤其是 `block`)处理得很通用,PC 端后续再调整阶段编号/窗口位置大概率不需要改 AR 端代码——但改动前仍应对照 `docs/AR-FRONTEND.md` 确认,不要假设。
