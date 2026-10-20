@@ -15,8 +15,8 @@
 
 | 参数 | 所在类 | 当前默认值 | Demo 推荐值 | 效果 |
 |------|--------|--------|------------|------|
-| `StaticCollectFrames` | `CalibrationProcessor` | 300（3 s） | **50（0.5 s）** | 标定采集时间大幅缩短 |
-| `StaticRequiredFrames` | `CalibrationProcessor` | 30（0.3 s） | **10（0.1 s）** | 连续静止门槛降低，更容易触发采集 |
+| `StaticCollectFrames` | `CalibrationProcessor` | 200（2 s） | **50（0.5 s）** | 标定采集时间大幅缩短 |
+| `StaticRequiredFrames` | `CalibrationProcessor` | 20（0.2 s） | **10（0.1 s）** | 连续静止门槛降低，更容易触发采集 |
 | `StaticTimeoutFrames` | `CalibrationProcessor` | 1000（10 s） | **300（3 s）** | 标定超时提前，尽快失败重试 |
 | `MinValidSteps` / `MinBaselineSteps` | `BaselineProcessor` / `PipelineParams` | **100 步** | **5 步** | Baseline 所需步数 |
 | `StabilityWindow` | `ProgressionDirEstimator` | 10 步 | **3 步** | PD 稳定性计算窗口，影响 FPA 启动速度和转弯恢复速度 |
@@ -26,7 +26,7 @@
 | `MinStanceFrames` | `GaitEventDetector` | **2 帧**（已是较快值） | 保持 **2 帧**，不建议再降 | 站立相防抖帧数；再降低会显著增加"一次落地被拆成多次假 stance"的风险（详见下方注意事项） |
 | `MinStanceFramesFloor` / `SettleGyroThreshold` / `SettleQuietFrames` / `MaxStanceFramesForSettle` | `FpaEngine` | 2 帧 / 0.35 rad/s / 3 帧 / 20 帧(200ms) | 见下方第 3 节 | 数据驱动的落地结算逻辑，已替代原来单一的 `MinStanceFramesForSettle` |
 | `PdStabilityThreshold` | `FpaEngine` / `PipelineParams` | 0.7 | **0.5** | FPA 输出的 PD 稳定性门限 |
-| `ContextConfidenceThreshold` | `FpaEngine` / `PipelineParams` | 0.7 | **0.5** | FPA 输出的运动置信度门限 |
+| `ContextConfidenceThreshold`（`PipelineParams` 中叫 `PdConfidenceThreshold`） | `FpaEngine` / `PipelineParams` | 0.7 | **0.5** | FPA 输出的运动置信度门限 |
 | `StanceFootPitchThreshold` | `GaitEventDetector` / `PipelineParams` | 0.35 rad（20°） | 保持 **0.35 rad** | 转弯后 left foot 安装倾斜角大，已修为 20°，无需再改 |
 | `WalkingWindowFrames` | `GaitEventDetector` | 300 帧（3 s） | **100 帧（1 s）** | `IsWalking` 判定窗口，启动后 1 s 即可识别行走 |
 
@@ -39,8 +39,8 @@
 **修改文件：** `IMUMoCap/Pipeline/CalibrationProcessor.cs`
 
 ```csharp
-public int StaticCollectFrames  { get; set; } = 50;   // 原 300，0.5s 即完成
-public int StaticRequiredFrames { get; set; } = 10;   // 原 30，0.1s 连续静止
+public int StaticCollectFrames  { get; set; } = 50;   // 原 200，0.5s 即完成
+public int StaticRequiredFrames { get; set; } = 10;   // 原 20，0.1s 连续静止
 public int StaticTimeoutFrames  { get; set; } = 300;  // 原 1000，3s 内完不成就失败
 ```
 
@@ -120,7 +120,8 @@ public float PdConfidenceThreshold { get; set; } = 0.5f; // 原 0.7
 - 已积累步数 ≥ `MinStepsBeforeValid`
 - 骨盆瞬时朝向与融合方向夹角 ≤ `PelvisAgreementThreshold_deg`（15°）
 
-**实测发现**（`docs/task14_reacquisition_timing.py`，17 次真实转身）：当前恢复耗时中位数
+**实测发现**（`docs/task14_reacquisition_timing.py`，17 次真实转身；⚠️ 该分析基于 2026-10-19 之前的旧 PD 算法，
+之后 PD heading 改成了相对校准姿态的 world twist，下面的耗时数字未重跑，仅供参考）：当前恢复耗时中位数
 **0.86s**（0.74~1.07s），而且**每一次**都是被 `MinStepsBeforeValid=2` 卡住——第 1 步时
 `stability` 恒为 0（样本数<2，方差算不出来，代码里是硬编码返回 0，不是真的不稳），但角度一致性
 (`agree_deg`) 在第 1 步就已经远小于 15° 阈值。如果放宽到 1 步（同时把 stability 检查在样本数=1

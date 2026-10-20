@@ -24,9 +24,9 @@ duplicate content already derivable by reading the code (which it links to).
 | `Assets/Scenes/FPATraining.unity` | Main/only training scene; build index 0, sole enabled scene in `EditorBuildSettings.asset` |
 | `Assets/XR/Settings/XREALSettings.asset` | XREAL SDK config (tracking mode, supported devices) |
 
-There is no local copy of the WS protocol spec; code comments reference
-`docs/superpowers/specs/2026-07-29-ws-protocol.md`, which lives outside this repo (likely
-alongside the backend). Treat `ServerMessage` in `FootWebSocketClient.cs` as the current source
+There is no copy of the WS protocol spec inside `IMUARFPA/`; code comments reference
+`docs/superpowers/specs/2026-07-29-ws-protocol.md`, which lives on the PC-backend side of this
+same monorepo (`docs/superpowers/specs/`). Treat `ServerMessage` in `FootWebSocketClient.cs` as the current source
 of truth for the wire format from the Unity side — it has since diverged from that spec (the
 `live` message type was retired, then reinstated as an IF-only stream alongside the new
 `ifRenderMode` field, see below) and the spec doc has not been re-synced.
@@ -75,9 +75,10 @@ IF + training + not retention/not rest (10Hz, throttled server-side), independen
 render mode is active — see "IF rendering modes" below. `state` additionally carries an
 `ifRenderMode` field (`"placeholder"` | `"live"` | `"lastResult"`) that tells the AR client which
 of the three IF render paths to use; it is read in `OnStateChange` and falls back to
-`"placeholder"` when absent
+`"lastResult"` when absent
 (old/un-upgraded PC server, or `JsonUtility`'s default null for an unset string field) — EF is
-entirely unaffected by this field.
+entirely unaffected by this field. (The comment on `ifRenderMode` in `FootWebSocketClient.cs`
+still says `"placeholder" | "live"` / fallback `"placeholder"` — that code comment is stale.)
 
 **Client → Server commands** (`FootWebSocketClient` public methods, plain-text JSON, no envelope):
 - `SendReadyForCalibrationAsync()` → `{"cmd":"ReadyForCalibration"}` — fired from the HUD's `Start`
@@ -112,7 +113,11 @@ rotation/color also revert, or persist, differs by condition/render mode (see be
 
 - **EF (stepping stones)**: `stoneLeft`/`stoneRight` show a fixed target angle/position, set
   once per block from `state.targetL/R` + `directionL/R` (toe-in/toe-out) via
-  `ApplyStoneTargets()` — never updated per-step. On each `fpa` message,
+  `ApplyStoneTargets()` — never updated per-step. The PC sends `|target|` as `targetL/R` and
+  derives `directionL/R` from the **sign of the signed baseline target** (negative = toe-in), not
+  from the training direction (`TargetForAr()` in `MainWindow.xaml.cs`). The target itself is
+  `max(μ-10°, -25°)` (toe-in), or `μ+10°` (toe-out) when μ < -25°, with a fixed ±4° tolerance
+  shared by all blocks (see `PROJECT_CONTEXT.md`). On each `fpa` message,
   `FootHudController.PulseStone()` scales the stone itself up to `PulseScale` (1.05x) in
   place — never rotated or hidden — and tints it `FeedbackColors.OnTarget`/`OffTarget`
   (blue/orange, matching IF's palette) by `msg.onTargetL`/`msg.onTargetR`;
@@ -132,6 +137,13 @@ rotation/color also revert, or persist, differs by condition/render mode (see be
   (= FPA − target), scales up to `PulseScale`, and colors by `msg.onTargetL`/`msg.onTargetR`,
   then reverts *everything* (rotation, scale, color) to the idle pose (not hidden) after the same
   `FootOutDisplaySec` window as EF's pulse.
+
+**Left/right sign convention**: both feet use "positive = toe-out". Yaw is counter-clockwise
+positive, so the PC negates the right foot (`Fpa_R`, `live.angleR`, and therefore `fpa.errorR`).
+`FootHudController` then negates again for the right foot when rotating the Unity UI
+(`-SignedTargetAngle` for `stoneRight`, `-msg.angleR` in `OnLiveUpdate`, `-msg.errorR` in
+`FlashFoot`) because Unity's `Quaternion.Euler(0,0,z)` rotates counter-clockwise. Don't "fix" one
+side without the other.
 
 **IF rendering modes** (`state.ifRenderMode`, `FootHudController._ifRenderMode`): a runtime
 toggle (PC-side `ParamsDialog` checkboxes, bound to `MainPageVM.IsIfLiveMode`/
