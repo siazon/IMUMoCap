@@ -84,7 +84,7 @@ XsDataPacket (每个 IMU 逐包)
 
 - 每只脚的朝向在其整个 stance 周期内用向量和累积（`TrackStanceYaw`），stance→swing 转换时才产出一次该脚这一步的朝向（`_leftYawReady`/`_rightYawReady`）。
 - **每当左右脚都各自产出一次新朝向**（`TryConsumeStep` 两者都 ready）才触发一次融合更新，计入一次 PD 步数（`_stepCount++`）。
-- **IMU 安装轴自适应**（`DetectHeadingAxis`）：标定时用参考四元数把世界重力向量反变换回传感器坐标系，取分量绝对值最大的轴作为该传感器的"朝向/yaw 轴"（默认 Z），据此选择 `ExtractHeading` 中 Roll/Pitch/Yaw 三种公式之一，兼容传感器绑扎方向不同的情况。
+- **PD 朝向提取**（2026-10-19 起，`ProgressionDirEstimator.WorldHeading`）：取 `Δq = q_measured · Inverse(q_ref)`（世界系差），heading = `2·atan2(Δq.z, Δq.w)`，即绕世界竖直轴的 twist，不依赖传感器哪根轴朝上。旧实现（`DetectHeadingAxis` 取传感器重力最大分量轴，再用 `ExtractHeading` 的 Roll/Pitch/Yaw 公式）对 180° 折返会低估约 4°，造成往返方向的 FPA 差异 2–5°，已删除。注意 `FpaEngine.ExtractYaw` 仍是硬编码 Z 轴 yaw，未改。
 - **稳定性**：滑动窗口（`StabilityWindow=10` 步）内历次融合朝向的圆形方差 `circVar = 1 - R̄`（`R̄` 为平均合成向量长度），`Stability = 1/(1+circVar)`。
 - **Turning → ReacquiringPd 切换**时清空 PD 历史窗口、步数计数、双脚 stance 累积器，避免转弯前后方向混算稳定性，也避免转弯瞬间正处于 stance 中的脚把转弯期间的朝向带入新估计。
 - **ReacquiringPd → Straight 退出条件**（三者同时满足，满足后调用 `contextDetector.ConfirmStraight()`）：
@@ -103,7 +103,7 @@ XsDataPacket (每个 IMU 逐包)
   - 门控失败时记录 `StepExclusionReason`（`Turning`/`ReacquiringPd`/`LowConfidence`/`PdInvalid`），通过 `OnStepOutcome` 事件上报，供 QoE 统计"转弯排除了多少步"，不影响 `FpaResult` 输出本身，仅用于审计。
 - **结算**（`TrySettle`）：脚从 swing 转入 stance 后，累积满 `MinStanceFramesForSettle`（10 帧，@100Hz=100ms）且当前帧 gate 通过，才输出该步 `FpaResult`；同一 stance 周期只输出一次（`_emittedThisStance`）。若落地后一直没等到 gate 通过，`MarkSwing()` 会在抬脚瞬间把这一步记为"排除"（返回 `_pendingReason`）而非"输出"。
 - **FPA 值**：`FPA = mean(该脚 stance 期间 yaw) - PD.DirectionRad`，弧度转角度，正值 = toe-out，负值 = toe-in（2026-10-20 起右脚结果取反，左右脚同一约定；此前录制的右脚列符号相反）。
-- **与 Baseline 比对**（仅 `Baseline != null` 即 Training 阶段）：`Error = FPA - Baseline.Target`；容差带 `w = max(w_min, α·SD)`（`w_min = BaselineProfile.ToleranceWMinDeg = 4°`，`α = FpaEngine.ToleranceAlpha`）；`OnTarget = |Error| <= w`。
+- **与 Baseline 比对**（仅 `Baseline != null` 即 Training 阶段）：`Error = FPA - Baseline.Target`；容差为固定半宽 `w = BaselineProfile.ToleranceDeg = 4°`（2026-10-19 起，所有训练 block 共用，不再依赖 SD 与 α）；`OnTarget = |Error| <= w`。
 - **质量标签**：门控通过后，若 `context.Confidence - ContextConfidenceThreshold < 0.1` 或 `pd.Stability - PdStabilityThreshold < 0.1`，标记 `Quality = "Marginal"`，否则 `"High"`——即使通过了 gate，余量小也会被标注，供事后按质量过滤数据。
 
 ### `BaselineProcessor` + `BaselineProfile`（基线统计与个性化目标）
@@ -112,7 +112,7 @@ XsDataPacket (每个 IMU 逐包)
 - `IsReady`：两脚累积步数都 `>= MinValidSteps`（默认 100）。
 - `IsStalled`（提前止损）：领先脚已达 `MinValidSteps`，但落后脚不到 `MinValidSteps / 2` —— 判定为该脚采集异常（走廊太短/转弯排除过多/传感器问题），直接触发失败上报交给操作员决定是否重来，而不是让领先脚被迫走到 2× 阈值、用严重失衡数据凑目标。
 - `TryFinalize()`：对每只脚样本求均值 `μ`、标准差 `SD`（`Sd` 用 n-1 无偏估计，样本数 <2 时返回 0），调用 `BaselineProfile.Create` 生成结果。
-- **目标角规则**（`BaselineProfile.Create`）：`μ > 10°` → 判定习惯性 toe-out，训练方向 `ToeIn`，`Target = μ - TargetK·SD`；`μ ≤ 10°` → 判定习惯性 toe-in/中性，训练方向 `ToeOut`，`Target = μ + TargetK·SD`；`TargetK` 固定为 1.0。
+- **目标角规则**（`BaselineProfile.Create`，2026-10-19 起）：默认训练方向 `ToeIn`，`Target = max(μ − TargetDeltaDeg, TargetMinDeg)`（`TargetDeltaDeg = 10°`，`TargetMinDeg = −25°`）；`μ < −25°`（过度内八）→ 训练方向 `ToeOut`，`Target = μ + TargetDeltaDeg`。不再使用 SD，也不再用 `μ > 10°` 判方向。设计理由与已接受的代价见 `docs/PROJECT_CONTEXT.md` §3.7。
 - 同时计算左右步数比 `StepCountRatio = min(stepsL,stepsR)/max(...)`，低于 `imbalanceRatioThreshold`（默认 0.7，由调用方传入并原样记录为 `ImbalanceRatioThresholdUsed`）标记 `StepCountImbalanceWarning`。
 
 ### `BundleRecorder`（回放录制，测试用）
@@ -125,7 +125,7 @@ XsDataPacket (每个 IMU 逐包)
 
 `GaitPipeline.Process(bundle)` 是唯一的每帧入口（`ProcessPacket` 是每包入口，内部先调用 `ImuFrameCollector` 攒齐 bundle）。除了串联上述组件，还负责：
 
-- **训练块容差调度**：`SetTrainingBlock(n)` 按 `TrainingBlockAlphas = {1.5, 1.0, 0.5}`（对应 Block1/2/3）设置 `FpaEngine.ToleranceAlpha`，并重置本块步数计数。
+- **训练块切换**：`SetTrainingBlock(n)` 只重置本块步数计数并写日志。2026-10-19 起容差为所有 block 共用的固定值，原 `TrainingBlockAlphas = {1.5, 1.0, 0.5}` 与 `FpaEngine.ToleranceAlpha` 已删除。
 - **训练块自动完成**：`InTraining` 时统计 `_trainingStepsL`/`_trainingStepsR`（有效 FPA 才计数），两脚都达到 `TrainingBlockTargetSteps`（100）时触发 `OnTrainingBlockComplete` 事件，由 `MainWindow` 负责推进阶段。
 - **Baseline 自动完成/失败**：每帧检查 `_baseline.IsReady`（自动 `FinalizeBaseline()`）和 `_baseline.IsStalled`（同样调用 `FinalizeBaseline()`，因 `IsReady` 为 false 会返回 `null`，走既有失败上报路径）。
 - **诊断行**：每帧无论 FPA 是否产出都构造一行 `DiagnosticsRow`（含双足加速度/角速度/四元数、stance 状态、`MotionState`/`MotionConfidence`、`PdDirectionDeg`/`PdStability`/`PdIsValid`、FPA 值/误差/是否达标/质量标签），存入最长 20 分钟（`DiagnosticsCapacity = 120,000` 帧 @100Hz）的环形缓冲区，并通过 `OnDiagnosticsFrame` 事件广播；`GetDiagnosticsSnapshot()` 返回副本供 CSV 导出。

@@ -48,7 +48,7 @@ UI 绑定用的单个 IMU 槽位视图模型：`SlotName`（"IMU-1" 等展示名
 ### `BaselineProfile.cs`
 基线阶段结束后的统计与个性化训练目标，由 `BaselineProcessor` 生成后只读：
 - 统计量：`MeanFpa_L/R`、`SdFpa_L/R`、`Asymmetry`（左右均值之差绝对值）、`ValidSteps_L/R`。
-- 训练目标：`Target_L/R` + `Direction_L/R`（`TrainingDirection` 枚举 `ToeIn`/`ToeOut`），由静态工厂 `Create(...)` 按规则计算——`mean > 10°` 判定习惯性 toe-out → `ToeIn` 方向、`Target = mean − k·SD`；否则 → `ToeOut` 方向、`Target = mean + k·SD`，`k` 固定为常量 `TargetK = 1.0f`。`ToleranceWMinDeg = 4f` 是容差下限常量；`ToleranceL/R(alpha)` 按 `w = max(w_min, alpha·SD)` 计算某个训练 block 的容差半宽（`alpha` 由调用方 `FpaEngine.ToleranceAlpha` 传入,不在本类存储)。
+- 训练目标：`Target_L/R` + `Direction_L/R`（`TrainingDirection` 枚举 `ToeIn`/`ToeOut`），由静态工厂 `Create(...)` 按规则计算（2026-10-19 起）——默认 `ToeIn`，`Target = max(mean − TargetDeltaDeg, TargetMinDeg)`（`TargetDeltaDeg = 10f`、`TargetMinDeg = −25f`）；`mean < TargetMinDeg`（过度内八）时改为 `ToeOut`，`Target = mean + TargetDeltaDeg`。不再使用 `SD`。`ActualDelta_L/R = mean − Target` 记录实际生效的 Δ。`ToleranceDeg = 4f` 是所有训练 block 共用的固定容差半宽，`ToleranceL/R` 为只读属性（已无 alpha 参数，`FpaEngine.ToleranceAlpha` 已删除）。
 - 步数均衡性：`StepCountRatio`（左右有效步数 min/max）、`ImbalanceRatioThresholdUsed`（生成时生效的阈值,记录下来便于事后复核)、`StepCountImbalanceWarning`。
 - `MinRequiredSteps`/`IsValid`：`Create(...)` 的 `minRequiredSteps` 参数默认值是 `20`，但注意实际调用方（`PipelineParams.MinBaselineSteps`,见下)当前生产配置传入的是 `100`，以调用处为准。
 
