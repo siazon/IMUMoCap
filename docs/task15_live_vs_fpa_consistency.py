@@ -47,7 +47,18 @@ WALKING_WINDOW_F = 300
 YAW_RATE_THR, DELTAQ_YAW_THR = 0.70, 0.17
 TURNING_CONFIRM_F, STRAIGHT_CONFIRM_F, REACQ_TURNING_CONFIRM_F = 10, 20, 10
 
-PELVIS_W, LEFT_W, RIGHT_W = 0.6, 0.2, 0.2
+PELVIS_W, LEFT_W, RIGHT_W = 0.6, 0.1, 0.1
+
+def fuse_directions(pelvis, left, right):
+    """ProgressionDirEstimator.FuseDirection: feet only count when BOTH deviate from the pelvis heading to the
+    same side, and then only by the smaller deviation; otherwise they contribute the pelvis heading (no influence)."""
+    dl, dr = norm_rad(left - pelvis), norm_rad(right - pelvis)
+    common = math.copysign(min(abs(dl), abs(dr)), dl) if dl * dr > 0 else 0.0
+    foot = pelvis + common
+    total_w = PELVIS_W + LEFT_W + RIGHT_W
+    wx = (math.cos(pelvis)*PELVIS_W + math.cos(foot)*(LEFT_W + RIGHT_W)) / total_w
+    wy = (math.sin(pelvis)*PELVIS_W + math.sin(foot)*(LEFT_W + RIGHT_W)) / total_w
+    return math.atan2(wy, wx)
 STABILITY_WINDOW, STABILITY_THR, MIN_STEPS_VALID, PELVIS_AGREE_THR_DEG = 10, 0.85, 2, 15.0
 
 CONTEXT_CONFIDENCE_THR, PD_STABILITY_THR = 0.7, 0.7
@@ -340,10 +351,7 @@ def pd_update(pel_q, left_q, right_q, left_stance, right_stance, mc_state_now):
     left_yaw_ready = right_yaw_ready = False
 
     pd_step_count += 1
-    total_w = PELVIS_W + LEFT_W + RIGHT_W
-    wx = (math.cos(pelvis_yaw)*PELVIS_W + math.cos(last_left_yaw)*LEFT_W + math.cos(last_right_yaw)*RIGHT_W) / total_w
-    wy = (math.sin(pelvis_yaw)*PELVIS_W + math.sin(last_left_yaw)*LEFT_W + math.sin(last_right_yaw)*RIGHT_W) / total_w
-    fused = math.atan2(wy, wx)
+    fused = fuse_directions(pelvis_yaw, last_left_yaw, last_right_yaw)
 
     pd_history.append(fused); pd_hist_cos += math.cos(fused); pd_hist_sin += math.sin(fused)
     if len(pd_history) > STABILITY_WINDOW:

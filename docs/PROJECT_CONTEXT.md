@@ -107,7 +107,7 @@ docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 - 辅助投票:若当前 `Straight` 但 `GaitEvent.IsWalking == false`(比如站着不动),置信度打 5 折,但不会改变状态本身。
 
 **行进方向(PD)重建**(`ProgressionDirEstimator.Update`,仅在 `Straight`/`ReacquiringPd` 态更新):
-- 融合三路朝向信号加权平均(圆周角度用向量和 `atan2` 处理,避免 ±180° 环绕问题):骨盆瞬时 yaw(权重 0.6,主信号、最稳定)、左脚 stance 相位内的平均 yaw(权重 0.2)、右脚 stance 相位内的平均 yaw(权重 0.2)。每只脚的朝向在其整个 stance 周期内用向量和累积后 `atan2` 求平均,swing→stance/stance→swing 转换时才产出一次"该脚这一步的朝向"。
+- 融合三路朝向信号加权平均(圆周角度用向量和 `atan2` 处理,避免 ±180° 环绕问题):骨盆瞬时 yaw(权重 0.6,主信号、最稳定)、左脚 stance 相位内的平均 yaw(权重 0.1)、右脚 stance 相位内的平均 yaw(权重 0.1)。**2026-10-20 起脚的权重由 0.2 降为 0.1,且只有双脚同时偏向骨盆朝向的同一侧才起作用(见 §3.7 的 PD 融合说明)。**每只脚的朝向在其整个 stance 周期内用向量和累积后 `atan2` 求平均,swing→stance/stance→swing 转换时才产出一次"该脚这一步的朝向"。
 - **每当左右脚都各自产出一次新朝向**(双脚都完成了一次 stance→swing 转换)才触发一次融合更新、计入一次"PD 步数"。
 - **稳定性(Stability)**:滑动窗口(`StabilityWindow=10` 步)内历次融合朝向的圆形方差 `circVar = 1 - R̄`(R̄ 为平均合成向量长度,1=完全一致方向,0=随机分布),`Stability = 1/(1+circVar)`。
 - **Turning → ReacquiringPd 切换时的处理**:清空 PD 历史窗口和步数计数,不让转弯前后的方向混在一起算稳定性,避免"旧方向 + 新方向"平均出一个错误的过渡值。
@@ -148,6 +148,7 @@ docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 - 容差:所有训练 block 共用固定 `ToleranceDeg = ±4°`(`OnTarget = |Error| <= 4°`),已删除 `FpaEngine.ToleranceAlpha` 与 `GaitPipeline.TrainingBlockAlphas`。
 - PD 朝向:`ProgressionDirEstimator.WorldHeading` 取相对校准姿态绕世界竖直轴的 twist,取代按传感器轴取欧拉角(旧法对 180° 折返低估约 4°,造成往返方向 FPA 差异 2–5°;新法 ≤2°,依据 `task21_multicalib_pd_replay.py`)。
 - AR 端:`TargetForAr()` 发送 `|target|`,`directionL/R` 按 target 符号定(负 = `"toe-in"`),因为 AR 的 `SignedTargetAngle` 把 target 当幅值、由 direction 决定旋转符号。
+- **PD 融合(2026-10-20 起)**:脚的权重 0.2 → 0.1(骨盆 0.6 不变),且双脚必须同时偏向骨盆朝向的同一侧才起作用、取较小偏差,否则脚的贡献等于骨盆朝向。依据 2026-10-19 外八测试:右脚刻意转到 −25° 时旧融合把 PD 拉到 −5°,使左脚 FPA 虚增约 5°(0.4° 显示成 4.8°);新规则下 PD 保持在 ±0.4° 内,Training2 的 L 均值 4.8° → −0.1°。2026-10-12 折返数据中往返方向差仍 ≤1.9°,各 block 步数不变。
 - **右脚符号约定(2026-10-20 起)**:`FpaEngine` 对右脚的 FPA 取反(`Fpa_R = −(右脚 yaw − PD)`),`live` 的 `angleR` 同样取反,所以左右脚统一为"正 = toe-out,负 = toe-in"。依据:2026-10-19 的双脚外八测试 baseline 为 L = +11.4°、R = −12.1°(几乎对称),说明旧代码里 yaw 以逆时针为正、右脚外八是负值,"正 = toe-out"只对左脚成立。AR 端(`FootHudController`)因此对**右脚所有旋转取反**(stone 目标、`live.angleR`、`fpa.errorR`),因为 Unity Z 轴正向旋转在屏幕上是逆时针,对左脚是 toe-out、对右脚却是 toe-in(俯视图)。2026-10-20 之前录制的 Diagnostics 里右脚列(`FPA_Right_*`)是旧符号,与之后的数据相差一个负号。
 - 未处理(用户 2026-10-19 决定暂缓):baseline 100 步内 FPA 并不平稳(示例录制中 L 约 +11°/min、R 约 −9°/min,两脚都在向 0 靠近,疑为行为适应而非传感器漂移),`μ`/`SD` 是被趋势平均后的值。
 

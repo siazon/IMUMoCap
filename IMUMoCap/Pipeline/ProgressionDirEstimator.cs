@@ -10,9 +10,9 @@ namespace IMUMoCap.Pipeline
     ///
     /// 仅在 MotionContext.State == Straight 或 ReacquiringPd 时更新。
     /// 融合三路信号（权重可调）：
-    ///   - Pelvis heading（yaw）：主信号，稳定性好
-    ///   - Left foot heading（stance 相位均值 yaw）
-    ///   - Right foot heading（stance 相位均值 yaw）
+    ///   - Pelvis heading（yaw）：主信号，稳定性好（权重 0.6）
+    ///   - Left / Right foot heading（stance 相位均值 yaw，权重各 0.1）：仅当双脚同时偏向骨盆朝向的同一侧才起作用，
+    ///     见 FuseDirection
     ///
     /// 稳定性（Stability）= 1 / (1 + variance)，滑动窗口内各步估计值的方差。
     ///
@@ -25,8 +25,8 @@ namespace IMUMoCap.Pipeline
     {
         // ── 可调参数 ──────────────────────────────────────────────────────────
         public float PelvisWeight { get; set; } = 0.6f;
-        public float LeftFootWeight { get; set; } = 0.2f;
-        public float RightFootWeight { get; set; } = 0.2f;
+        public float LeftFootWeight { get; set; } = 0.1f;
+        public float RightFootWeight { get; set; } = 0.1f;
         public int StabilityWindow { get; set; } = 10;   // 步数滑动窗口
         public float StabilityThreshold { get; set; } = 0.85f;
         public int MinStepsBeforeValid { get; set; } = 2;    // 进入 ReacquiringPd 时历史会被清空，2 步即可重建 stability
@@ -182,15 +182,27 @@ namespace IMUMoCap.Pipeline
 
         private float FuseDirection(float pelvisYaw, float leftYaw, float rightYaw)
         {
+            // 双脚只有同时偏向骨盆朝向的同一侧才影响 PD，且只取两者偏差中较小的一个；
+            // 反向（如对称外八）或只有一只脚偏离时，脚的贡献就是骨盆朝向本身，即无影响。
+            // 这样刻意把单脚转开不会拖偏 PD、进而污染另一只脚的 FPA。
+            float dl = WrapRad(leftYaw - pelvisYaw);
+            float dr = WrapRad(rightYaw - pelvisYaw);
+            float common = dl * dr > 0f ? MathF.CopySign(MathF.Min(MathF.Abs(dl), MathF.Abs(dr)), dl) : 0f;
+            float footYaw = pelvisYaw + common;
+
             // 加权平均，注意角度的圆周性（用向量和再取 atan2）
-            float totalW = PelvisWeight + LeftFootWeight + RightFootWeight;
-            float wx = (MathF.Cos(pelvisYaw) * PelvisWeight
-                      + MathF.Cos(leftYaw) * LeftFootWeight
-                      + MathF.Cos(rightYaw) * RightFootWeight) / totalW;
-            float wy = (MathF.Sin(pelvisYaw) * PelvisWeight
-                      + MathF.Sin(leftYaw) * LeftFootWeight
-                      + MathF.Sin(rightYaw) * RightFootWeight) / totalW;
+            float footWeight = LeftFootWeight + RightFootWeight;
+            float totalW = PelvisWeight + footWeight;
+            float wx = (MathF.Cos(pelvisYaw) * PelvisWeight + MathF.Cos(footYaw) * footWeight) / totalW;
+            float wy = (MathF.Sin(pelvisYaw) * PelvisWeight + MathF.Sin(footYaw) * footWeight) / totalW;
             return MathF.Atan2(wy, wx);
+        }
+
+        private static float WrapRad(float rad)
+        {
+            while (rad > MathF.PI) rad -= 2f * MathF.PI;
+            while (rad < -MathF.PI) rad += 2f * MathF.PI;
+            return rad;
         }
 
         private void UpdateHistory(float pd)

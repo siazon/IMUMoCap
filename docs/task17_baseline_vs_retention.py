@@ -58,7 +58,7 @@ YAW_RATE_THR, DELTAQ_YAW_THR = 0.70, 0.17
 TURNING_CONFIRM_F, STRAIGHT_CONFIRM_F, REACQ_TURNING_CONFIRM_F = 10, 20, 10
 
 # ── ProgressionDirEstimator.cs ───────────────────────────────────────────────────────────────
-PELVIS_W, LEFT_W, RIGHT_W = 0.6, 0.2, 0.2
+PELVIS_W, LEFT_W, RIGHT_W = 0.6, 0.1, 0.1
 STABILITY_WINDOW, STABILITY_THR, MIN_STEPS_VALID, PELVIS_AGREE_THR_DEG = 10, 0.85, 2, 15.0
 
 # ── FpaEngine.cs ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +284,19 @@ class MotionContextDetector:
 
 # ── ProgressionDirEstimator ─────────────────────────────────────────────────────────────────
 
+def fuse_directions(pelvis, left, right):
+    """ProgressionDirEstimator.FuseDirection. Feet only count when BOTH deviate from the pelvis heading to
+    the same side, and then only by the smaller of the two deviations; otherwise they contribute the pelvis
+    heading itself (no influence). So one foot rotated on purpose cannot drag the PD."""
+    dl, dr = norm_rad(left - pelvis), norm_rad(right - pelvis)
+    common = math.copysign(min(abs(dl), abs(dr)), dl) if dl * dr > 0 else 0.0
+    foot = pelvis + common
+    total_w = PELVIS_W + LEFT_W + RIGHT_W
+    wx = (math.cos(pelvis)*PELVIS_W + math.cos(foot)*(LEFT_W + RIGHT_W)) / total_w
+    wy = (math.sin(pelvis)*PELVIS_W + math.sin(foot)*(LEFT_W + RIGHT_W)) / total_w
+    return math.atan2(wy, wx)
+
+
 class ProgressionDirEstimator:
     def __init__(self, pelvis_ref, left_ref, right_ref):
         self.pelvis_ref, self.left_ref, self.right_ref = pelvis_ref, left_ref, right_ref
@@ -351,10 +364,7 @@ class ProgressionDirEstimator:
         self.left_ready = self.right_ready = False
 
         self.step_count += 1
-        total_w = PELVIS_W + LEFT_W + RIGHT_W
-        wx = (math.cos(pelvis_yaw)*PELVIS_W + math.cos(self.last_left_yaw)*LEFT_W + math.cos(self.last_right_yaw)*RIGHT_W) / total_w
-        wy = (math.sin(pelvis_yaw)*PELVIS_W + math.sin(self.last_left_yaw)*LEFT_W + math.sin(self.last_right_yaw)*RIGHT_W) / total_w
-        fused = math.atan2(wy, wx)
+        fused = fuse_directions(pelvis_yaw, self.last_left_yaw, self.last_right_yaw)
 
         self.history.append(fused); self.hist_cos += math.cos(fused); self.hist_sin += math.sin(fused)
         if len(self.history) > STABILITY_WINDOW:
