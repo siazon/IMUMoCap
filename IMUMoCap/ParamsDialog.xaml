@@ -59,6 +59,28 @@
                   IsChecked="{Binding IsIfLastResultMode, Mode=TwoWay}"
                   ToolTip="默认勾选：脚印落地脉冲（旋转+命中/未命中变色）结束后不再回落到中性姿态，而是一直保持显示上一步的结果，直到下一步 fpa 更新覆盖它（放大效果仍会按原节奏回落）。与上面的 Live Angle Mode 互斥。"/>
 
+        <!-- 9. IMU sensor -> role binding -->
+        <TextBlock Text="IMU Role Binding" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
+        <ItemsControl ItemsSource="{Binding ImuSlots}" Margin="0,0,0,12">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="140"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding SlotName}" FontSize="11" Foreground="{StaticResource Brand.Navy}"/>
+                            <TextBlock Text="{Binding DeviceId, StringFormat=' (0x{0:X8})'}" FontSize="11" Foreground="{StaticResource Brand.Navy}" Opacity="0.7"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding DataContext.ImuRoleOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  SelectedItem="{Binding Role, Mode=TwoWay}"/>
+                    </Grid>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
         <Button x:Name="BtnSaveParams" Style="{StaticResource PrimaryButtonStyle}" Click="BtnSaveParams_Click"
                 Width="220" HorizontalAlignment="Left"
                 ToolTip="Persist current parameter values to disk">

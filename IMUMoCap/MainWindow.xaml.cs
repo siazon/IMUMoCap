@@ -31,7 +31,6 @@ namespace IMUMoCap
         public WebSocketBroadcastServer? _wsServer;
         ConcurrentQueue<double[]> actionQueue = new ConcurrentQueue<double[]>();
         BlockingCollection<RecordedData> ImuDataQueue = new BlockingCollection<RecordedData>(new ConcurrentQueue<RecordedData>(), 2000);
-        string imuPelvis = "imuPelvis", imuL = "imuL", imuR = "imuR";
         private readonly bool _useConjugateForHeading = true; // 你想用哪套就统一哪套
         private const double TrainingStatusThresholdDeg = 10.0;
         private TestState _sessionState = TestState.Launching;
@@ -165,14 +164,12 @@ namespace IMUMoCap
                 _content.ConnectedWsClients.Remove(remote ?? "unknown");
             });
 
-            var imuList = new List<ImuViewModel>
-            {
-                new ImuViewModel(imuPelvis) { DeviceId = 0x00B43CAB, Role = ImuRole.Pelvis },
-                new ImuViewModel(imuL)      { DeviceId = 0x10b41913, Role = ImuRole.Left   },
-                //new ImuViewModel(imuR)      { DeviceId = 0x00B43B3F, Role = ImuRole.Right  },
-                new ImuViewModel(imuR)      { DeviceId = 0x10B41904, Role = ImuRole.Right  },
-            };
+            var imuList = LoadOrCreateImuConfig()
+                .Select(e => new ImuViewModel(e.SlotName) { DeviceId = ParseHexDeviceId(e.DeviceId), Role = e.Role })
+                .ToList();
             _slotRegistry = new ImuSlotRegistry(imuList);
+            _content.ImuSlots = _slotRegistry.Imus;
+            _content.ImuRoleOptions = (ImuRole[])Enum.GetValues(typeof(ImuRole));
 
             _deviceManager = new ImuDeviceManager(_slotRegistry);
             _deviceManager.Log += msg => Dispatcher.BeginInvoke(() => log(msg));
@@ -232,10 +229,10 @@ namespace IMUMoCap
                         // ref) — pelvis rotates with a turn, so this stays correct instead of flipping sign
                         // when the participant turns around. The calibration-time foot/pelvis offset is
                         // subtracted out (RawFootYawDeg) so it still reads ~0 at calibration.
-                        // Right foot negated, same as FpaEngine: positive = toe-out for both feet.
                         var calib = _pipeline.CalibrationProfile;
                         float rawYawL = calib != null
                             ? RawFootYawDeg(row.LeftQuat, row.PelvisQuat, calib.LeftFootRef, calib.PelvisRef) : float.NaN;
+                        // Right foot negated, same as FpaEngine: positive = toe-out for both feet.
                         float rawYawR = calib != null
                             ? -RawFootYawDeg(row.RightQuat, row.PelvisQuat, calib.RightFootRef, calib.PelvisRef) : float.NaN;
                         _lastLiveAngleL = rawYawL;
@@ -353,11 +350,14 @@ namespace IMUMoCap
 
             UpdateImuStatusIndicators();
 
-            bool allConnected = _slotRegistry.Imus.All(i => i.IsConnected);
+            // Only the sensors actually bound to a role (Pelvis/Left/Right) are required to
+            // start — the rest of imu_sensors.json's 8 entries are spares that may never connect.
+            var requiredImus = _slotRegistry.Imus.Where(i => i.Role != ImuRole.None).ToList();
+            bool allConnected = requiredImus.Count > 0 && requiredImus.All(i => i.IsConnected);
             if (allConnected)
             {
-                _content.StatusLabel = "All IMUs connected. Starting measurement...";
-                log("All IMUs connected. Auto-starting measurement...");
+                _content.StatusLabel = "All required IMUs connected. Starting measurement...";
+                log("All required IMUs connected. Auto-starting measurement...");
                 int desiredRate = _content.UpdateRates.Count > 0
                     ? Convert.ToInt32(_content.UpdateRates[_content.SelectedRate])
                     : -1;
@@ -381,8 +381,11 @@ namespace IMUMoCap
             _content.StatusLabel = ConnectedCountLabel();
         }
 
-        private string ConnectedCountLabel() =>
-            $"{_slotRegistry.Imus.Count(i => i.IsConnected)}/{_slotRegistry.Imus.Count} IMUs connected.";
+        private string ConnectedCountLabel()
+        {
+            var required = _slotRegistry.Imus.Where(i => i.Role != ImuRole.None).ToList();
+            return $"{required.Count(i => i.IsConnected)}/{required.Count} IMUs connected.";
+        }
 
         private void OnDataPacket(DataPacketEvent ev)
         {
@@ -957,7 +960,48 @@ namespace IMUMoCap
         {
             var json = JsonSerializer.Serialize(_pipeline.Params, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(ParamsFilePath, json, Encoding.UTF8);
+            SaveImuConfig();
             log("Parameters saved.");
+        }
+
+        private static readonly string ImuConfigFilePath =
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "imu_sensors.json");
+        private static readonly JsonSerializerOptions ImuConfigJsonOptions = new() { WriteIndented = true };
+
+        private static uint ParseHexDeviceId(string hex)
+            => Convert.ToUInt32(hex.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? hex[2..] : hex, 16);
+
+        /// <summary>
+        /// Loads imu_sensors.json. If missing, seeds it with the 3 sensors that used to be
+        /// hardcoded here, so existing setups keep working until the user edits in the other 5.
+        /// </summary>
+        private List<ImuSensorConfigEntry> LoadOrCreateImuConfig()
+        {
+            if (!File.Exists(ImuConfigFilePath))
+            {
+                var seed = new List<ImuSensorConfigEntry>
+                {
+                    new() { SlotName = "IMU-1", DeviceId = "0x00B43CAB", Role = ImuRole.Pelvis },
+                    new() { SlotName = "IMU-2", DeviceId = "0x10B41913", Role = ImuRole.Left },
+                    new() { SlotName = "IMU-3", DeviceId = "0x10B41904", Role = ImuRole.Right },
+                };
+                File.WriteAllText(ImuConfigFilePath, JsonSerializer.Serialize(seed, ImuConfigJsonOptions), Encoding.UTF8);
+                return seed;
+            }
+
+            var json = File.ReadAllText(ImuConfigFilePath, Encoding.UTF8);
+            return JsonSerializer.Deserialize<List<ImuSensorConfigEntry>>(json) ?? new List<ImuSensorConfigEntry>();
+        }
+
+        private void SaveImuConfig()
+        {
+            var entries = _slotRegistry.Imus.Select(imu => new ImuSensorConfigEntry
+            {
+                SlotName = imu.SlotName,
+                DeviceId = "0x" + imu.DeviceId.ToString("X8"),
+                Role = imu.Role,
+            }).ToList();
+            File.WriteAllText(ImuConfigFilePath, JsonSerializer.Serialize(entries, ImuConfigJsonOptions), Encoding.UTF8);
         }
 
         private ParamsDialog? _paramsDialog;

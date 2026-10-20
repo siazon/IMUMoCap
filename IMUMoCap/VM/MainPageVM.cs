@@ -21,6 +21,9 @@ namespace IMUMoCap
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
+        public IReadOnlyList<ImuViewModel> ImuSlots { get; set; } = Array.Empty<ImuViewModel>();
+        public IReadOnlyList<ImuRole> ImuRoleOptions { get; set; } = Array.Empty<ImuRole>();
+
         private ObservableCollection<string> _devices = new ObservableCollection<string>();
 
         public ObservableCollection<string> Devices

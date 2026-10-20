@@ -1,0 +1,42 @@
+[
+  {
+    "SlotName": "IMU-1",
+    "DeviceId": "0x00B43CAB",
+    "Role": "Pelvis"
+  },
+  {
+    "SlotName": "IMU-2",
+    "DeviceId": "0x10B41913",
+    "Role": "Left"
+  },
+  {
+    "SlotName": "IMU-3",
+    "DeviceId": "0x10B41904",
+    "Role": "Right"
+  },
+  {
+    "SlotName": "IMU-4",
+    "DeviceId": "0x00B43D0B",
+    "Role": "None"
+  },
+  {
+    "SlotName": "IMU-5",
+    "DeviceId": "0x00B43B3F",
+    "Role": "None"
+  },
+  {
+    "SlotName": "IMU-6",
+    "DeviceId": "0x00B43D12",
+    "Role": "None"
+  },
+  {
+    "SlotName": "IMU-7",
+    "DeviceId": "0x00B43CBF",
+    "Role": "None"
+  },
+  {
+    "SlotName": "IMU-8",
+    "DeviceId": "0x00B43CC0",
+    "Role": "None"
+  }
+]

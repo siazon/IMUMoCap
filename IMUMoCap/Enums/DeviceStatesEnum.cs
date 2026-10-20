@@ -20,6 +20,6 @@ namespace IMUMoCap
         FLUSHING
     };
     public enum TestState { Launching, Connected,  Calibrating, Calibrated,Baseline, Step };
-    public enum ImuRole { Pelvis, Left, Right }
+    public enum ImuRole { None, Pelvis, Left, Right }
 
 }
