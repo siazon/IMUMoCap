@@ -246,8 +246,8 @@ public class FootHudController : MonoBehaviour
             // stone target angle is fixed (set once from state.targetL/R); per-step feedback is a
             // brief scale-up pulse on the stone itself, tinted blue/orange on hit/miss — matches
             // IF's FeedbackColors palette.
-            if (!msg.fpaLIsNaN) PulseStone(stoneLeft, stoneLeftImage, msg.onTargetL, nameof(ResetStoneLeft));
-            if (!msg.fpaRIsNaN) PulseStone(stoneRight, stoneRightImage, msg.onTargetR, nameof(ResetStoneRight));
+            if (!msg.fpaLIsNaN) PulseStone(stoneLeft, stoneLeftImage, msg.onTargetL, nameof(ResetStoneLeftScale));
+            if (!msg.fpaRIsNaN) PulseStone(stoneRight, stoneRightImage, msg.onTargetR, nameof(ResetStoneRightScale));
             return;
         }
 
@@ -424,6 +424,18 @@ public class FootHudController : MonoBehaviour
         if (stoneRightImage != null) stoneRightImage.color = _stoneRightNormalColor;
     }
 
+    // Scale-only revert after a stone pulse: color stays on the last step's on/off-target tint until
+    // the next fpa message overwrites it (same "last result" behavior as IF's lastResult mode).
+    private void ResetStoneLeftScale()
+    {
+        if (stoneLeft != null) stoneLeft.localScale = Vector3.one;
+    }
+
+    private void ResetStoneRightScale()
+    {
+        if (stoneRight != null) stoneRight.localScale = Vector3.one;
+    }
+
     // Reverts to the idle pose (zero rotation, cached texture color) — not a hide/SetActive, the
     // icon stays visible for the whole block. Used both to establish the idle pose at block start
     // (ShowGraphicGroup) and to revert after each fpa pulse (FlashFoot's resetMethodName).
@@ -502,8 +514,8 @@ public class FootHudController : MonoBehaviour
     }
 
     // Shows one stone's terminal pulse: scale up, tint by onTarget (same FeedbackColors palette
-    // as IF's flash), then auto-revert via resetMethodName (ResetStoneLeft/Right) after
-    // FootOutDisplaySec.
+    // as IF's flash), then auto-revert the scale only via resetMethodName (ResetStoneLeft/RightScale)
+    // after FootOutDisplaySec — the color is sticky until the next pulse or block start.
     private void PulseStone(RectTransform stone, Image stoneImg, bool onTarget, string resetMethodName)
     {
         if (stone == null)

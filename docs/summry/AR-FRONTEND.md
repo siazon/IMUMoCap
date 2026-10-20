@@ -121,8 +121,11 @@ rotation/color also revert, or persist, differs by condition/render mode (see be
   `FootHudController.PulseStone()` scales the stone itself up to `PulseScale` (1.05x) in
   place — never rotated or hidden — and tints it `FeedbackColors.OnTarget`/`OffTarget`
   (blue/orange, matching IF's palette) by `msg.onTargetL`/`msg.onTargetR`;
-  `ResetStoneLeft()`/`ResetStoneRight()` revert scale and color (back to the stone's normal
-  texture color, cached from the `Image`'s color at `Start()`) after `FootOutDisplaySec`. This
+  `ResetStoneLeftScale()`/`ResetStoneRightScale()` revert **scale only** after `FootOutDisplaySec`
+  — the tint is sticky (same "last result" behavior as IF's `lastResult` mode): it stays on the
+  last step's on/off-target color until the next `fpa` overwrites it. Color goes back to the
+  stone's normal texture color (cached from the `Image`'s color at `Start()`) only at block start
+  via `ResetStoneLeft()`/`ResetStoneRight()` (in `ShowGraphicGroup()`). This
   replaced an earlier `footOutL`/`footOutR` overlay
   that rotated to the actual measured angle and flashed on top of the stone — removed so
   attention stays on the stone's fixed target rather than a rotating overlay; those fields/
@@ -211,8 +214,8 @@ weighed before using `"live"` outside pilot testing.
 `OnTarget` = blue `RGB(0,114,178)`, `OffTarget` = orange `RGB(230,159,0)` (Wong 2011,
 *Nature Methods*, colorblind-safe palette). Change the palette in exactly one place if it
 ever needs to change again. EF's stone pulse now uses the full `OnTarget`/`OffTarget` pair too
-(matches IF's flash colors) — it reverts to the stone's own cached texture color only after the
-pulse ends, not on-target vs off-target.
+(matches IF's flash colors) — the tint persists until the next `fpa` message (only the scale
+reverts after the pulse); the stone returns to its own cached texture color only at block start.
 
 **Focus reminder** (`focusReminderPanel`/`focusReminderText`, new Inspector fields on
 `FootHudController`): at the start of every training block (not on resume-from-pause),

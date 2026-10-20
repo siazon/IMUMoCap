@@ -254,8 +254,8 @@ Manipulation Check / NASA-TLX / IMI-PC 等纸面量表**不通过 WebSocket 传�
 
 **状态机**(`FootHudController.OnStateChange`,与 §4.1 的 `state` 值完全对应):`waiting → armed → calibrating → baseline → training ⇄ rest → armed → calibrating → training ⇄ ... → retention → ended`,`paused`/`error` 可从多数状态进入;首次校准和每次赛前重标定都靠 `armed` 里的 `Start` 点击(`ReadyForCalibration`)触发——**客户端从不自动开始校准**。`rest` 不再需要 Continue 点击,由 PC 到点自动推进。
 
-**训练条件差异**(`condition` 字段 `EF`/`IF`):两种条件的图形在**整个 training block 内都可见**(dwell-time 匹配,避免曝光时长成为混淆变量),只在收到 `fpa`(真实落地事件)时做一次"脉冲",两者共用 `PulseScale`(1.05x)的放大,`FootOutDisplaySec`(0.35s)后缩放一律还原。
-- **EF(stepping stones)**:石头显示固定目标朝向(`state.targetL/R`+`directionL/R`,每 block 设置一次),不旋转、不隐藏;`fpa` 时石头原地放大并按 `onTargetL/R` 染色(`FeedbackColors.OnTarget` 蓝 / `OffTarget` 橙,Wong 色盲友好色板),0.35s 后还原。**原来的 `footOutL/R` 实际脚印叠加已移除**(文档里旧的"EF 额外叠加实际脚印、0.2s 隐藏"描述已作废)。
+**训练条件差异**(`condition` 字段 `EF`/`IF`):两种条件的图形在**整个 training block 内都可见**(dwell-time 匹配,避免曝光时长成为混淆变量),只在收到 `fpa`(真实落地事件)时做一次"脉冲",两者共用 `PulseScale`(1.05x)的放大,`FootOutDisplaySec`(0.35s)后缩放一律还原(颜色/旋转是否保留见下)。
+- **EF(stepping stones)**:石头显示固定目标朝向(`state.targetL/R`+`directionL/R`,每 block 设置一次),不旋转、不隐藏;`fpa` 时石头原地放大并按 `onTargetL/R` 染色(`FeedbackColors.OnTarget` 蓝 / `OffTarget` 橙,Wong 色盲友好色板),0.35s 后**只还原缩放,颜色保持上一步结果直到下一次 `fpa` 覆盖**(与 IF `lastResult` 一致;每个 block 开始时才复位为贴图原色)。**原来的 `footOutL/R` 实际脚印叠加已移除**(文档里旧的"EF 额外叠加实际脚印、0.2s 隐藏"描述已作废)。
 - **IF(footprint)**:脚印始终可见;`fpa` 时旋转到 `errorL/R`(= FPA − target)、放大并按 `onTargetL/R` 染色。旋转/颜色之后是否还原取决于 `ifRenderMode`:`placeholder`(待命姿势 + 脉冲后全部还原)、`live`(额外消费 `live` 流连续旋转,脉冲后只还原颜色;0.5s 无更新则整体回到待命姿势)、`lastResult`(**默认**:不消费 `live`,脉冲后旋转/颜色都不还原,一直显示上一步的确认结果直到下一次 `fpa` 覆盖)。`live` 与 `fpa` 参考系不同,`live` 模式仅限 pilot 对比,见 `docs/task15_live_vs_fpa_consistency_report.md`。
 - **右脚符号**:PC 端右脚 FPA/`live.angleR` 已取反(正 = toe-out),AR 端对右脚的 stone 目标、`live.angleR`、`fpa.errorR` 的旋转再取反一次(Unity Z 轴正向旋转为逆时针),两端必须成对修改(见 §3.7)。
 - **Focus reminder**:每个 training block 开始时(暂停恢复不触发)在图形下方叠加 3s 的条件专属提示文本(EF/IF 各 10 词,字数匹配),然后只隐藏文本。`focusReminderPanel` 是手工在 Unity Editor 加的,不由脚本创建。
