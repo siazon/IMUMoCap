@@ -348,7 +348,7 @@ for frame_idx, i in enumerate(range(calib_idx, len(pids))):
             step_events.append((frame_idx, pid, 'L', fpa_l_deg))
         settled_r = right_sampler.try_settle()
         if settled_r is not None:
-            fpa_r_deg = math.degrees(norm_rad(settled_r - pd_dir))
+            fpa_r_deg = -math.degrees(norm_rad(settled_r - pd_dir))   # right foot negated (FpaEngine): + = toe-out for both feet
             step_events.append((frame_idx, pid, 'R', fpa_r_deg))
 
 n_frames = frame_idx + 1

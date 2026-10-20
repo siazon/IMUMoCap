@@ -418,7 +418,7 @@ for frame_idx, i in enumerate(range(calib_idx, len(pids))):
         l_yaw = extract_yaw_z(l['q'])
         r_yaw = extract_yaw_z(r['q'])
         last_live_L_deg = norm_deg(math.degrees(norm_rad((l_yaw - pel_yaw) - (left_ref_yaw - pelvis_ref_yaw))))
-        last_live_R_deg = norm_deg(math.degrees(norm_rad((r_yaw - pel_yaw) - (right_ref_yaw - pelvis_ref_yaw))))
+        last_live_R_deg = -norm_deg(math.degrees(norm_rad((r_yaw - pel_yaw) - (right_ref_yaw - pelvis_ref_yaw))))   # right foot negated, same as MainWindow
 
     # FpaEngine.Process, Step 1: unconditional stance-yaw accumulation (gate-independent)
     if left_stance:
@@ -446,7 +446,7 @@ for frame_idx, i in enumerate(range(calib_idx, len(pids))):
             step_events.append((frame_idx, 'L', fpa_l_deg, last_live_L_deg))
         settled_r = right_sampler.try_settle()
         if settled_r is not None:
-            fpa_r_deg = math.degrees(norm_rad(settled_r - pd_dir))
+            fpa_r_deg = -math.degrees(norm_rad(settled_r - pd_dir))   # right foot negated (FpaEngine): + = toe-out for both feet
             step_events.append((frame_idx, 'R', fpa_r_deg, last_live_R_deg))
 
 n_frames = frame_idx + 1

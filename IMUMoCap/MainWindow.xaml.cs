@@ -232,11 +232,12 @@ namespace IMUMoCap
                         // ref) — pelvis rotates with a turn, so this stays correct instead of flipping sign
                         // when the participant turns around. The calibration-time foot/pelvis offset is
                         // subtracted out (RawFootYawDeg) so it still reads ~0 at calibration.
+                        // Right foot negated, same as FpaEngine: positive = toe-out for both feet.
                         var calib = _pipeline.CalibrationProfile;
                         float rawYawL = calib != null
                             ? RawFootYawDeg(row.LeftQuat, row.PelvisQuat, calib.LeftFootRef, calib.PelvisRef) : float.NaN;
                         float rawYawR = calib != null
-                            ? RawFootYawDeg(row.RightQuat, row.PelvisQuat, calib.RightFootRef, calib.PelvisRef) : float.NaN;
+                            ? -RawFootYawDeg(row.RightQuat, row.PelvisQuat, calib.RightFootRef, calib.PelvisRef) : float.NaN;
                         _lastLiveAngleL = rawYawL;
                         _lastLiveAngleR = rawYawR;
 

@@ -485,7 +485,7 @@ def main():
                 step_events.append((i, 'L', fpa_l_deg, (pid - t0_pid) / FS_HZ))
             settled_r = right_sampler.try_settle()
             if settled_r is not None:
-                fpa_r_deg = math.degrees(norm_rad(settled_r - pd_dir))
+                fpa_r_deg = -math.degrees(norm_rad(settled_r - pd_dir))   # right foot negated (FpaEngine): + = toe-out for both feet
                 step_events.append((i, 'R', fpa_r_deg, (pid - t0_pid) / FS_HZ))
 
     print(f"Settled steps after calibration: L={sum(1 for e in step_events if e[1]=='L')}  "

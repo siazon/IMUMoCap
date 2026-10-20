@@ -256,7 +256,7 @@ public class FootHudController : MonoBehaviour
         // mechanism as EF's stone pulse above) — what happens after FootOutDisplaySec depends on
         // _ifRenderMode: see PulseIfSolid.
         if (!msg.fpaLIsNaN) PulseIfSolid(leftSolid, leftSolidImage, msg.errorL, msg.onTargetL, nameof(ResetLeftSolid), nameof(RevertLeftSolidColor), nameof(ResetLeftSolidScale), ref _lastLeftLiveActivityTime);
-        if (!msg.fpaRIsNaN) PulseIfSolid(rightSolid, rightSolidImage, msg.errorR, msg.onTargetR, nameof(ResetRightSolid), nameof(RevertRightSolidColor), nameof(ResetRightSolidScale), ref _lastRightLiveActivityTime);
+        if (!msg.fpaRIsNaN) PulseIfSolid(rightSolid, rightSolidImage, -msg.errorR, msg.onTargetR, nameof(ResetRightSolid), nameof(RevertRightSolidColor), nameof(ResetRightSolidScale), ref _lastRightLiveActivityTime);
     }
 
     // No-op Invoke target: used as PulseIfSolid's revert method in "lastResult" mode, where a
@@ -281,7 +281,7 @@ public class FootHudController : MonoBehaviour
         }
         if (!msg.angleRIsNaN && rightSolid != null)
         {
-            rightSolid.localRotation = Quaternion.Euler(0, 0, msg.angleR);
+            rightSolid.localRotation = Quaternion.Euler(0, 0, -msg.angleR);
             _lastRightLiveActivityTime = Time.time;
         }
     }
@@ -400,10 +400,13 @@ public class FootHudController : MonoBehaviour
         }
     }
 
+    // Sign convention on the wire: every angle/error/target is "positive = toe-out" for BOTH feet. Unity's
+    // positive Z rotation is counter-clockwise on screen, which is toe-out for the left foot but toe-in for the
+    // right foot (top-down view), so all right-foot rotations below are negated (stone, live angle, fpa error).
     private void ApplyStoneTargets()
     {
         if (stoneLeft != null) stoneLeft.localRotation = Quaternion.Euler(0, 0, SignedTargetAngle(_targetL, _directionL));
-        if (stoneRight != null) stoneRight.localRotation = Quaternion.Euler(0, 0, SignedTargetAngle(_targetR, _directionR));
+        if (stoneRight != null) stoneRight.localRotation = Quaternion.Euler(0, 0, -SignedTargetAngle(_targetR, _directionR));
     }
 
     private static float SignedTargetAngle(float target, string direction) =>

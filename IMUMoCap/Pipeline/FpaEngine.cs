@@ -115,8 +115,10 @@ namespace IMUMoCap.Pipeline
             float fpaLDeg = fpaL.HasValue
                 ? RadToDeg(NormalizeAngle(fpaL.Value - pd.DirectionRad))
                 : float.NaN;
+            // 右脚取反：yaw 以逆时针为正，左脚外八 = 逆时针（+），右脚外八 = 顺时针（−）；
+            // 取反后左右脚统一为"正 = toe-out，负 = toe-in"，使同一个 target 规则对两只脚含义一致。
             float fpaRDeg = fpaR.HasValue
-                ? RadToDeg(NormalizeAngle(fpaR.Value - pd.DirectionRad))
+                ? -RadToDeg(NormalizeAngle(fpaR.Value - pd.DirectionRad))
                 : float.NaN;
 
             bool onTargetL = false, onTargetR = false;

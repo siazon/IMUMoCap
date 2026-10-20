@@ -102,7 +102,7 @@ XsDataPacket (每个 IMU 逐包)
   - `pdOk`：`PdEstimate.IsValid` 且 `Stability >= PdStabilityThreshold`（0.7）。
   - 门控失败时记录 `StepExclusionReason`（`Turning`/`ReacquiringPd`/`LowConfidence`/`PdInvalid`），通过 `OnStepOutcome` 事件上报，供 QoE 统计"转弯排除了多少步"，不影响 `FpaResult` 输出本身，仅用于审计。
 - **结算**（`TrySettle`）：脚从 swing 转入 stance 后，累积满 `MinStanceFramesForSettle`（10 帧，@100Hz=100ms）且当前帧 gate 通过，才输出该步 `FpaResult`；同一 stance 周期只输出一次（`_emittedThisStance`）。若落地后一直没等到 gate 通过，`MarkSwing()` 会在抬脚瞬间把这一步记为"排除"（返回 `_pendingReason`）而非"输出"。
-- **FPA 值**：`FPA = mean(该脚 stance 期间 yaw) - PD.DirectionRad`，弧度转角度，正值 = toe-out，负值 = toe-in。
+- **FPA 值**：`FPA = mean(该脚 stance 期间 yaw) - PD.DirectionRad`，弧度转角度，正值 = toe-out，负值 = toe-in（2026-10-20 起右脚结果取反，左右脚同一约定；此前录制的右脚列符号相反）。
 - **与 Baseline 比对**（仅 `Baseline != null` 即 Training 阶段）：`Error = FPA - Baseline.Target`；容差带 `w = max(w_min, α·SD)`（`w_min = BaselineProfile.ToleranceWMinDeg = 4°`，`α = FpaEngine.ToleranceAlpha`）；`OnTarget = |Error| <= w`。
 - **质量标签**：门控通过后，若 `context.Confidence - ContextConfidenceThreshold < 0.1` 或 `pd.Stability - PdStabilityThreshold < 0.1`，标记 `Quality = "Marginal"`，否则 `"High"`——即使通过了 gate，余量小也会被标注，供事后按质量过滤数据。
 

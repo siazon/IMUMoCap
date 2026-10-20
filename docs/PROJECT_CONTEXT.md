@@ -148,6 +148,7 @@ docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 - 容差:所有训练 block 共用固定 `ToleranceDeg = ±4°`(`OnTarget = |Error| <= 4°`),已删除 `FpaEngine.ToleranceAlpha` 与 `GaitPipeline.TrainingBlockAlphas`。
 - PD 朝向:`ProgressionDirEstimator.WorldHeading` 取相对校准姿态绕世界竖直轴的 twist,取代按传感器轴取欧拉角(旧法对 180° 折返低估约 4°,造成往返方向 FPA 差异 2–5°;新法 ≤2°,依据 `task21_multicalib_pd_replay.py`)。
 - AR 端:`TargetForAr()` 发送 `|target|`,`directionL/R` 按 target 符号定(负 = `"toe-in"`),因为 AR 的 `SignedTargetAngle` 把 target 当幅值、由 direction 决定旋转符号。
+- **右脚符号约定(2026-10-20 起)**:`FpaEngine` 对右脚的 FPA 取反(`Fpa_R = −(右脚 yaw − PD)`),`live` 的 `angleR` 同样取反,所以左右脚统一为"正 = toe-out,负 = toe-in"。依据:2026-10-19 的双脚外八测试 baseline 为 L = +11.4°、R = −12.1°(几乎对称),说明旧代码里 yaw 以逆时针为正、右脚外八是负值,"正 = toe-out"只对左脚成立。AR 端(`FootHudController`)因此对**右脚所有旋转取反**(stone 目标、`live.angleR`、`fpa.errorR`),因为 Unity Z 轴正向旋转在屏幕上是逆时针,对左脚是 toe-out、对右脚却是 toe-in(俯视图)。2026-10-20 之前录制的 Diagnostics 里右脚列(`FPA_Right_*`)是旧符号,与之后的数据相差一个负号。
 - 未处理(用户 2026-10-19 决定暂缓):baseline 100 步内 FPA 并不平稳(示例录制中 L 约 +11°/min、R 约 −9°/min,两脚都在向 0 靠近,疑为行为适应而非传感器漂移),`μ`/`SD` 是被趋势平均后的值。
 
 **设计决策:全部被试统一以 toe-in 为 target 方向(2026-10-19 14:04 记录)**。保持统一方向的理由(用户给出):(1) 内部效度——固定方向使 Δ 在被试间可比;(2) 健康成人以 toe-out 为主、toe-in 人群少(用户 2026-10-19 补充确认),因此多数被试的 toe-in 目标方向有调整空间;μ 本身已很内八者(μ < −25°)按上述规则改为 toe-out。研究问题是"AR 反馈能否让人达到 target",不主张 toe-in 带来生物力学/健康收益。

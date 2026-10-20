@@ -51,7 +51,7 @@ namespace IMUMoCap.Pipeline.Models
     public sealed class FpaResult
     {
         public long  PacketId    { get; set; }
-        public float Fpa_L       { get; set; }  // 度，正值=toe-out
+        public float Fpa_L       { get; set; }  // 度，正值=toe-out（Fpa_R 已在 FpaEngine 取反，左右脚同一约定）
         public float Fpa_R       { get; set; }
         public bool  OnTarget_L  { get; set; }
         public bool  OnTarget_R  { get; set; }
