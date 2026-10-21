@@ -297,3 +297,9 @@ InitTestScene*.unity*
 
 # Auto-generated scenes by play mode tests
 /[Aa]ssets/[Ii]nit[Tt]est[Ss]cene*.unity*
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Unity per-user editor settings
+IMUARFPA/UserSettings/
