@@ -82,11 +82,9 @@
                                             <ColumnDefinition Width="18"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <!-- Connector line (above/below the dot) + status dot -->
-                                        <Rectangle Grid.Column="0" Width="2" Height="9" Fill="LightGray"
-                                                   HorizontalAlignment="Center" VerticalAlignment="Top"
-                                                   Visibility="{Binding HasPrev, Converter={StaticResource BoolToVis}}"/>
-                                        <Rectangle Grid.Column="0" Width="2" Fill="LightGray" Margin="0,21,0,0"
+                                        <!-- Connector from this dot down to the next one (bottom margin -9 reaches the next
+                                             row's dot top; green once this step is done) + status dot -->
+                                        <Rectangle Grid.Column="0" Width="2" Fill="{Binding LineBrush}" Margin="0,21,0,-9"
                                                    HorizontalAlignment="Center" VerticalAlignment="Stretch"
                                                    Visibility="{Binding HasNext, Converter={StaticResource BoolToVis}}"/>
                                         <Ellipse Grid.Column="0" Width="12" Height="12" Fill="{Binding DotBrush}"

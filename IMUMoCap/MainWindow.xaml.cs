@@ -209,7 +209,6 @@ namespace IMUMoCap
                 _content.FlowChecklist.Add(new Model.ChecklistItem(label, markerStage));
             for (int i = 0; i < _content.FlowChecklist.Count; i++)
             {
-                _content.FlowChecklist[i].HasPrev = i > 0;
                 _content.FlowChecklist[i].HasNext = i < _content.FlowChecklist.Count - 1;
             }
 

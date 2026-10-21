@@ -20,9 +20,8 @@ namespace IMUMoCap.Model
         public string? MarkerStage { get; }
         public bool IsMarkable => MarkerStage != null;
 
-        // Position in the vertical flowchart: whether a connector line is drawn above/below the dot.
-        // Set once after the list is built (MainWindow constructor); never changes afterwards.
-        public bool HasPrev { get; set; }
+        // Vertical flowchart: whether a connector line is drawn from this dot down to the next one (false for
+        // the last row). Set once after the list is built (MainWindow constructor); never changes afterwards.
         public bool HasNext { get; set; }
 
         private ChecklistStatus _status = ChecklistStatus.Pending;
@@ -35,6 +34,7 @@ namespace IMUMoCap.Model
                 _status = value;
                 OnPropertyChanged(nameof(Status));
                 OnPropertyChanged(nameof(DotBrush));
+                OnPropertyChanged(nameof(LineBrush));
             }
         }
 
@@ -62,6 +62,10 @@ namespace IMUMoCap.Model
             ChecklistStatus.Missing => Brushes.Orange,
             _ => Brushes.Gray,
         };
+
+        // Connector from this row's dot down to the next row's: green once this step is done, gray otherwise
+        // (a "Missing" step hasn't been completed yet, so its connector stays gray too).
+        public Brush LineBrush => Status == ChecklistStatus.Done ? Brushes.LimeGreen : Brushes.LightGray;
 
         public ChecklistItem(string label, string? markerStage = null)
         {
