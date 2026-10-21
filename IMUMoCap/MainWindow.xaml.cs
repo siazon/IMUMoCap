@@ -80,7 +80,7 @@ namespace IMUMoCap
 
         // Row order for the at-a-glance flow checklist (MainWindow "Flow" panel) — mirrors the full
         // protocol sequence including the Rest+MC/questionnaire windows that aren't in ConditionStages.
-        // MarkerStage non-null → the row renders an inline Mark button (see BtnMarkFlowItem_Click).
+        // MarkerStage non-null → the row's label becomes clickable while its window is open (see FlowItem_MouseLeftButtonUp).
         private static readonly (string Label, string? MarkerStage)[] ChecklistDefs =
         {
             ("Baseline", null), ("Training1", null), ("MC (Block1)", "ManipulationCheck_AfterBlock1"),
@@ -207,6 +207,11 @@ namespace IMUMoCap
 
             foreach (var (label, markerStage) in ChecklistDefs)
                 _content.FlowChecklist.Add(new Model.ChecklistItem(label, markerStage));
+            for (int i = 0; i < _content.FlowChecklist.Count; i++)
+            {
+                _content.FlowChecklist[i].HasPrev = i > 0;
+                _content.FlowChecklist[i].HasNext = i < _content.FlowChecklist.Count - 1;
+            }
 
             // 流水线事件订阅
             _pipeline.OnLog += msg => Dispatcher.BeginInvoke(() => log(msg));
@@ -1350,8 +1355,8 @@ namespace IMUMoCap
         // "Continue" tap is needed, since the recalibration "Tap Ready" prompt that follows already serves
         // as the resume signal.
         // MC (Manipulation Check) is a real RA-administered questionnaire, same as NASA-TLX/IMI-PC — it is
-        // NOT auto-logged; the operator marks it via its own inline Mark button once the RA actually
-        // administers it (see BtnMarkFlowItem_Click).
+        // NOT auto-logged; the operator marks it by clicking its Flow label once the RA actually
+        // administers it (see FlowItem_MouseLeftButtonUp).
         private void EnterRest(int blockJustFinished, int durationSec)
         {
             _inRest = true;
@@ -1378,12 +1383,13 @@ namespace IMUMoCap
         private bool _imiPcMarked = false;
         private bool _nasaTlx2Marked = false;
 
-        // Single handler for every inline Mark button rendered in the Flow checklist (see MainWindow.xaml's
+        // Single handler for every markable (underlined) label in the Flow checklist (see MainWindow.xaml's
         // ItemsControl.ItemTemplate) — which marker it logs comes from the clicked row's own MarkerStage,
-        // read off the Button's DataContext (the bound ChecklistItem), not from separate named handlers.
-        private void BtnMarkFlowItem_Click(object sender, RoutedEventArgs e)
+        // read off the TextBlock's DataContext (the bound ChecklistItem), not from separate named handlers.
+        // Ignored unless the row's marker window is open (CanMark), matching what the underline advertises.
+        private void FlowItem_MouseLeftButtonUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
-            if ((sender as FrameworkElement)?.DataContext is not Model.ChecklistItem { MarkerStage: { } stage } item) return;
+            if ((sender as FrameworkElement)?.DataContext is not Model.ChecklistItem { MarkerStage: { } stage, CanMark: true }) return;
 
             _recorder.MarkStageEvent(stage);
             switch (stage)

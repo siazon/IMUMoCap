@@ -20,6 +20,11 @@ namespace IMUMoCap.Model
         public string? MarkerStage { get; }
         public bool IsMarkable => MarkerStage != null;
 
+        // Position in the vertical flowchart: whether a connector line is drawn above/below the dot.
+        // Set once after the list is built (MainWindow constructor); never changes afterwards.
+        public bool HasPrev { get; set; }
+        public bool HasNext { get; set; }
+
         private ChecklistStatus _status = ChecklistStatus.Pending;
         public ChecklistStatus Status
         {
