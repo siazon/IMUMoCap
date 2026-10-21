@@ -114,11 +114,11 @@
                                 <TextBlock Text="Screening" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <StackPanel x:Name="ScreeningPanel" Orientation="Horizontal" Visibility="Collapsed" Margin="8,0,0,0">
-                                <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnScreeningPrev_Click" Width="48" Margin="0,0,4,0">&lt;</Button>
-                                <TextBlock x:Name="TxtScreeningPage" VerticalAlignment="Center" MinWidth="44" TextAlignment="Center"
+                                <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnScreeningPrev_Click" Width="48" Margin="0,0,4,8">&lt;</Button>
+                                <TextBlock x:Name="TxtScreeningPage" VerticalAlignment="Top" Margin="0,9,0,0" MinWidth="44" TextAlignment="Center"
                                            Foreground="{StaticResource Brand.Navy}"/>
-                                <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnScreeningNext_Click" Width="48" Margin="4,0,12,0">&gt;</Button>
-                                <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnScreeningPass_Click" Width="80" Margin="0,0,6,0">Pass</Button>
+                                <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnScreeningNext_Click" Width="48" Margin="4,0,12,8">&gt;</Button>
+                                <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnScreeningPass_Click" Width="80" Margin="0,0,6,8">Pass</Button>
                                 <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnScreeningFail_Click" Width="80">Fail</Button>
                             </StackPanel>
                         </StackPanel>
