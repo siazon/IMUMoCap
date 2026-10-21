@@ -68,6 +68,7 @@ fields.
 | `live` | IF-only real-time angle stream, 10Hz, no on-target signal — see "IF rendering modes" below | `OnLiveUpdate` |
 | `stepProgress` | Step-count progress during baseline/retention | `OnStepProgress` |
 | `redo` | Operator forced a redo of current stage | `OnRedo` |
+| `screening` | Operator-driven visual screening page (see "Visual screening" below) | `OnScreeningPage` |
 | `pong` | Heartbeat ack | (no-op) |
 
 `live` was retired, then reinstated: the PC backend broadcasts it unconditionally whenever
@@ -208,6 +209,20 @@ settled stance-phase value `fpa` already reports, and continuous rotation would 
 render mode above reinstates that stream, but only as an explicit, researcher-toggled opt-in for
 pilot comparison — not the shipped default — so these objections still apply to it and should be
 weighed before using `"live"` outside pilot testing.
+
+**Visual screening** (`screening` message → `FootHudController.OnScreeningPage`): before a new
+participant's first condition, the PC operator steps through every stone/footprint state (angle ×
+neutral/blue/orange) and marks Pass/Fail; the AR client is a dumb renderer — the page list lives
+on the PC (`ScreeningPages`). Fields: `screenKind` (`"EF"` shows `stoneRoot`, `"IF"` shows
+`footprintRoot`), `screenAngleL/R` (wire convention: positive = toe-out for both feet; the right
+foot is negated when rotating, same as fpa/live), `screenColorL/R` (`neutral` | `on` | `off`).
+Colored pages reuse the real feedback path (`PulseStone`/`FlashFoot` with `NoRevert`: scale pulse
+then sticky color); neutral pages use `ResetStone*`/`ResetSolid*` + the page's rotation.
+`_screeningActive` is set by `OnScreeningPage` and cleared by any `state` message — while set,
+`fpa`/`live`/`stepProgress` are ignored, so screening can be opened mid-flow; the PC restores the
+previous state by re-broadcasting it when the operator finishes or cancels. Side effect: if that
+previous state was `training`, `ShowGraphicGroup()` runs again (stones/footprints return to
+neutral and the focus reminder replays).
 
 **Colors** (`Assets/FeedbackColors.cs`): on-target/off-target used to be `Color.green`/
 `Color.red`; both conditions pull from this one shared static class instead —

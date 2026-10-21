@@ -143,6 +143,27 @@ namespace IMUMoCap
         private const int PostBlock3RestDurationSec = 300;
         private readonly System.Diagnostics.Stopwatch _stageStopwatch = new();
 
+        // Operator-driven visual screening (Screening button): every stone/footprint state a participant
+        // will meet — angle × neutral/blue/orange. Angles use the wire convention "positive = toe-out" for
+        // both feet; the AR client negates the right foot when rotating. Colors: neutral | on (blue) | off (orange).
+        // Hint is operator-only (shown on the PC panel, never sent to AR): what the page shows + what to ask,
+        // so the participant answers from what they see and every operator asks the same thing.
+        private sealed record ScreeningPage(string Kind, float AngleL, float AngleR, string ColorL, string ColorR, string Hint);
+        private static readonly ScreeningPage[] ScreeningPages =
+        {
+            new("EF", -10, -10, "neutral", "neutral", "EF 石头 · toe-in 10° · 中性色\n问:两块石头的脚尖朝内还是朝外?"),
+            new("EF",  10,  10, "neutral", "neutral", "EF 石头 · toe-out 10° · 中性色\n问:两块石头的脚尖朝内还是朝外?"),
+            new("EF", -15, -15, "on",  "off",         "EF 石头 · 15° · 左蓝 / 右橙\n问:左、右石头各是什么颜色?朝向?"),
+            new("EF", -25, -25, "off", "on",          "EF 石头 · 25° · 左橙 / 右蓝\n问:左、右石头各是什么颜色?朝向?(颜色互换,角度更大)"),
+            new("IF",   0,   0, "neutral", "neutral", "IF 脚印 · 0° · 中性色\n问:脚印是否朝向正前方?"),
+            new("IF",  15,  15, "on",  "on",          "IF 脚印 · +15° toe-out · 蓝/蓝\n问:朝内还是朝外?什么颜色?"),
+            new("IF", -15, -15, "off", "off",         "IF 脚印 · -15° toe-in · 橙/橙\n问:朝内还是朝外?什么颜色?"),
+            new("IF", -10,  10, "on",  "off",         "IF 脚印 · 左 -10° 蓝 / 右 +10° 橙\n问:左右脚印分别朝哪边、什么颜色?"),
+        };
+        private bool _screeningActive = false;
+        private int _screeningPage = 0;
+        private string _screeningParticipantId = "";
+
         public MainWindow()
         {
             InitializeComponent();
@@ -742,6 +763,8 @@ namespace IMUMoCap
                 ifRenderMode = _ifRenderMode,
                 ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             });
+            // Mid-screening reconnect: the snapshot above would end screening on the client — put the page back.
+            if (_screeningActive) _ = _wsServer.SendJsonAsync(id, ScreeningPayload());
         }
 
         // EF stepping-stone rotation needs the participant's fixed personalised target angle/direction
@@ -1130,11 +1153,99 @@ namespace IMUMoCap
 
         // ── 实验会话：Participant/Condition/Stage → 文件 ─────────────────────────
 
+        // ── Visual screening ─────────────────────────────────────────────────────────
+        // Operator shows the AR client every stone/footprint state, asks the participant what they see, then
+        // marks Pass/Fail (saved per participant; Start Condition refuses unscreened or failed participants).
+        // Works at any time: finishing/cancelling re-broadcasts the pre-screening state, so the flow resumes.
+
+        private void BtnScreening_Click(object sender, RoutedEventArgs e)
+        {
+            if (_screeningActive) { EndScreening(); log("Visual screening cancelled (no result saved)."); return; }
+
+            string participantId = txtParticipantId.Text.Trim();
+            if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
+
+            _screeningActive = true;
+            _screeningParticipantId = participantId;
+            _screeningPage = 0;
+            ScreeningPanel.Visibility = Visibility.Visible;
+            TxtScreeningHint.Visibility = Visibility.Visible;
+            log($"Visual screening started for P{participantId}.");
+            ShowScreeningPage();
+        }
+
+        private void BtnScreeningPrev_Click(object sender, RoutedEventArgs e) => MoveScreeningPage(-1);
+        private void BtnScreeningNext_Click(object sender, RoutedEventArgs e) => MoveScreeningPage(1);
+        private void BtnScreeningPass_Click(object sender, RoutedEventArgs e) => FinishScreening(true);
+        private void BtnScreeningFail_Click(object sender, RoutedEventArgs e) => FinishScreening(false);
+
+        private void MoveScreeningPage(int delta)
+        {
+            if (!_screeningActive) return;
+            _screeningPage = Math.Clamp(_screeningPage + delta, 0, ScreeningPages.Length - 1);
+            ShowScreeningPage();
+        }
+
+        private void ShowScreeningPage()
+        {
+            TxtScreeningPage.Text = $"{_screeningPage + 1} / {ScreeningPages.Length}";
+            TxtScreeningHint.Text = ScreeningPages[_screeningPage].Hint;
+            if (_wsServer == null) return;
+            _ = _wsServer.BroadcastJsonAsync(ScreeningPayload());
+            LogArEvent($"type=screening  page={_screeningPage + 1}/{ScreeningPages.Length}  kind={ScreeningPages[_screeningPage].Kind}");
+        }
+
+        private object ScreeningPayload()
+        {
+            var p = ScreeningPages[_screeningPage];
+            return new
+            {
+                type = "screening",
+                screenPage = _screeningPage + 1,
+                screenTotal = ScreeningPages.Length,
+                screenKind = p.Kind,
+                screenAngleL = p.AngleL,
+                screenAngleR = p.AngleR,
+                screenColorL = p.ColorL,
+                screenColorR = p.ColorR,
+                ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            };
+        }
+
+        private void FinishScreening(bool passed)
+        {
+            if (!_screeningActive) return;
+            Methods.ExperimentRecorder.SaveScreeningResult(_screeningParticipantId, passed);
+            log($"Visual screening for P{_screeningParticipantId}: {(passed ? "PASS" : "FAIL")}.");
+            EndScreening();
+        }
+
+        private void EndScreening()
+        {
+            _screeningActive = false;
+            ScreeningPanel.Visibility = Visibility.Collapsed;
+            TxtScreeningHint.Visibility = Visibility.Collapsed;
+            // The AR client leaves screening on any state message — restore whatever it was showing before.
+            BroadcastArState(_lastState, _lastReason, _lastRestDurationSec, _lastBlock);
+        }
+
         private void BtnStartCondition_Click(object sender, RoutedEventArgs e)
         {
             string participantId = txtParticipantId.Text.Trim();
             if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
             if (_content.DeviceState != States.MEASURING) { log("Start Condition blocked: IMUs are not measuring. Click Measure first."); return; }
+
+            if (_screeningActive) { log("Finish the visual screening (Pass/Fail) before Start Condition."); return; }
+            string? screening = Methods.ExperimentRecorder.GetScreeningResult(participantId);
+            if (screening != "Pass")
+            {
+                string why = screening == "Fail"
+                    ? $"P{participantId} failed the visual screening and cannot take part."
+                    : $"P{participantId} has no visual screening result yet. Click Screening and mark Pass/Fail first.";
+                log($"Start Condition blocked: {why}");
+                MessageBox.Show(why, "Visual screening required", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
 
             string condition = (cmbCondition.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "EF";
             string orderGroup = (cmbOrderGroup.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "A";

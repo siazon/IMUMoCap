@@ -29,6 +29,7 @@ PC 端（`IMUMoCap/` WPF 应用）内置一个轻量 WebSocket 广播服务端�
 | `fpa` | 仅在 training block（非 baseline/retention/rest）内，每次 `FpaEngine` 产出一次结算结果时 | `stage`("training"), `block`, `packetId`, `fpaL/fpaR`, `onTargetL/onTargetR`, `errorL/errorR`, `confidence`, `stability`, `quality` | `OnFpaResult` 回调内 |
 | `stepProgress` | baseline 阶段每收集一步（`OnBaselineProgress`），以及 retention 阶段每产出一次结果时 | `stage`("baseline"/"retention"), `stepsL/stepsR`, `requiredL/requiredR`(baseline 用 `_pipeline.Params.MinBaselineSteps`，retention 用 `RetentionTargetSteps`) | `BroadcastStepProgress(...)` |
 | `redo` | 操作员在 Pause 对话框选择 Redo 某阶段时 | `stage`, `attempt`, `reason` | `BroadcastRedo(...)` |
+| `screening` | 操作员点 PC 的 Screening 按钮开启视觉排查后，每次进入/翻到一页（`ShowScreeningPage`）；排查中途 AR 重连时对该客户端补发当前页 | `screenPage/screenTotal`, `screenKind`("EF"/"IF"), `screenAngleL/screenAngleR`(正 = toe-out,左右脚同号,AR 对右脚取反), `screenColorL/screenColorR`("neutral"/"on"/"off") | `MainWindow.ShowScreeningPage` / `SendStateSnapshot` |
 | `pong` | 收到客户端 `{"cmd":"ping"}` 时，单播回给发送者 | `ts` | `HandleWsMessage` 的 `"ping"` 分支 |
 
 **关于 `live` 的重要说明（与旧协议文档的差异）**：`docs/superpowers/specs/2026-07-29-ws-protocol.md` 描述 `live` 由 UI 上的 `ChkLiveAngleToAr` 复选框控制、且 EF/IF 均发送。经核对当前 `MainWindow.xaml.cs` 源码，**该复选框已不存在**（全文搜索 `ChkLiveAngleToAr` 无匹配），`live` 广播条件已改为硬编码的 `ConditionForAr() == "IF"` 门控（即只有 IF 条件才发送 `live`，EF 条件完全不发送）。这份规范文档已过时，以代码为准。

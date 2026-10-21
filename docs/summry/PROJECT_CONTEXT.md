@@ -198,6 +198,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 - 自绘时间线(`DrawTimeline()`,`DrawingVisual`/`RenderTargetBitmap`,6 条 lane:PD valid / L stance / R stance / IsWalking / motion context / FPA gate reason)
 - 底部分栏日志:操作日志 + 独立的 **AR event log**(`ArEventLogBox`,记录每条广播给 AR 的事件,供事后审计)
 - `live` 消息广播不再有手动开关(原 `ChkLiveAngleToAr` 复选框已移除);现自动门控为仅 IF 条件 + 训练 block 阶段(`_pipeline.InTraining && !_isRetention && !_inRest`)才发送,EF 不再消费连续 `live` 流(见 §4.1、`docs/AR-FRONTEND.md`)
+- **Screening(视觉排查)按钮**(2026-10-21 新增):新 ID 在 Start Condition 之前由操作员点 Screening,AR 眼镜逐页显示全部会出现的状态(EF 石头 toe-in/toe-out 角度 × 中性/蓝/橙、IF 脚印角度 × 蓝/橙,含左右不同色),操作员用 ◀/▶ 翻页、口头询问参与者,再点 **Pass/Fail** 标注。**未标注或 Fail 的 ID,Start Condition 会被拒绝**;已有 Pass 的 ID(如第二天)不再需要。随时可用,结束/取消后 AR 恢复排查前的 state,不暂停计时、不重置 pipeline。无结果文件但已有 `*_Session.csv` 的旧 ID 视为已通过(兼容功能上线前的被试)。
 - Session 卡片内新增 **Open Data Folder** 按钮(`BtnOpenDataFolder_Click`),打开当前 participant/condition 的数据文件夹;原先显示 Session/Meta/QoE 文件名的三行文本已被上面的 Flow 一览面板取代
 - 支持 CSV 回放(`BtnLoadData_Click`,0.2x/1x/5x/Max 速度)
 
@@ -207,6 +208,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 - Session CSV(`P{id}_{EF|IF}_Session.csv`,header = `DiagnosticsRow.CsvHeader`,逐帧写入)
 - Meta JSON(`P{id}_{cond}_Meta.json`,`ConditionMeta` 结构:`BaselineProfile`、暂停事件(`PauseEvents`)、redo/attempt 记录(`FinalAttempt`)、每阶段耗时/有效秒数(`StageTimings`)、步数排除统计(`StageStepStats`)、**审计标记列表**(`StageMarkers: List<{Stage, TimestampUtc}>`,2026-09-06 新增,纯追加字段,记录 Manipulation Check / NASA-TLX / IMI-PC 等纸面量表的发生时刻,由 `ExperimentRecorder.MarkStageEvent(stage)` 写入))
 - QoE CSV 路径已预留(`CurrentQoeFilePath`)但**目前代码中未见实际写入**
+- `P{id}_VisualScreening.json`(按参与者而非按 condition):`{Result: "Pass"|"Fail", TimestampUtc, Attempts:[{TimestampUtc, Result}]}`,最新结果覆盖 `Result`,每次标注追加进 `Attempts`(审计);Fail 后重新排查并 Pass 即可,无需手改文件
 - `P{id}_{cond}_LiveVsFpaConsistency.csv`(`WriteLiveVsFpaConsistency`):每个脚每次 fpa 结算写一行(`PacketId,TsUtcMs,Foot,LiveAngleDeg,FpaErrorDeg,FpaDeg,TargetDeg`),记录该脚最近一次 `live` 角度与最终 fpa 的对比,供事后一致性分析(Task 15),UI 不显示;EF 条件或 IF 首个 live 帧之前 `LiveAngleDeg` 为 NaN
 - 文件存于 `Data/P{participantId}/`
 
@@ -230,6 +232,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 - `fpa`:逐步反馈(仅 training 阶段),含 `fpaL/R`、`onTargetL/R`、`errorL/R`、`confidence`、`stability`、`quality`、`stage`、`block`
 - `stepProgress`:baseline/retention 阶段步数进度条
 - `redo`:操作员重做某阶段的通知
+- `screening`:操作员视觉排查的一页画面(`screenPage/screenTotal`、`screenKind` EF|IF、`screenAngleL/R`(正 = toe-out,AR 对右脚取反)、`screenColorL/R` neutral|on|off);页面列表在 PC 端 `ScreeningPages`,AR 只渲染(复用与真实反馈相同的脉冲/颜色保持)。AR 端收到任何 `state` 消息即退出排查;排查期间忽略 `fpa`/`live`/`stepProgress`。PC 在排查结束/取消时重发排查前的 `state`
 - `pong`:心跳回复(单播)
 
 **AR → PC 命令**:`{"cmd":"ping"}`、`{"cmd":"ReadyForCalibration"}`(`_pendingStageEntry != null` 时走 `TriggerRecalibration()`,否则走 `TriggerCalibration()`)。`HandleWsMessage` 里还保留了 `Start`/`stop` 两个只写日志的占位 case。**`continueTraining` 已移除**——rest 到点由 PC 自动推进到赛前重标定 `armed`,AR 的 `Start` 点击已充当恢复信号。注意 `cmd` 大小写不统一,文档中说明是有意保留现状;`docs/superpowers/specs/2026-07-29-ws-protocol.md` **尚未同步**这些变化(`continueTraining` 移除、`ifRenderMode`、`live` 重新启用),以代码为准。

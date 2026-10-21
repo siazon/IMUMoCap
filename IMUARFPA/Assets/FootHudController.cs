@@ -90,6 +90,11 @@ public class FootHudController : MonoBehaviour
     private float _lastLeftLiveActivityTime = -1f;
     private float _lastRightLiveActivityTime = -1f;
 
+    // True while the operator's visual screening pages are on screen (see OnScreeningPage). Ends on the
+    // next "state" message (the PC re-broadcasts the pre-screening state when the operator finishes).
+    // While true, fpa/live/stepProgress are ignored so mid-flow screening isn't overwritten.
+    private bool _screeningActive = false;
+
     // ── Unity lifecycle ───────────────────────────────────────────────────────
 
     void Start()
@@ -130,6 +135,7 @@ public class FootHudController : MonoBehaviour
         Debug.Log($"[HUD] OnStateChange: {_currentState} → {state}");
         string previousState = _currentState;
         _currentState = state;
+        _screeningActive = false;
 
         if (!string.IsNullOrEmpty(msg.condition)) _condition = msg.condition;
         // Fallback to "lastResult" when absent (old/un-upgraded PC server, or JsonUtility's
@@ -228,6 +234,7 @@ public class FootHudController : MonoBehaviour
     // "continuously active" feedback in either condition.
     public void OnFpaUpdate(ServerMessage msg)
     {
+        if (_screeningActive) return;
         if (msg.stage != "training")
         {
             Debug.LogWarning($"[HUD] OnFpaUpdate: ignored — stage is '{msg.stage}', expected 'training'");
@@ -272,7 +279,7 @@ public class FootHudController : MonoBehaviour
     // mid a recent fpa pulse).
     public void OnLiveUpdate(ServerMessage msg)
     {
-        if (_condition != "IF" || _ifRenderMode != "live") return;
+        if (_screeningActive || _condition != "IF" || _ifRenderMode != "live") return;
 
         if (!msg.angleLIsNaN && leftSolid != null)
         {
@@ -289,6 +296,7 @@ public class FootHudController : MonoBehaviour
     // Drives the step-count progress bar during baseline and retention.
     public void OnStepProgress(ServerMessage msg)
     {
+        if (_screeningActive) return;
         int totalSteps = msg.stepsL + msg.stepsR;
         int totalRequired = msg.requiredL + msg.requiredR;
         float progress = totalRequired > 0 ? Mathf.Clamp01((float)totalSteps / totalRequired) : 0f;
@@ -299,6 +307,60 @@ public class FootHudController : MonoBehaviour
             string label = msg.stage == "retention" ? "Retention" : "Baseline";
             overlayText.text = $"{label}\nL: {msg.stepsL} / {msg.requiredL}   R: {msg.stepsR} / {msg.requiredR}";
         }
+    }
+
+    // Operator-driven visual screening: shows one page of every stone/footprint state a participant will
+    // meet in the experiment (angle × neutral/blue/orange), so the operator can confirm they can tell them
+    // apart. Rendered exactly like the real feedback (same pulse, same sticky color, right foot negated);
+    // the PC owns the page list. Ends on the next "state" message (see OnStateChange).
+    public void OnScreeningPage(ServerMessage msg)
+    {
+        _screeningActive = true;
+        HideConfirmButton();
+        SetProgressBar(false, 0f);
+        CancelInvoke(nameof(CheckRestElapsed));
+        if (_focusReminderCoroutine != null)
+        {
+            StopCoroutine(_focusReminderCoroutine);
+            _focusReminderCoroutine = null;
+        }
+        if (focusReminderPanel != null) focusReminderPanel.SetActive(false);
+        if (overlayPanel != null) overlayPanel.SetActive(false);
+
+        bool isEF = msg.screenKind == "EF";
+        if (stoneRoot != null) stoneRoot.SetActive(isEF);
+        if (footprintRoot != null) footprintRoot.SetActive(!isEF);
+
+        if (isEF)
+        {
+            ShowScreeningStone(stoneLeft, stoneLeftImage, msg.screenAngleL, msg.screenColorL, ResetStoneLeft, nameof(ResetStoneLeftScale));
+            ShowScreeningStone(stoneRight, stoneRightImage, -msg.screenAngleR, msg.screenColorR, ResetStoneRight, nameof(ResetStoneRightScale));
+        }
+        else
+        {
+            ShowScreeningSolid(leftSolid, leftSolidImage, msg.screenAngleL, msg.screenColorL, ResetLeftSolid, nameof(ResetLeftSolidScale));
+            ShowScreeningSolid(rightSolid, rightSolidImage, -msg.screenAngleR, msg.screenColorR, ResetRightSolid, nameof(ResetRightSolidScale));
+        }
+    }
+
+    private void ShowScreeningStone(RectTransform stone, Image img, float rotation, string color, System.Action resetNeutral, string scaleResetMethod)
+    {
+        if (stone == null) return;
+        stone.localRotation = Quaternion.Euler(0, 0, rotation);
+        if (color == "on" || color == "off") PulseStone(stone, img, color == "on", scaleResetMethod);
+        else resetNeutral();
+    }
+
+    private void ShowScreeningSolid(RectTransform solid, Image img, float rotation, string color, System.Action resetNeutral, string scaleResetMethod)
+    {
+        if (solid == null) return;
+        if (color == "on" || color == "off")
+        {
+            FlashFoot(solid, img, rotation, color == "on", nameof(NoRevert), scaleResetMethod);
+            return;
+        }
+        resetNeutral();
+        solid.localRotation = Quaternion.Euler(0, 0, rotation);
     }
 
     // Operator redid the current stage — reset locally-tracked progress display.

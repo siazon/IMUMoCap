@@ -46,6 +46,45 @@ namespace IMUMoCap.Methods
             return File.Exists(path);
         }
 
+        private static string ScreeningFilePath(string participantId) =>
+            Path.Combine(DataRoot, $"P{participantId}", $"P{participantId}_VisualScreening.json");
+
+        private static ScreeningRecord? ReadScreeningRecord(string participantId)
+        {
+            var path = ScreeningFilePath(participantId);
+            if (!File.Exists(path)) return null;
+            try { return JsonSerializer.Deserialize<ScreeningRecord>(File.ReadAllText(path, Encoding.UTF8)); }
+            catch (JsonException) { return null; }
+        }
+
+        /// <summary>
+        /// Latest visual-screening result for this participant: "Pass", "Fail", or null if never screened.
+        /// A participant with no result file but already-recorded sessions pre-dates the screening feature
+        /// and is treated as "Pass" (nothing is written), so ongoing participants aren't blocked.
+        /// </summary>
+        public static string? GetScreeningResult(string participantId)
+        {
+            var rec = ReadScreeningRecord(participantId);
+            if (rec != null && rec.Result.Length > 0) return rec.Result;
+
+            var dir = Path.Combine(DataRoot, $"P{participantId}");
+            if (Directory.Exists(dir) && Directory.EnumerateFiles(dir, "*_Session.csv").Any()) return "Pass";
+            return null;
+        }
+
+        /// <summary>Records a screening outcome: overwrites the latest result and appends to Attempts (audit trail).</summary>
+        public static void SaveScreeningResult(string participantId, bool passed)
+        {
+            Directory.CreateDirectory(Path.Combine(DataRoot, $"P{participantId}"));
+            var rec = ReadScreeningRecord(participantId) ?? new ScreeningRecord();
+            var now = DateTime.UtcNow;
+            rec.Result = passed ? "Pass" : "Fail";
+            rec.TimestampUtc = now;
+            rec.Attempts.Add(new ScreeningAttempt { TimestampUtc = now, Result = rec.Result });
+            File.WriteAllText(ScreeningFilePath(participantId),
+                JsonSerializer.Serialize(rec, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+        }
+
         public void StartCondition(string participantId, string condition, string? orderGroup)
         {
             Close();
@@ -202,5 +241,19 @@ namespace IMUMoCap.Methods
         }
 
         public void Dispose() => Close();
+    }
+
+    /// <summary>Contents of P{id}_VisualScreening.json.</summary>
+    public sealed class ScreeningRecord
+    {
+        public string Result { get; set; } = "";
+        public DateTime TimestampUtc { get; set; }
+        public List<ScreeningAttempt> Attempts { get; set; } = new();
+    }
+
+    public sealed class ScreeningAttempt
+    {
+        public DateTime TimestampUtc { get; set; }
+        public string Result { get; set; } = "";
     }
 }

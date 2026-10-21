@@ -225,6 +225,11 @@ public class FootWebSocketClient : MonoBehaviour
                 mainThreadActions.Enqueue(() => hudController?.OnLiveUpdate(capturedLive));
                 break;
 
+            case "screening":
+                var capturedScreening = msg;
+                mainThreadActions.Enqueue(() => hudController?.OnScreeningPage(capturedScreening));
+                break;
+
             case "stepProgress":
                 var capturedProgress = msg;
                 mainThreadActions.Enqueue(() => hudController?.OnStepProgress(capturedProgress));
@@ -324,7 +329,7 @@ public class FootWebSocketClient : MonoBehaviour
 [Serializable]
 public class ServerMessage
 {
-    public string type;      // "pong" | "state" | "fpa" | "stepProgress" | "redo" | "live"
+    public string type;      // "pong" | "state" | "fpa" | "stepProgress" | "redo" | "live" | "screening"
     public long   ts;        // server broadcast time, unix ms (all PC→AR messages)
 
     // state — armed/waiting/calibrating/baseline/training/rest/retention/paused/ended/error
@@ -362,6 +367,16 @@ public class ServerMessage
     public bool   angleRIsNaN;  // set by client when server sends NaN for angleR
     public float  confidence;   // live: motion-context confidence (received, not currently rendered)
     public float  stability;    // live: PD stability (received, not currently rendered)
+
+    // screening — operator-driven visual check (one page per message). Angles use the wire convention
+    // "positive = toe-out" for both feet (the HUD negates the right foot when rotating, as for fpa/live).
+    public int    screenPage;     // 1-based page index (informational)
+    public int    screenTotal;    // total pages (informational)
+    public string screenKind;     // "EF" (stepping stones) | "IF" (footprints)
+    public float  screenAngleL;   // stone target / footprint error angle, left (deg)
+    public float  screenAngleR;   // right (deg)
+    public string screenColorL;   // "neutral" | "on" (OnTarget blue) | "off" (OffTarget orange)
+    public string screenColorR;
 
     // stepProgress — baseline/retention step-count bar
     public int stepsL;
