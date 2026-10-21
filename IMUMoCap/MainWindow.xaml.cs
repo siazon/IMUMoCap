@@ -151,14 +151,14 @@ namespace IMUMoCap
         private sealed record ScreeningPage(string Kind, float AngleL, float AngleR, string ColorL, string ColorR, string Hint);
         private static readonly ScreeningPage[] ScreeningPages =
         {
-            new("EF", -10, -10, "neutral", "neutral", "EF 石头 · toe-in 10° · 中性色\n问:两块石头的脚尖朝内还是朝外?"),
-            new("EF",  10,  10, "neutral", "neutral", "EF 石头 · toe-out 10° · 中性色\n问:两块石头的脚尖朝内还是朝外?"),
-            new("EF", -15, -15, "on",  "off",         "EF 石头 · 15° · 左蓝 / 右橙\n问:左、右石头各是什么颜色?朝向?"),
-            new("EF", -25, -25, "off", "on",          "EF 石头 · 25° · 左橙 / 右蓝\n问:左、右石头各是什么颜色?朝向?(颜色互换,角度更大)"),
-            new("IF",   0,   0, "neutral", "neutral", "IF 脚印 · 0° · 中性色\n问:脚印是否朝向正前方?"),
-            new("IF",  15,  15, "on",  "on",          "IF 脚印 · +15° toe-out · 蓝/蓝\n问:朝内还是朝外?什么颜色?"),
-            new("IF", -15, -15, "off", "off",         "IF 脚印 · -15° toe-in · 橙/橙\n问:朝内还是朝外?什么颜色?"),
-            new("IF", -10,  10, "on",  "off",         "IF 脚印 · 左 -10° 蓝 / 右 +10° 橙\n问:左右脚印分别朝哪边、什么颜色?"),
+            new("EF", -10, -10, "neutral", "neutral", "EF stones · toe-in 10° · neutral color\nAsk: Do the toes of both stones point in or out?"),
+            new("EF",  10,  10, "neutral", "neutral", "EF stones · toe-out 10° · neutral color\nAsk: Do the toes of both stones point in or out?"),
+            new("EF", -15, -15, "on",  "off",         "EF stones · 15° · left blue / right orange\nAsk: What color is each stone (left, right)? Which way does each point?"),
+            new("EF", -25, -25, "off", "on",          "EF stones · 25° · left orange / right blue\nAsk: What color is each stone (left, right)? Which way does each point? (colors swapped, larger angle)"),
+            new("IF",   0,   0, "neutral", "neutral", "IF footprints · 0° · neutral color\nAsk: Are the footprints pointing straight ahead?"),
+            new("IF",  15,  15, "on",  "on",          "IF footprints · +15° toe-out · blue/blue\nAsk: Pointing in or out? What color?"),
+            new("IF", -15, -15, "off", "off",         "IF footprints · -15° toe-in · orange/orange\nAsk: Pointing in or out? What color?"),
+            new("IF", -10,  10, "on",  "off",         "IF footprints · left -10° blue / right +10° orange\nAsk: Which way does each footprint point, and what color?"),
         };
         private bool _screeningActive = false;
         private int _screeningPage = 0;
@@ -2203,7 +2203,7 @@ namespace IMUMoCap
 
                 var latencyMs = _pipeline.TakeFrameLatencyMs(result.PacketId); // TEMP：延迟测量，用完删除
                 if (latencyMs.HasValue)
-                    log($"[延迟-temp] 帧→AR广播: {latencyMs.Value} ms (packetId={result.PacketId})");
+                    log($"[latency-temp] frame -> AR broadcast: {latencyMs.Value} ms (packetId={result.PacketId})");
 
                 _ = _wsServer.BroadcastJsonAsync(new
                 {

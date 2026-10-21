@@ -122,7 +122,7 @@
                                 <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnScreeningFail_Click" Width="80">Fail</Button>
                             </StackPanel>
                         </StackPanel>
-                        <TextBlock x:Name="TxtScreeningHint" Visibility="Collapsed" TextWrapping="Wrap" FontSize="12"
+                        <TextBlock x:Name="TxtScreeningHint" Visibility="Collapsed" TextWrapping="Wrap" FontSize="16" FontWeight="Bold"
                                    Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,8"/>
 
                         <TextBlock Margin="0,0,0,4">

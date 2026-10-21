@@ -52,12 +52,12 @@
                   Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
                   Margin="0,0,0,4" VerticalAlignment="Center"
                   IsChecked="{Binding IsIfLiveMode, Mode=TwoWay}"
-                  ToolTip="IF 渲染模式，可在运行中随时切换：勾选此项=live 连续旋转模式，用于 pilot 现场对比；两项都不勾=占位模式（静止图标+落地终端闪烁后回落）；与下面的 Last-Result 模式互斥。切换立即广播给AR端，不需要暂停/重连。"/>
+                  ToolTip="IF render mode, can be switched at any time while running: checked = live mode (continuous rotation, for side-by-side pilot comparison); neither box checked = placeholder mode (static icon + terminal flash on foot contact, then reverts); mutually exclusive with Last-Result mode below. The change is broadcast to the AR client immediately - no pause/reconnect needed."/>
         <CheckBox Content="IF: Last-Result Sticky Mode" FontSize="11"
                   Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
                   Margin="0,0,0,12" VerticalAlignment="Center"
                   IsChecked="{Binding IsIfLastResultMode, Mode=TwoWay}"
-                  ToolTip="默认勾选：脚印落地脉冲（旋转+命中/未命中变色）结束后不再回落到中性姿态，而是一直保持显示上一步的结果，直到下一步 fpa 更新覆盖它（放大效果仍会按原节奏回落）。与上面的 Live Angle Mode 互斥。"/>
+                  ToolTip="Checked by default: after the footprint's foot-contact pulse (rotation + hit/miss color) the icon does not revert to the neutral pose; it keeps showing the previous step's result until the next fpa update overwrites it (the scale-up still reverts on its normal timing). Mutually exclusive with Live Angle Mode above."/>
 
         <!-- 9. IMU sensor -> role binding -->
         <TextBlock Text="IMU Role Binding" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
