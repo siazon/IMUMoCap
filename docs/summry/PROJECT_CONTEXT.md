@@ -198,7 +198,22 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 - 自绘时间线(`DrawTimeline()`,`DrawingVisual`/`RenderTargetBitmap`,6 条 lane:PD valid / L stance / R stance / IsWalking / motion context / FPA gate reason)
 - 底部分栏日志:操作日志 + 独立的 **AR event log**(`ArEventLogBox`,记录每条广播给 AR 的事件,供事后审计)
 - `live` 消息广播不再有手动开关(原 `ChkLiveAngleToAr` 复选框已移除);现自动门控为仅 IF 条件 + 训练 block 阶段(`_pipeline.InTraining && !_isRetention && !_inRest`)才发送,EF 不再消费连续 `live` 流(见 §4.1、`docs/AR-FRONTEND.md`)
-- **Screening(视觉排查)按钮**(2026-10-21 新增):新 ID 在 Start Condition 之前由操作员点 Screening,AR 眼镜逐页显示全部会出现的状态(EF 石头 toe-in/toe-out 角度 × 中性/蓝/橙、IF 脚印角度 × 蓝/橙,含左右不同色),操作员用 ◀/▶ 翻页、口头询问参与者,再点 **Pass/Fail** 标注。**未标注或 Fail 的 ID,Start Condition 会被拒绝**;已有 Pass 的 ID(如第二天)不再需要。随时可用,结束/取消后 AR 恢复排查前的 state,不暂停计时、不重置 pipeline。无结果文件但已有 `*_Session.csv` 的旧 ID 视为已通过(兼容功能上线前的被试)。
+- **Screening(视觉排查)按钮**(2026-10-21 新增;颜色映射已于 2026-10-23 交换,见下方 §4.2"Colors"一节):新 ID 在 Start Condition 之前由操作员点 Screening,AR 眼镜逐页显示全部会出现的状态(EF 石头 toe-in/toe-out 角度 × 中性/橙/蓝、IF 脚印角度 × 橙/蓝,含左右不同色),操作员用 ◀/▶ 翻页、口头询问参与者,再点 **Pass/Fail** 标注。**未标注或 Fail 的 ID,Start Condition 会被拒绝**;已有 Pass 的 ID(如第二天)不再需要。随时可用,结束/取消后 AR 恢复排查前的 state,不暂停计时、不重置 pipeline。无结果文件但已有 `*_Session.csv` 的旧 ID 视为已通过(兼容功能上线前的被试)。
+  - **8 页清单**(PC 端 `MainWindow.xaml.cs` 的 `ScreeningPages`,为唯一数据源;角度为线上约定,**正 = toe-out、负 = toe-in,左右脚同号**,AR 端对右脚取反;颜色 neutral = 贴图原色、on = 橙(`OnTarget`,**2026-10-23 起**,原为蓝)、off = 蓝(`OffTarget`,**2026-10-23 起**,原为橙);有色页进入时做一次 1.05× 放大脉冲,之后颜色/角度保持):
+
+    | # | Kind | 左角度 / 右角度 | 左色 / 右色 | 覆盖的状态 |
+    |---|---|---|---|---|
+    | 1 | EF | −10° / −10° | neutral / neutral | 石头 toe-in 目标 |
+    | 2 | EF | +10° / +10° | neutral / neutral | 石头 toe-out 目标 |
+    | 3 | EF | −15° / −15° | on / off | 脉冲颜色,左右不同色 |
+    | 4 | EF | −25° / −25° | off / on | 最大目标角,颜色互换 |
+    | 5 | IF | 0° / 0° | neutral / neutral | 脚印待命姿势 |
+    | 6 | IF | +15° / +15° | on / on | 脚印 toe-out、橙 |
+    | 7 | IF | −15° / −15° | off / off | 脚印 toe-in、蓝 |
+    | 8 | IF | −10° / +10° | on / off | 左右角度与颜色都不同(检查左右是否反) |
+
+  - **操作员提示(`Hint`)**:每页带一行"页面内容 + `Ask: …`"的**英文**提示,只显示在 PC 的排查面板里(放大加粗),**不发给 AR**,目的是让参与者凭所见作答、不同操作员问法一致。各页问法:#1/#2 "Do the toes of both stones point in or out?";#3/#4 "What color is each stone (left, right)? Which way does each point?";#5 "Are the footprints pointing straight ahead?";#6/#7 "Pointing in or out? What color?";#8 "Which way does each footprint point, and what color?"。
+  - **通过标准(PC 面板没有规定,由实验协议决定)**:Pass/Fail 完全由操作员判断,软件不记录每页是否答对。
 - Session 卡片内新增 **Open Data Folder** 按钮(`BtnOpenDataFolder_Click`),打开当前 participant/condition 的数据文件夹;原先显示 Session/Meta/QoE 文件名的三行文本已被上面的 Flow 一览面板取代
 - 支持 CSV 回放(`BtnLoadData_Click`,0.2x/1x/5x/Max 速度)
 
@@ -258,7 +273,7 @@ Manipulation Check / NASA-TLX / IMI-PC 等纸面量表**不通过 WebSocket 传�
 **状态机**(`FootHudController.OnStateChange`,与 §4.1 的 `state` 值完全对应):`waiting → armed → calibrating → baseline → training ⇄ rest → armed → calibrating → training ⇄ ... → retention → ended`,`paused`/`error` 可从多数状态进入;首次校准和每次赛前重标定都靠 `armed` 里的 `Start` 点击(`ReadyForCalibration`)触发——**客户端从不自动开始校准**。`rest` 不再需要 Continue 点击,由 PC 到点自动推进。
 
 **训练条件差异**(`condition` 字段 `EF`/`IF`):两种条件的图形在**整个 training block 内都可见**(dwell-time 匹配,避免曝光时长成为混淆变量),只在收到 `fpa`(真实落地事件)时做一次"脉冲",两者共用 `PulseScale`(1.05x)的放大,`FootOutDisplaySec`(0.35s)后缩放一律还原(颜色/旋转是否保留见下)。
-- **EF(stepping stones)**:石头显示固定目标朝向(`state.targetL/R`+`directionL/R`,每 block 设置一次),不旋转、不隐藏;`fpa` 时石头原地放大并按 `onTargetL/R` 染色(`FeedbackColors.OnTarget` 蓝 / `OffTarget` 橙,Wong 色盲友好色板),0.35s 后**只还原缩放,颜色保持上一步结果直到下一次 `fpa` 覆盖**(与 IF `lastResult` 一致;每个 block 开始时才复位为贴图原色)。**原来的 `footOutL/R` 实际脚印叠加已移除**(文档里旧的"EF 额外叠加实际脚印、0.2s 隐藏"描述已作废)。
+- **EF(stepping stones)**:石头显示固定目标朝向(`state.targetL/R`+`directionL/R`,每 block 设置一次),不旋转、不隐藏;`fpa` 时石头原地放大并按 `onTargetL/R` 染色(`FeedbackColors.OnTarget` 橙 / `OffTarget` 蓝,Wong 色盲友好色板;**颜色映射已于2026-10-23交换**,原为`OnTarget`蓝/`OffTarget`橙,详见`FeedbackColors.cs`注释与`AR-FRONTEND.md`),0.35s 后**只还原缩放,颜色保持上一步结果直到下一次 `fpa` 覆盖**(与 IF `lastResult` 一致;每个 block 开始时才复位为贴图原色)。**原来的 `footOutL/R` 实际脚印叠加已移除**(文档里旧的"EF 额外叠加实际脚印、0.2s 隐藏"描述已作废)。
 - **IF(footprint)**:脚印始终可见;`fpa` 时旋转到 `errorL/R`(= FPA − target)、放大并按 `onTargetL/R` 染色。旋转/颜色之后是否还原取决于 `ifRenderMode`:`placeholder`(待命姿势 + 脉冲后全部还原)、`live`(额外消费 `live` 流连续旋转,脉冲后只还原颜色;0.5s 无更新则整体回到待命姿势)、`lastResult`(**默认**:不消费 `live`,脉冲后旋转/颜色都不还原,一直显示上一步的确认结果直到下一次 `fpa` 覆盖)。`live` 与 `fpa` 参考系不同,`live` 模式仅限 pilot 对比,见 `docs/task15_live_vs_fpa_consistency_report.md`。
 - **右脚符号**:PC 端右脚 FPA/`live.angleR` 已取反(正 = toe-out),AR 端对右脚的 stone 目标、`live.angleR`、`fpa.errorR` 的旋转再取反一次(Unity Z 轴正向旋转为逆时针),两端必须成对修改(见 §3.7)。
 - **Focus reminder**:每个 training block 开始时(暂停恢复不触发)在图形下方叠加 3s 的条件专属提示文本(EF/IF 各 10 词,字数匹配),然后只隐藏文本。`focusReminderPanel` 是手工在 Unity Editor 加的,不由脚本创建。

@@ -226,11 +226,17 @@ neutral and the focus reminder replays).
 
 **Colors** (`Assets/FeedbackColors.cs`): on-target/off-target used to be `Color.green`/
 `Color.red`; both conditions pull from this one shared static class instead —
-`OnTarget` = blue `RGB(0,114,178)`, `OffTarget` = orange `RGB(230,159,0)` (Wong 2011,
-*Nature Methods*, colorblind-safe palette). Change the palette in exactly one place if it
-ever needs to change again. EF's stone pulse now uses the full `OnTarget`/`OffTarget` pair too
-(matches IF's flash colors) — the tint persists until the next `fpa` message (only the scale
-reverts after the pulse); the stone returns to its own cached texture color only at block start.
+`OnTarget` = orange `RGB(230,159,0)`, `OffTarget` = blue `RGB(0,114,178)` (Wong 2011,
+*Nature Methods*, colorblind-safe palette; **mapping swapped 2026-10-23** — see the comment
+block at the top of `FeedbackColors.cs` — orange was originally `OffTarget` and blue was
+originally `OnTarget`; an n=3 perceptual pilot found orange is both more visually salient
+in situ and intuitively associated with a positive/success outcome by participants who were
+not told the system's mapping, the opposite of the original assignment, so the mapping was
+swapped to align salience and perceived valence with actual on-target success). Change the
+palette in exactly one place if it ever needs to change again. EF's stone pulse now uses the
+full `OnTarget`/`OffTarget` pair too (matches IF's flash colors) — the tint persists until the
+next `fpa` message (only the scale reverts after the pulse); the stone returns to its own
+cached texture color only at block start.
 
 **Focus reminder** (`focusReminderPanel`/`focusReminderText`, new Inspector fields on
 `FootHudController`): at the start of every training block (not on resume-from-pause),
