@@ -18,7 +18,6 @@ namespace IMUMoCap.Methods
     {
         public string ParticipantId { get; private set; } = "";
         public string Condition { get; private set; } = ""; // "EF" | "IF"
-        public string? OrderGroup { get; private set; }
 
         public string? CurrentSessionFilePath { get; private set; }
         public string? CurrentMetaFilePath { get; private set; }
@@ -85,13 +84,12 @@ namespace IMUMoCap.Methods
                 JsonSerializer.Serialize(rec, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
         }
 
-        public void StartCondition(string participantId, string condition, string? orderGroup)
+        public void StartCondition(string participantId, string condition)
         {
             Close();
 
             ParticipantId = participantId;
             Condition = condition;
-            OrderGroup = orderGroup;
 
             var dir = Path.Combine(DataRoot, $"P{participantId}");
             Directory.CreateDirectory(dir);
@@ -109,7 +107,7 @@ namespace IMUMoCap.Methods
             _liveConsistencyWriter.WriteLine("PacketId,TsUtcMs,Foot,LiveAngleDeg,FpaErrorDeg,FpaDeg,TargetDeg");
             _liveConsistencyWriter.Flush();
 
-            _meta = new ConditionMeta { ParticipantId = participantId, Condition = condition, OrderGroup = orderGroup ?? "" };
+            _meta = new ConditionMeta { ParticipantId = participantId, Condition = condition };
         }
 
         public void WriteRow(DiagnosticsRow row, string stage, int attempt)

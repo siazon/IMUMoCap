@@ -1260,7 +1260,6 @@ namespace IMUMoCap
             }
 
             string condition = (cmbCondition.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "EF";
-            string orderGroup = (cmbOrderGroup.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "A";
 
             if (Methods.ExperimentRecorder.SessionFileExists(participantId, condition))
             {
@@ -1274,7 +1273,7 @@ namespace IMUMoCap
                 }
             }
 
-            _recorder.StartCondition(participantId, condition, orderGroup);
+            _recorder.StartCondition(participantId, condition);
             // Clears BaselineProfile and all per-module internal state (gait/motion/PD/FPA) left over
             // from whatever ran before — without this, RefreshChecklist() reads the PREVIOUS
             // participant/condition's BaselineProfile and shows Baseline as already done.
@@ -1304,7 +1303,7 @@ namespace IMUMoCap
             _content.TurningExclusionDisplay = "";
             _content.BlockStepsDisplay = "L 0 · R 0";
             BroadcastArState("armed"); // tells the AR client it can show its "ready to calibrate" button
-            log($"Started condition {condition} (order {orderGroup}) → {_recorder.CurrentSessionFilePath}");
+            log($"Started condition {condition} → {_recorder.CurrentSessionFilePath}");
         }
 
         private void BtnNextStage_Click(object sender, RoutedEventArgs e)

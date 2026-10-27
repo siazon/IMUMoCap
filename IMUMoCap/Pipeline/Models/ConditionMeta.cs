@@ -64,7 +64,6 @@ namespace IMUMoCap.Pipeline.Models
     {
         public string ParticipantId { get; set; } = "";
         public string Condition { get; set; } = "";
-        public string OrderGroup { get; set; } = "";
         public BaselineProfile? Baseline { get; set; }
         public List<PauseEvent> PauseEvents { get; set; } = new();
         public Dictionary<string, int> FinalAttempt { get; set; } = new();

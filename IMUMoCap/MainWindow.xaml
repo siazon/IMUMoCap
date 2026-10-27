@@ -146,13 +146,6 @@
                                     <ComboBoxItem Content="IF"/>
                                 </ComboBox>
                             </StackPanel>
-                            <StackPanel Margin="0,0,10,0">
-                                <TextBlock Text="Order Group:" Style="{StaticResource CaptionTextStyle}"/>
-                                <ComboBox x:Name="cmbOrderGroup" Style="{StaticResource BrandComboBoxStyle}" Width="70" SelectedIndex="0">
-                                    <ComboBoxItem Content="A"/>
-                                    <ComboBoxItem Content="B"/>
-                                </ComboBox>
-                            </StackPanel>
                             <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnStartCondition_Click" Width="120" Margin="0,0,0,0">
                                 <TextBlock Text="Start Condition" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>

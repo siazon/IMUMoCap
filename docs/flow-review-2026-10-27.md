@@ -361,3 +361,13 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 - 已修改且属于本次流程梳理上下文的:`IMUMoCap/MainWindow.xaml`、`MainWindow.xaml.cs`(Ready (AR) 按钮、Data Folder 位置、Screening 文案)。
 - 已修改的 Unity 设置:`IMUARFPA/Assets/Settings/URP-*.asset`、`XRGeneralSettingsPerBuildTarget.asset`、`ProjectSettings/BurstAotSettings_StandaloneWindows.json`、`ProjectSettings.asset`。
 - 未跟踪:`IMUARFPA/FeedBackWin11/`(疑似 Unity 构建产物)、`IMUARFPA/logo.png`、`IMUARFPA/Assets/Textures/Footprints/logo.png`、`docs/footprint.png`、`docs/steppingStone.png`、两张微信图片、本文档。
+
+### 8.6 进度
+
+| ID | 状态 | 提交 | 备注 |
+|---|---|---|---|
+| P0 | 完成(2026-10-27) | — | 见 §8.5 |
+| P1 | 待操作员 | — | 重启测量实测 |
+| T3 | 完成(2026-10-27) | `9c51de36` | 6 个新单元测试;Retention 的步数结束逻辑在 `MainWindow`,无法单测,留给 T16 演练;ParamsDialog 的 XAML 绑定未启动界面验证,首次打开 Parameters 窗口时请确认滑块显示 |
+| T4 | 完成(2026-10-27) | `548cddf4` | 2 个新单元测试(Meta 顶层字段集合固定为契约);`OrderGroup` 在 `.py/.json` 中无引用,仓库内分析脚本不受影响;仓库外的脚本无法检查。旧 Meta 文件里已有的 `OrderGroup` 字段不会被修改;`docs/*.md` 里的提及留给 T15 |
+| T5、T2、T1 | 未开始 | — | 第 1 波剩余 |
