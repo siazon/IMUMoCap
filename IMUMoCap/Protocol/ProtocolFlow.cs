@@ -114,6 +114,13 @@ namespace IMUMoCap.Protocol
         public bool CanRedo => Phase.Kind is PhaseKind.Baseline or PhaseKind.Training or PhaseKind.Retention;
         public bool RetentionComplete => _retentionCompleted;
 
+        /// <summary>即将进入的阶段名(等待/进行阶段间或 Redo 重校准时),否则为 null。</summary>
+        public string? PendingStageEntry =>
+            Phase.Kind is PhaseKind.RecalPending or PhaseKind.Recalibrating ? Phase.Stage?.ToString() : null;
+
+        /// <summary>正在为"重做当前阶段"重新校准(而不是为进入下一阶段重新校准)。</summary>
+        public bool IsRedoRecalibration => _redo && Phase.Kind is PhaseKind.RecalPending or PhaseKind.Recalibrating;
+
         /// <summary>旧 _restBlockJustFinished:进入过 Rest3 为 3,进入过 Rest1 为 1,否则 0。</summary>
         public int RestBlockJustFinished => _rest3Entered ? 3 : _rest1Entered ? 1 : 0;
 

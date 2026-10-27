@@ -509,6 +509,46 @@ namespace IMUMoCap.Tests.Unit
         }
 
         [Fact]
+        public void PendingStageEntry_IsTheTargetOfAnUpcomingRecalibration_AndNullOtherwise()
+        {
+            var f = AtRest1();
+            Assert.Null(f.PendingStageEntry);                       // resting
+
+            Go(f, FlowEvent.RestElapsed);
+            Assert.Equal("Training2", f.PendingStageEntry);         // waiting for Ready
+            Go(f, FlowEvent.CalibrationStarted);
+            Assert.Equal("Training2", f.PendingStageEntry);         // recalibrating
+            Go(f, FlowEvent.CalibrationCompleted);
+            Assert.Null(f.PendingStageEntry);                       // entered
+            Assert.Null(new ProtocolFlow().PendingStageEntry);
+        }
+
+        [Fact]
+        public void PendingStageEntry_ForARedo_IsTheStageBeingRedone()
+        {
+            var f = AtTraining1();
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
+
+            Assert.Equal("Training1", f.PendingStageEntry);
+            Assert.True(f.IsRedoRecalibration);
+        }
+
+        [Fact]
+        public void IsRedoRecalibration_IsFalseForOrdinaryStageChanges_AndOnceTheRedoStarts()
+        {
+            var f = AtRest1();
+            Go(f, FlowEvent.RestElapsed);
+            Assert.False(f.IsRedoRecalibration);                    // a normal recalibration before Training2
+
+            var g = AtTraining1();
+            Go(g, FlowEvent.Pause, FlowEvent.ResumeRedo);
+            Assert.True(g.IsRedoRecalibration);
+            Go(g, Recal);
+            Assert.False(g.IsRedoRecalibration);                    // the stage is running again
+            Assert.False(new ProtocolFlow().IsRedoRecalibration);
+        }
+
+        [Fact]
         public void CanRedo_IsTrueExactlyWhileBaselineTrainingOrRetentionIsRunning()
         {
             Assert.True(AtBaseline().CanRedo);

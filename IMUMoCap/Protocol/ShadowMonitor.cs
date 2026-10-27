@@ -23,7 +23,8 @@ namespace IMUMoCap.Protocol
         string ArState);
 
     /// <summary>
-    /// 影子模式(docs/flow-review-2026-10-27.md §8 T6):ProtocolFlow 与旧标志位并行运行,**只比对、不生效**。
+    /// T6 影子模式:ProtocolFlow 与旧标志位并行运行,只比对、不生效。**T8 之后旧标志位已删除,MainWindow 只用 Fire(转发并记录被拒绝的事件)
+    /// 和 ReportSummary;Observe/LegacySnapshot/Differences 已无调用方,待后续清理(T8b)。**
     /// 旧代码每走一步,MainWindow 就把对应事件喂给 <see cref="Fire"/>;每个定时器 tick 再用 <see cref="Observe"/>
     /// 交一份旧状态快照。两边不一致且持续数个 tick 才写一条 SHADOW MISMATCH(避免瞬时抖动刷屏);
     /// 被 ProtocolFlow 忽略的事件也记一条 SHADOW ignored,便于人工判断是否合理。

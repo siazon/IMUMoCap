@@ -89,18 +89,19 @@ namespace IMUMoCap
             ("Retention", null), ("NASA-TLX #2", "NASA-TLX_Admin2"),
         };
         private readonly Methods.ExperimentRecorder _recorder = new();
-        // T6 shadow mode: ProtocolFlow runs alongside the legacy flags below. It is fed the same steps and only
-        // compared against them (mismatches go to the log and Data/shadow_flow.log); it never drives anything.
+        // The experiment protocol state lives in ProtocolFlow (T8). Every transition goes through _shadow.Fire(...),
+        // which feeds the event to the flow and logs the ones it refuses (Data/shadow_flow.log + the operator log).
+        // The fields below (_currentStage, _inRest, ...) are read-only views of the flow, not state of their own.
         private readonly Protocol.ProtocolFlow _flow = new();
         private readonly Protocol.ShadowMonitor _shadow;
-        private string _currentStage = "";
-        private bool _isRetention = false; // true once _currentStage == "Retention": AR feedback removed
+        private string _currentStage => _flow.CurrentStage;
+        private bool _isRetention => _flow.IsRetention; // Retention (or waiting to redo it): AR feedback removed
         // True once Retention's 100/foot target (or the stall-prevention timeout) is reached. Data collection
         // and step counting stop, but the recording stays open — the operator still has to mark NASA-TLX
         // Admin 2 and click End Recording manually (Retention -> [NASA-TLX(2) marker] -> Ended).
-        private bool _retentionComplete = false;
+        private bool _retentionComplete => _flow.RetentionComplete;
         private int _retentionStepsL, _retentionStepsR; // valid steps collected during Retention (auto-end at 100/foot)
-        private bool _inRest = false; // true during the 120s rest between Training2 and Training3 (_currentStage stays "Training2")
+        private bool _inRest => _flow.InRest; // resting after Training1/Training3 (_currentStage stays that training stage)
 
         // Last broadcast AR state, resent as a snapshot when a client (re)connects.
         private string _lastState = "waiting";
@@ -133,7 +134,6 @@ namespace IMUMoCap
         // The `live` stream's throttle: source frames are 100Hz, but we only forward at 10Hz.
         private const long LiveAngleIntervalMs = 100;
         private long _lastLiveAngleSentTicks = 0;
-        private readonly Dictionary<string, int> _stageAttempt = new();
         // Pure stall-prevention safety net, not a co-equal exit criterion — every step-count-gated stage's
         // real exit criterion is a fixed 100 valid steps/foot. Widened from 5min (which was tuned for the
         // old 150-steps/foot target) to give a 100-step block enough headroom.
@@ -245,7 +245,7 @@ namespace IMUMoCap
                 if (_timelineBuffer.Count > TimelineCapacity) _timelineBuffer.Dequeue();
 
                 if (_recorder.IsRecording && !_content.IsPaused)
-                    _recorder.WriteRow(row, _currentStage, _stageAttempt.GetValueOrDefault(_currentStage, 1));
+                    _recorder.WriteRow(row, _currentStage, _flow.AttemptOf(_currentStage));
 
                 // IF-only real-time angle stream for AR ("live"), throttled to 10Hz (source
                 // is 100Hz). Sent unconditionally whenever IF/training/not-retention/not-rest —
@@ -314,7 +314,7 @@ namespace IMUMoCap
                 _content.RightGapCount = frameQuality.RightFootGapFrames;
 
                 // Rest window auto-advance: once the minimum duration has elapsed, move on by itself —
-                // no participant/operator "Continue" tap needed, since AdvanceStage() immediately arms
+                // no participant/operator "Continue" tap needed, since EnterRecalPrompt() immediately arms
                 // the pre-stage recalibration prompt ("Tap Ready"), which already serves as the resume
                 // signal. The PC's own stopwatch is the only timer trusted for protocol-timing integrity.
                 if (!_isReplaying && _inRest)
@@ -323,8 +323,8 @@ namespace IMUMoCap
                     if (_stageStopwatch.Elapsed >= TimeSpan.FromSeconds(requiredRestSec))
                     {
                         log($"Rest complete ({requiredRestSec}s elapsed) — advancing to recalibration.");
-                        _shadow.Fire(Protocol.FlowEvent.RestElapsed);
-                        AdvanceStage("elapsed");
+                        if (_shadow.Fire(Protocol.FlowEvent.RestElapsed).Accepted)
+                            EnterRecalPrompt(restEndReason: "elapsed");
                     }
                 }
 
@@ -338,7 +338,6 @@ namespace IMUMoCap
                     CompleteRetention("retention stall-prevention timeout");
 
                 RefreshChecklist();
-                ObserveShadow();
             };
             _timelineTimer.Start();
 
@@ -892,23 +891,30 @@ namespace IMUMoCap
 
         private void OnCalibrationStateChanged(CalibrationState state)
         {
-            string calDetail = _pendingStageEntry == null ? "initial"
-                : _redoPending ? $"recalibration for redo of {_pendingStageEntry}"
-                : $"recalibration before {_pendingStageEntry}";
-            switch (state)
+            // Read what we were waiting for BEFORE feeding the event: the state machine moves on the moment it is fired.
+            string? pending = _pendingStageEntry;
+            bool redo = _redoPending;
+            string calDetail = pending == null ? "initial"
+                : redo ? $"recalibration for redo of {pending}"
+                : $"recalibration before {pending}";
+            Protocol.FlowEvent? flowEvent = state switch
             {
-                case CalibrationState.CollectingStaticPose:
-                    _recorder.RecordEvent("CalibrationStart", calDetail);
-                    _shadow.Fire(Protocol.FlowEvent.CalibrationStarted);
-                    break;
-                case CalibrationState.Completed:
-                    _recorder.RecordEvent("CalibrationDone", calDetail);
-                    _shadow.Fire(Protocol.FlowEvent.CalibrationCompleted);
-                    break;
-                case CalibrationState.Failed:
-                    _recorder.RecordEvent("CalibrationFailed", calDetail);
-                    _shadow.Fire(Protocol.FlowEvent.CalibrationFailed);
-                    break;
+                CalibrationState.CollectingStaticPose => Protocol.FlowEvent.CalibrationStarted,
+                CalibrationState.Completed => Protocol.FlowEvent.CalibrationCompleted,
+                CalibrationState.Failed => Protocol.FlowEvent.CalibrationFailed,
+                _ => null,
+            };
+            if (flowEvent is { } fe)
+            {
+                // A calibration callback that doesn't fit the current phase (e.g. one that was queued before a
+                // restart) must not act on the experiment.
+                if (!_shadow.Fire(fe).Accepted) return;
+                _recorder.RecordEvent(state switch
+                {
+                    CalibrationState.CollectingStaticPose => "CalibrationStart",
+                    CalibrationState.Completed => "CalibrationDone",
+                    _ => "CalibrationFailed",
+                }, calDetail);
             }
 
             switch (state)
@@ -919,9 +925,9 @@ namespace IMUMoCap
 
                 case CalibrationState.CollectingStaticPose:
                     _sessionState = TestState.Calibrating;
-                    if (_pendingStageEntry != null)
+                    if (pending != null)
                     {
-                        _content.StatusLabel = $"Recalibrating before {_pendingStageEntry}... Stand still.";
+                        _content.StatusLabel = $"Recalibrating before {pending}... Stand still.";
                         BroadcastArState("calibrating", reason: "Quick recheck — please stand still for a moment before continuing.");
                     }
                     else
@@ -932,11 +938,8 @@ namespace IMUMoCap
                     break;
 
                 case CalibrationState.Completed:
-                    if (_pendingStageEntry is { } nextStage)
+                    if (pending is { } nextStage)
                     {
-                        bool redo = _redoPending;
-                        _pendingStageEntry = null;
-                        _redoPending = false;
                         EnterStage(nextStage, redo);
                     }
                     else
@@ -953,9 +956,9 @@ namespace IMUMoCap
                     break;
 
                 case CalibrationState.Failed:
-                    if (_pendingStageEntry != null)
+                    if (pending != null)
                     {
-                        _content.StatusLabel = $"Recalibration before {_pendingStageEntry} failed — please stand still and tap Ready to retry.";
+                        _content.StatusLabel = $"Recalibration before {pending} failed — please stand still and tap Ready to retry.";
                         BroadcastArState("armed", reason: "Calibration didn't complete.\nStand still and tap Ready to try again.");
                     }
                     else
@@ -972,7 +975,8 @@ namespace IMUMoCap
         private void HandleBaselineCompleted(BaselineProfile? profile)
         {
             _baselineTimer?.Stop();
-            _shadow.Fire(Protocol.FlowEvent.BaselineCompleted(profile is { IsValid: true }));
+            // Only meaningful while the baseline is actually being collected (not for a stale/duplicate completion).
+            if (!_shadow.Fire(Protocol.FlowEvent.BaselineCompleted(profile is { IsValid: true })).Accepted) return;
             if (profile == null || !profile.IsValid)
             {
                 string detail = profile == null
@@ -986,27 +990,11 @@ namespace IMUMoCap
             _pipeline.StartTraining(); // resets tolerance α to the Block 1 default before we display it below
             _recorder.SaveBaseline(profile);
 
-            // Advance the experiment stage bookkeeping (Baseline → Training1) so tolerance α, CSV stage
-            // tagging, and the 100-step auto-termination (with stall-prevention timeout fallback) all pick
-            // up correctly. AdvanceStage also broadcasts state=training with block=1. Only meaningful when
-            // a real condition recording is open (Start Condition was clicked first).
-            // StatusLabel is NOT set to "Training started..." here — AdvanceStage() arms the recalibration
-            // gate first (see _pendingStageEntry), so that message belongs in EnterStage() once training
-            // actually begins, not before the participant has even stood still for recalibration.
-            if (_recorder.IsRecording && _currentStage == "Baseline")
-            {
-                AdvanceStage();
-            }
-            else
-            {
-                // No recording open (e.g. calibration-only test run) — still show target/tolerance locally.
-                _content.StatusLabel =
-                    $"Training started. Target L={profile.Target_L:F1}° ({profile.Direction_L})  " +
-                    $"R={profile.Target_R:F1}° ({profile.Direction_R})";
-                BroadcastArState("training", blockOverride: 1);
-                _content.LeftFpaTarget = $"Target {profile.Target_L:F1}° ±{profile.ToleranceL:F1}° ({profile.Direction_L})";
-                _content.RightFpaTarget = $"Target {profile.Target_R:F1}° ±{profile.ToleranceR:F1}° ({profile.Direction_R})";
-            }
+            // The state machine has already moved Baseline -> (recalibrating before) Training1; this performs the side
+            // effects: close the Baseline stage and ask the participant for Ready. StatusLabel is NOT set to
+            // "Training started..." here - that message belongs in EnterStage() once training actually begins, not
+            // before the participant has even stood still for recalibration.
+            EnterRecalPrompt();
         }
 
         // ── 参数同步 ──────────────────────────────────────────────────────────
@@ -1338,41 +1326,6 @@ namespace IMUMoCap
             log(line);
         }
 
-        // Called every timeline tick: hands the shadow monitor the current values of the legacy flags.
-        private void ObserveShadow()
-        {
-            try
-            {
-                string[] markers = { Protocol.FlowMarkers.Mc1, Protocol.FlowMarkers.Mc3, Protocol.FlowMarkers.NasaTlx1,
-                                     Protocol.FlowMarkers.ImiPc, Protocol.FlowMarkers.NasaTlx2 };
-                bool Marked(string m) => m switch
-                {
-                    Protocol.FlowMarkers.Mc1 => _mc1Marked,
-                    Protocol.FlowMarkers.Mc3 => _mc3Marked,
-                    Protocol.FlowMarkers.NasaTlx1 => _nasaTlx1Marked,
-                    Protocol.FlowMarkers.ImiPc => _imiPcMarked,
-                    Protocol.FlowMarkers.NasaTlx2 => _nasaTlx2Marked,
-                    _ => false,
-                };
-                _shadow.Observe(new Protocol.LegacySnapshot(
-                    CurrentStage: _currentStage,
-                    InRest: _inRest,
-                    IsRetention: _isRetention,
-                    RetentionComplete: _retentionComplete,
-                    RestBlockJustFinished: _restBlockJustFinished,
-                    PendingStageEntry: _pendingStageEntry,
-                    IsPaused: _content.IsPaused,
-                    IsRecording: _recorder.IsRecording,
-                    Marked: markers.ToDictionary(m => m, Marked),
-                    CanMark: markers.ToDictionary(m => m, m => _legacyCanMark.GetValueOrDefault(m)),
-                    Attempts: ConditionStages.ToDictionary(s => s, s => _stageAttempt.GetValueOrDefault(s, 1)),
-                    Checklist: ComputeLegacyChecklist(),
-                    MissingMarkers: LegacyMissingExpectedMarkers(),
-                    ArState: _lastState));
-            }
-            catch { /* never disturb the experiment */ }
-        }
-
         // Snapshot of everything that shapes the collected data but isn't visible in the CSVs: software version
         // (includes the git commit), all PipelineParams, and the protocol constants hard-coded in this file/pipeline.
         // Params are copied so later live edits don't rewrite the snapshot.
@@ -1458,21 +1411,6 @@ namespace IMUMoCap
             // participant/condition's BaselineProfile and shows Baseline as already done.
             _pipeline.Reset();
             _pipeline.CalibrationArmed = true;
-            _stageAttempt.Clear();
-            _currentStage = ConditionStages[0];
-            _isRetention = false;
-            _retentionComplete = false;
-            _restBlockJustFinished = 0;
-            SetLegacyCanMark("ManipulationCheck_AfterBlock1", false);
-            SetLegacyCanMark("ManipulationCheck_AfterBlock3", false);
-            SetLegacyCanMark("NASA-TLX_Admin1", false);
-            SetLegacyCanMark("IMI-PC", false);
-            SetLegacyCanMark("NASA-TLX_Admin2", false);
-            _mc1Marked = false;
-            _mc3Marked = false;
-            _nasaTlx1Marked = false;
-            _imiPcMarked = false;
-            _nasaTlx2Marked = false;
             _stageStopwatch.Restart();
             _recorder.BeginStage(_currentStage);
             RefreshChecklist();
@@ -1489,11 +1427,11 @@ namespace IMUMoCap
         {
             if (!_recorder.IsRecording) { log("No active condition recording."); return; }
 
-            int idx = Array.IndexOf(ConditionStages, _currentStage);
-            if (idx < 0 || idx >= ConditionStages.Length - 1) { log("Already at final stage (Retention)."); return; }
-            _shadow.Fire(Protocol.FlowEvent.NextStage);
+            bool wasResting = _inRest; // read before firing: the state machine leaves Rest the moment it is fired
+            var result = _shadow.Fire(Protocol.FlowEvent.NextStage);
+            if (!result.Accepted) { log($"Next Stage ignored — {result.Reason}."); return; }
 
-            AdvanceStage();
+            EnterRecalPrompt(restEndReason: wasResting ? "skipped by Next Stage" : null);
         }
 
         private static bool IsTrainingBlockStage(string stage) =>
@@ -1507,14 +1445,14 @@ namespace IMUMoCap
         // fires synchronously on the UI thread's DispatcherTimer.Tick — if both conditions are
         // met near-simultaneously, the queued event can still run after the timer has already advanced
         // the stage, which would otherwise end the *next* block early. Reset whenever a new training
-        // block is entered (AdvanceStage, in the trainingBlock > 0 branch).
+        // block is entered (EnterStage, in the trainingBlock > 0 branch).
         private bool _trainingBlockEnding = false;
 
         private void EndTrainingBlock(string reason)
         {
             if (_trainingBlockEnding) return; // stale duplicate completion event for this block — ignore
+            if (!_shadow.Fire(Protocol.FlowEvent.BlockComplete).Accepted) return; // no training block is running
             _trainingBlockEnding = true;
-            _shadow.Fire(Protocol.FlowEvent.BlockComplete);
             // The only marker of where the block's data ends: from here on rows keep the training stage's tag
             // (Rest is not a stage), so without this event Rest-time samples can't be told apart from training.
             string follows = _currentStage switch
@@ -1535,7 +1473,7 @@ namespace IMUMoCap
                     EnterRest(blockJustFinished: 3, durationSec: PostBlock3RestDurationSec);
                     break;
                 default: // Training2 → Training3: no rest/MC window by design
-                    AdvanceStage();
+                    EnterRecalPrompt();
                     break;
             }
         }
@@ -1543,11 +1481,11 @@ namespace IMUMoCap
         // Which training block the current rest window follows (1 or 3) — decides the required rest
         // duration (_timelineTimer's auto-advance check below) and which block number is broadcast
         // to the AR client.
-        private int _restBlockJustFinished;
+        private int _restBlockJustFinished => _flow.RestBlockJustFinished;
 
         // Enters the Rest+MC window after Training1 or Training3. Stays in the just-finished training stage
         // (rest is not a data stage). _stageStopwatch is restarted so the server can enforce the minimum
-        // duration; _timelineTimer's tick auto-advances (via AdvanceStage(), which now also arms the
+        // duration; _timelineTimer's tick auto-advances (via EnterRecalPrompt(), which also arms the
         // pre-stage recalibration prompt) once that duration has elapsed — no separate participant/operator
         // "Continue" tap is needed, since the recalibration "Tap Ready" prompt that follows already serves
         // as the resume signal.
@@ -1556,13 +1494,6 @@ namespace IMUMoCap
         // administers it (see FlowItem_MouseLeftButtonUp).
         private void EnterRest(int blockJustFinished, int durationSec)
         {
-            _inRest = true;
-            _restBlockJustFinished = blockJustFinished;
-            bool isPostBlock3 = blockJustFinished == 3;
-            SetLegacyCanMark("ManipulationCheck_AfterBlock1", blockJustFinished == 1);
-            SetLegacyCanMark("ManipulationCheck_AfterBlock3", isPostBlock3);
-            SetLegacyCanMark("NASA-TLX_Admin1", isPostBlock3);
-            SetLegacyCanMark("IMI-PC", isPostBlock3);
             _content.CurrentStageLabel = $"{_currentStage} (Resting)";
             _stageStopwatch.Restart();
             BroadcastArState("rest", restDurationSec: durationSec, blockOverride: blockJustFinished);
@@ -1574,11 +1505,6 @@ namespace IMUMoCap
         // The five "was it clicked" flags below back the End Recording completeness check (see BtnEndCondition_Click)
         // — they only ever get cleared in BtnStartCondition_Click, never on stage advance/pause/redo, since a
         // marker represents a real paper-instrument event that stays true regardless of later data-collection redos.
-        private bool _mc1Marked = false;
-        private bool _mc3Marked = false;
-        private bool _nasaTlx1Marked = false;
-        private bool _imiPcMarked = false;
-        private bool _nasaTlx2Marked = false;
 
         // Single handler for every markable (underlined) label in the Flow checklist (see MainWindow.xaml's
         // ItemsControl.ItemTemplate) — which marker it logs comes from the clicked row's own MarkerStage,
@@ -1588,35 +1514,16 @@ namespace IMUMoCap
         {
             if ((sender as FrameworkElement)?.DataContext is not Model.ChecklistItem { MarkerStage: { } stage, CanMark: true }) return;
 
+            if (!_shadow.Fire(Protocol.FlowEvent.Mark(stage)).Accepted) return; // window not open (or already past)
             _recorder.MarkStageEvent(stage);
-            _shadow.Fire(Protocol.FlowEvent.Mark(stage));
-            switch (stage)
-            {
-                case "ManipulationCheck_AfterBlock1": _mc1Marked = true; break;
-                case "ManipulationCheck_AfterBlock3": _mc3Marked = true; break;
-                case "NASA-TLX_Admin1": _nasaTlx1Marked = true; break;
-                case "IMI-PC": _imiPcMarked = true; break;
-                case "NASA-TLX_Admin2": _nasaTlx2Marked = true; break;
-            }
             log($"Marker logged: {stage}");
             RefreshChecklist(); // instant feedback instead of waiting for the next 60ms timer tick
         }
 
-        private Model.ChecklistItem? FindMarkerItem(string markerStage) =>
-            _content.FlowChecklist.FirstOrDefault(i => i.MarkerStage == markerStage);
-
-        // T7: the Flow panel and the End Recording warning now read ProtocolFlow. The legacy flags and these legacy
-        // "marker window open" values are still maintained, but only so ShadowMonitor can keep checking the new
-        // state machine against an independent computation until the legacy flags are deleted (T8).
-        private readonly Dictionary<string, bool> _legacyCanMark = new();
-        private void SetLegacyCanMark(string marker, bool value) => _legacyCanMark[marker] = value;
-
-        // Set while waiting for the pre-stage recalibration (see AdvanceStage/EnterStage) to complete —
-        // holds the stage name we're about to enter once CalibrationState.Completed fires again.
-        private string? _pendingStageEntry;
-
-        // True when that pending entry is a Redo of the stage being collected (not a move to the next stage).
-        private bool _redoPending;
+        // The stage we are about to enter once the recalibration in progress completes (null otherwise), and whether
+        // that recalibration is for redoing the stage being collected: both are views of ProtocolFlow.
+        private string? _pendingStageEntry => _flow.PendingStageEntry;
+        private bool _redoPending => _flow.IsRedoRecalibration;
 
         /// <summary>
         /// Redo (flow-review T9): restart the stage that is currently being collected. It goes through the same
@@ -1626,8 +1533,6 @@ namespace IMUMoCap
         /// </summary>
         private void BeginRedoRecalibration()
         {
-            _redoPending = true;
-            _pendingStageEntry = _currentStage;
             _pipeline.AwaitingRecalibration = true; // freeze fpa/step output until the participant taps Ready
             // The stage stopwatch and (for Baseline) the timeout stay stopped while we wait; EnterStage restarts them.
             _content.CurrentStageLabel = $"{_currentStage} (Redo — recalibrating)";
@@ -1637,30 +1542,19 @@ namespace IMUMoCap
         }
 
         /// <summary>
-        /// Moves _currentStage to the next entry in ConditionStages. Called both manually (Next Stage button)
-        /// and automatically — training block auto-completion (100 valid steps/foot) and the stall-prevention
-        /// timeout both call this too (Research Overview §2.6).
-        ///
-        /// Every stage entered this way first requires a fresh calibration (IMU yaw drift bounding —
-        /// see docs/task19_calibration_duration_tuning.py analysis): this method only closes out the
-        /// current stage and arms the recalibration prompt; EnterStage() (the old tail of this method)
-        /// runs once the participant has stood still and CalibrationState.Completed fires again.
+        /// The side effects of leaving the current stage for the next one: close the stage, freeze fpa/step output
+        /// and ask the participant for Ready (the recalibration gate - IMU yaw drift bounding, see
+        /// docs/task19_calibration_duration_tuning.py). The transition itself has ALREADY happened: every caller
+        /// fires its event (Next Stage, block complete, rest elapsed, baseline completed) first and only calls this
+        /// when ProtocolFlow accepted it, so the flow is now waiting for Ready and names the stage we are heading to.
+        /// EnterStage() runs once the participant has stood still and the calibration completes.
         /// </summary>
-        private void AdvanceStage(string restEndReason = "skipped by Next Stage")
+        /// <param name="restEndReason">Set when this ends a Rest ("elapsed" / "skipped by Next Stage"), to log RestEnd.</param>
+        private void EnterRecalPrompt(string? restEndReason = null)
         {
-            if (_pendingStageEntry != null) return; // already awaiting recalibration for the next stage
-            if (_inRest) _recorder.RecordEvent("RestEnd", restEndReason);
-            _inRest = false; // any stage advance ends a pending rest
-            SetLegacyCanMark("ManipulationCheck_AfterBlock1", false);
-            SetLegacyCanMark("ManipulationCheck_AfterBlock3", false);
-            SetLegacyCanMark("NASA-TLX_Admin1", false);
-            SetLegacyCanMark("IMI-PC", false);
-            int idx = Array.IndexOf(ConditionStages, _currentStage);
-            if (idx < 0 || idx >= ConditionStages.Length - 1) return;
-
+            if (restEndReason != null) _recorder.RecordEvent("RestEnd", restEndReason);
+            string nextStage = _pendingStageEntry ?? "";
             _recorder.EndStage(_currentStage);
-            string nextStage = ConditionStages[idx + 1];
-            _pendingStageEntry = nextStage;
             _pipeline.AwaitingRecalibration = true; // freeze fpa/training output until the participant taps Ready (see GaitPipeline.AwaitingRecalibration)
             _content.CurrentStageLabel = $"{_currentStage} → {nextStage} (Recalibrating)";
             _content.StatusLabel = $"Recalibrating before {nextStage} — waiting for participant to tap Ready.";
@@ -1670,7 +1564,7 @@ namespace IMUMoCap
         }
 
         /// <summary>
-        /// Actually begins `stage` — the old tail of AdvanceStage(), run once the pre-stage recalibration
+        /// Actually begins `stage` — the old tail of the stage change, run once the pre-stage recalibration
         /// (armed above) completes. Unchanged from before the recalibration gate was added.
         /// </summary>
         private void EnterStage(string stage, bool isRedo = false)
@@ -1682,11 +1576,10 @@ namespace IMUMoCap
             // otherwise they stay stuck off for the rest of the condition after the very first
             // recalibration gate (Baseline→Training1 included).
             _sessionState = TestState.Step;
-            _currentStage = stage;
             if (!isRedo)
                 _recorder.BeginStage(_currentStage);
             else // keep the stage's original start time (pauses are subtracted from it); log the new attempt instead
-                _recorder.RecordEvent("StageStart", $"redo attempt={_stageAttempt.GetValueOrDefault(stage, 1)}", stage);
+                _recorder.RecordEvent("StageStart", $"redo attempt={_flow.AttemptOf(stage)}", stage);
             _recorder.FlushMeta();
             _stageStopwatch.Restart();
             _content.CurrentStageLabel = _currentStage;
@@ -1718,10 +1611,7 @@ namespace IMUMoCap
             else if (_currentStage == "Retention")
             {
                 // Immediate Retention Test: AR feedback removed, FPA data collection continues (Research Overview §2.6).
-                _isRetention = true;
-                _retentionComplete = false;
                 _retentionStepsL = _retentionStepsR = 0;
-                SetLegacyCanMark("NASA-TLX_Admin2", false);
                 _content.StatusLabel = "Retention: AR feedback removed, walk naturally.";
                 BroadcastArState("retention");
             }
@@ -1773,36 +1663,6 @@ namespace IMUMoCap
                     item.CanMark = _flow.CanMark(item.MarkerStage);
         }
 
-        // The pre-T7 computation, kept only as the "legacy side" of the shadow comparison (deleted in T8).
-        private List<(string Label, Model.ChecklistStatus Status)> ComputeLegacyChecklist()
-        {
-            int idx = Array.IndexOf(ConditionStages, _currentStage);
-            bool baselineDone   = _pipeline.BaselineProfile != null;
-            bool training1Done  = _restBlockJustFinished >= 1; // Block1's rest window opens the instant Training1 finishes
-            bool mc1Due         = _restBlockJustFinished >= 1; // Block1's rest window is MC1's mark-it window
-            bool training2Done  = idx >= Array.IndexOf(ConditionStages, "Training3"); // no rest window follows Block2
-            bool training3Done  = _restBlockJustFinished == 3; // Block3's rest window opens the instant Training3 finishes
-            bool block3WindowDue = _restBlockJustFinished == 3; // MC3/NASA-TLX1/IMI-PC all live in this window
-
-            static Model.ChecklistStatus Done(bool done) => done ? Model.ChecklistStatus.Done : Model.ChecklistStatus.Pending;
-            static Model.ChecklistStatus Marker(bool due, bool marked) =>
-                marked ? Model.ChecklistStatus.Done : due ? Model.ChecklistStatus.Missing : Model.ChecklistStatus.Pending;
-
-            return new()
-            {
-                ("Baseline", Done(baselineDone)),
-                ("Training1", Done(training1Done)),
-                ("MC (Block1)", Marker(mc1Due, _mc1Marked)),
-                ("Training2", Done(training2Done)),
-                ("Training3", Done(training3Done)),
-                ("MC (Block3)", Marker(block3WindowDue, _mc3Marked)),
-                ("NASA-TLX #1", Marker(block3WindowDue, _nasaTlx1Marked)),
-                ("IMI-PC", Marker(block3WindowDue, _imiPcMarked)),
-                ("Retention", Done(_retentionComplete)),
-                ("NASA-TLX #2", Marker(_retentionComplete, _nasaTlx2Marked)),
-            };
-        }
-
         private void SetChecklistStatus(string label, Model.ChecklistStatus status)
         {
             foreach (var item in _content.FlowChecklist)
@@ -1816,23 +1676,6 @@ namespace IMUMoCap
         // before Retention finished should NOT be nagged about instruments that were never due yet.
         private List<string> MissingExpectedMarkers() => _flow.MissingExpectedMarkers().ToList();
 
-        // The pre-T7 computation, kept only as the "legacy side" of the shadow comparison (deleted in T8).
-        private List<string> LegacyMissingExpectedMarkers()
-        {
-            var missing = new List<string>();
-            if (_restBlockJustFinished >= 1 && !_mc1Marked)
-                missing.Add("Manipulation Check (Block1)");
-            if (_restBlockJustFinished == 3)
-            {
-                if (!_mc3Marked) missing.Add("Manipulation Check (Block3)");
-                if (!_nasaTlx1Marked) missing.Add("NASA-TLX Admin 1");
-                if (!_imiPcMarked) missing.Add("IMI-PC");
-            }
-            if (_retentionComplete && !_nasaTlx2Marked)
-                missing.Add("NASA-TLX Admin 2");
-            return missing;
-        }
-
         /// <summary>
         /// Retention's 100/foot target (or the stall-prevention timeout) was reached. Stops step counting
         /// but does NOT close the recording — Retention -> [NASA-TLX(2) marker] -> Ended still needs the
@@ -1840,12 +1683,9 @@ namespace IMUMoCap
         /// </summary>
         private void CompleteRetention(string reason)
         {
-            if (_retentionComplete) return;
-            _retentionComplete = true;
-            _shadow.Fire(Protocol.FlowEvent.RetentionTargetReached);
+            if (!_shadow.Fire(Protocol.FlowEvent.RetentionTargetReached).Accepted) return; // not in Retention, or already complete
             // Marks where Retention's counted data ends; rows written afterwards (waiting for NASA-TLX #2 / End) keep the Retention tag.
             _recorder.RecordEvent("RetentionDone", $"{reason}; steps L/R={_retentionStepsL}/{_retentionStepsR}");
-            SetLegacyCanMark("NASA-TLX_Admin2", true);
             _content.StatusLabel = "Retention complete. Administer NASA-TLX (Admin 2), then click End Recording.";
             log($"Retention complete ({reason}) — awaiting NASA-TLX Admin 2 before ending. Click End Recording when done.");
         }
@@ -1860,10 +1700,6 @@ namespace IMUMoCap
             if (!_recorder.IsRecording) return;
             _shadow.Fire(Protocol.FlowEvent.EndRecording);
             _shadow.ReportSummary();
-            _isRetention = false;
-            _inRest = false;
-            _pendingStageEntry = null;
-            _redoPending = false;
             _pipeline.AwaitingRecalibration = false;
             _baselineTimer?.Stop();
             if (_content.IsPaused)
@@ -1919,10 +1755,10 @@ namespace IMUMoCap
                         "Redo stage", MessageBoxButton.YesNo, MessageBoxImage.Warning);
                     if (sure != MessageBoxResult.Yes) { log("Redo cancelled — still paused."); return; }
 
-                    int nextAttempt = _stageAttempt.GetValueOrDefault(_currentStage, 1) + 1;
-                    _stageAttempt[_currentStage] = nextAttempt;
+                    var redoResult = _shadow.Fire(Protocol.FlowEvent.ResumeRedo);
+                    if (!redoResult.Accepted) { log($"Redo refused — {redoResult.Reason}. Still paused."); return; }
+                    int nextAttempt = _flow.AttemptOf(_currentStage); // the flow has just advanced the attempt number
                     _recorder.EndPause("Redo", dlg.Reason);
-                    _shadow.Fire(Protocol.FlowEvent.ResumeRedo);
                     _recorder.MarkRedo(_currentStage, nextAttempt);
                     BroadcastRedo(_currentStage, nextAttempt, dlg.Reason);
                     log($"Resumed with Redo — {_currentStage} attempt #{nextAttempt}: {dlg.Reason}");
