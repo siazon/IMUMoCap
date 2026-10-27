@@ -42,6 +42,9 @@ namespace IMUMoCap.Protocol
         private int _count;              // 该差异已连续出现的 tick 数
         private string _loggedKey = "";  // 最近一次已写入日志的差异("" = 当前处于一致状态)
 
+        // 每个 condition 一份的计数(StartCondition 时清零),用于在结束时证明\"没有输出\"是因为真的一致,而不是监视器没在跑。
+        private int _eventsFed, _eventsIgnored, _ticksObserved, _mismatchReports;
+
         public ShadowMonitor(ProtocolFlow flow, Action<string> sink, int debounceTicks = 3)
         {
             _flow = flow;
@@ -53,6 +56,9 @@ namespace IMUMoCap.Protocol
         public FireResult Fire(FlowEvent e)
         {
             _lastEvent = Describe(e);
+            if (e.Kind == FlowEventKind.StartCondition)
+                _eventsFed = _eventsIgnored = _ticksObserved = _mismatchReports = 0;
+            _eventsFed++;
             FireResult result;
             try
             {
@@ -64,15 +70,23 @@ namespace IMUMoCap.Protocol
                 return new FireResult(false, ex.Message);
             }
             if (!result.Accepted)
+            {
+                _eventsIgnored++;
                 Say($"SHADOW ignored: {_lastEvent} in {DescribePhase(_flow.Phase)} — {result.Reason}");
+            }
             return result;
         }
+
+        /// <summary>写一行汇总(事件数、被忽略数、观察的 tick 数、不一致报告数)。在 condition 结束时调用。</summary>
+        public void ReportSummary() =>
+            Say($"SHADOW summary: events={_eventsFed} ignored={_eventsIgnored} ticks={_ticksObserved} mismatches={_mismatchReports}");
 
         /// <summary>每个定时器 tick 调用一次。</summary>
         public void Observe(LegacySnapshot legacy)
         {
             try
             {
+                _ticksObserved++;
                 string key = string.Join("; ", Differences(_flow, legacy));
                 if (key == _key) _count = Math.Min(_count + 1, int.MaxValue - 1);
                 else { _key = key; _count = 1; }
@@ -90,6 +104,7 @@ namespace IMUMoCap.Protocol
                 if (key != _loggedKey)
                 {
                     _loggedKey = key;
+                    _mismatchReports++;
                     Say($"SHADOW MISMATCH (last event: {_lastEvent}; flow phase: {DescribePhase(_flow.Phase)}): {key}");
                 }
             }

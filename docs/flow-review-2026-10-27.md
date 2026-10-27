@@ -377,7 +377,7 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | T2 | 完成(2026-10-27) | `git log --grep "(T2)"` | 9 个新单元测试 + Meta 字段契约测试更新(新增 `Events`、`RunConfig`,旧字段不变)。已接入的事件:ConditionStart、StageStart/End、PauseStart/End、Redo、Marker、RecalPrompt、CalibrationStart/Done/Failed、End;Save Diagnostics 额外导出 `*_Events.csv`(诊断行为空时不导出)。**`MainWindow` 里的接线(PacketId 追踪、校准事件、End 事件、导出、`BuildRunConfig`)只验证了编译,未启动界面**,留给 T16 演练。`OperatorSkips` 字段推迟到 T11(目前没有任何代码会写它) |
 | T2.1 | 完成(2026-10-27) | `git log --grep "(T2.1)"` | `LatestPacketId` 改由原始包路径(`OnXsensData`,暂停门控之后)更新,修复 §2-16;`RunConfig.Constants` 新增 `UpdateRateHz`、`AssumedSampleRateHz`;Start Condition 时若实际速率 ≠ 100 Hz 打 WARNING。均在 `MainWindow` 内,无法单测,只验证了编译与现有测试(61 通过),留给 T16 演练。**不改变任何采集行为** |
 | T1 | 完成(2026-10-27) | `git log --grep "(T1)"` | 新增 `IMUMoCap/Protocol/ProtocolFlow.cs`(纯逻辑,**尚未接入 `MainWindow`**,接入在 T6)与 44 个单元测试(含 12 个 `[KnownIssue]`,固定 §2-1/2/4/5/6/12/14 的现状)。复刻的旧语义见类注释。**有意没有复刻**:(a) 在 Rest 中点 End 后旧代码 marker 窗口仍保持可点的怪异行为;(b) 旧代码在 StartCondition 时向 AR 广播 `armed`,而 `ArState` 对"暂停且正在录制"一律给 `paused`;(c) 未建模 Start Calibration、Screening、Measure、回放。这三处在 T6 影子模式里若出现不一致属预期,需逐条判定 |
-| T6 | 代码完成,**待真人演练**(2026-10-27) | `git log --grep "(T6)"` | 新增 `IMUMoCap/Protocol/ShadowMonitor.cs`(逐项比对 + 去抖日志,13 个单元测试)并接入 `MainWindow`:14 个事件点喂给 `ProtocolFlow`,每 60ms tick 交一份旧状态快照;不一致连续 3 个 tick 才写 `SHADOW MISMATCH`,被 flow 忽略的事件写 `SHADOW ignored`;日志同时写入操作日志和 `Data/shadow_flow.log`(位于 exe 旁)。所有影子调用均吞掉异常,不影响实验。**验收(零 MISMATCH)尚未完成**,见 §8.7 |
+| T6 | **完成**(2026-10-27) | `git log --grep "(T6)"` | `ShadowMonitor` 逐项比对旧状态与 `ProtocolFlow`(15 个单元测试),接入 `MainWindow` 的 14 个事件点 + 每 tick 快照;日志写入操作日志和 `Data/shadow_flow.log`;condition 结束时写一行 `SHADOW summary: events= ignored= ticks= mismatches=`,使"没有输出"可被证明。**验收**:第一次演练(14:30)抓到 2 次 `ArState` 不一致,即 §2-4 的真实死锁,已由 T10a 修复;修复后再演练(14:37–14:45,构建 `f950cf0c`,EF + IF 两个完整 condition)**零 MISMATCH、零 ignored**。覆盖与未覆盖项见 §8.8 |
 | T10a | 完成(2026-10-27,T10 的一部分,因实机死锁提前做) | `git log --grep "(T10a)"` | 修复 §2-4 的 AR state 部分:Resume 重发暂停前的 state。`ProtocolFlow.ArStateAfterResume` 同步改为不含暂停叠加的 `ArState`,2 个 `[KnownIssue]` 测试翻转为正式测试并新增 1 个覆盖 10 个阶段的测试(现 `[KnownIssue]` 剩 10 个)。MainWindow 里的广播改动无法单测,验证方式:编译 + 下一次演练中影子日志不应再出现该 ArState 差异。T10 其余部分(Paused 时拒绝 Next Stage/Ready、Rest 期间禁用 Redo 等)仍未做 |
 
 ### 8.7 T6 真人演练清单(影子模式验收)
@@ -406,3 +406,18 @@ Parameters 里把 **Target Steps / Foot** 设为 5,**关窗口不要点 Save**�
   - Start Condition / End Recording 之后与暂停有关的差异(§2-14)。
   - 旧代码在 StartCondition 时向 AR 广播 `armed`,而 flow 对"暂停且正在录制"给 `paused`。
 - 其余任何差异都意味着转换表与旧行为不符,需要在进入 T7 之前修正。
+
+### 8.8 T6 验收记录
+
+**第 1 次演练(构建 `957efda4` 之后,14:30)**:影子日志报 2 次 `SHADOW MISMATCH … ArState legacy=baseline flow=armed`(ResumeContinue、ResumeRedo 之后)和 2 条 `ignored: NextStage in RecalPending`。对应的真实后果是 Baseline 结束后在"等待 Ready"时 Pause→Continue 导致流程死锁(§2-4),T10a 已修。
+
+**第 2 次演练(构建 `f950cf0c`,14:37–14:45,被试 P2,Target Steps/Foot=10,实际 40 Hz)**
+- 影子日志无新增行 = 零 MISMATCH、零 ignored。该仪器此前已被证明能在同一代码路径上报出真实差异,且没有出现任何 `SHADOW error`(Observe 每个 tick 都会跑,若持续抛异常会刷屏)。汇总行从下一次构建起提供正面证据。
+- 事件日志显示:等待 Ready 时 Pause→Continue 与 Pause→Redo 之后,`CalibrationStart` 在 3 秒内出现(`recalibration before Training1`)——死锁消失。
+- 样本文件 `ImuSamples_20261027_144457.csv`:PacketId 单调无回退;两个最大缺口(165、163 个包,约 4.1 秒)恰好位于 EF 的两次 Pause(`25055441`、`25055690`);其余缺口合计约 2% 的无线丢包。
+
+**覆盖到的场景(两个 condition 均走完整个协议,连续运行)**:完整 Armed→Calibrating→Baseline→Training1→Rest1→Training2→Training3→Rest3→Retention→RetentionDone→Ended;Rest1 自然走完 120 秒(EF);Next Stage 跳过 Rest(IF 的 Rest1 与 Rest3、EF 的 Rest3);MC1、MC3、NASA-TLX#1、IMI-PC、NASA-TLX#2 五个标记;Training2→Training3 无 Rest;第二个 condition 不继承第一个的状态;等待 Ready 时的 Pause→Continue 与 Pause→Redo。
+
+**未覆盖到的场景(目前只由 `ProtocolFlow` 的单元测试保证,而这些测试编码的是我对旧代码的阅读)**:训练/Rest/Retention 期间的 Pause→Continue/Redo;校准失败重试;基线步数不足(Failed);非 Retention 阶段中途 End;训练中点 Next Stage;暂停中点 Next Stage;marker 窗口关闭后点击;`MissingExpectedMarkers` 本身(未纳入快照比对,只比对了它依赖的 Marked/CanMark/阶段)。
+
+**结论**:T6 对已覆盖场景通过。未覆盖场景在 T7、T8 每次切换后都应再跑对应演练,尤其是 Pause 与 Rest 相关。

@@ -1747,6 +1747,7 @@ namespace IMUMoCap
         {
             if (!_recorder.IsRecording) return;
             _shadow.Fire(Protocol.FlowEvent.EndRecording);
+            _shadow.ReportSummary();
             _isRetention = false;
             _inRest = false;
             _pendingStageEntry = null;

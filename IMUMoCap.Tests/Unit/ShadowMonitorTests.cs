@@ -246,6 +246,55 @@ namespace IMUMoCap.Tests.Unit
             Assert.Contains("Mark(" + FlowMarkers.Mc1 + ")", lines[1]);
         }
 
+        // ── summary: silence must be provable ────────────────────────────────
+
+        [Fact]
+        public void ReportSummary_CountsFedIgnoredTicksAndMismatchReports()
+        {
+            var f = new ProtocolFlow();
+            var lines = new List<string>();
+            var monitor = new ShadowMonitor(f, lines.Add, debounceTicks: 2);
+
+            monitor.Fire(FlowEvent.StartCondition);   // accepted
+            monitor.Fire(FlowEvent.BlockComplete);    // ignored
+            var good = SnapshotFrom(f);
+            monitor.Observe(good);
+            monitor.Observe(good);
+            var bad = good with { InRest = true };
+            monitor.Observe(bad);
+            monitor.Observe(bad);                      // one MISMATCH report
+            lines.Clear();
+
+            monitor.ReportSummary();
+
+            var line = Assert.Single(lines);
+            Assert.Contains("SHADOW summary", line);
+            Assert.Contains("events=2", line);
+            Assert.Contains("ignored=1", line);
+            Assert.Contains("ticks=4", line);
+            Assert.Contains("mismatches=1", line);
+        }
+
+        [Fact]
+        public void StartCondition_ResetsTheSummaryCounters()
+        {
+            var f = new ProtocolFlow();
+            var lines = new List<string>();
+            var monitor = new ShadowMonitor(f, lines.Add);
+            monitor.Fire(FlowEvent.StartCondition);
+            monitor.Fire(FlowEvent.BlockComplete);
+            monitor.Observe(SnapshotFrom(f));
+            lines.Clear();
+
+            monitor.Fire(FlowEvent.StartCondition);    // a new condition starts counting from scratch
+            monitor.ReportSummary();
+
+            var line = Assert.Single(lines);
+            Assert.Contains("events=1", line);
+            Assert.Contains("ignored=0", line);
+            Assert.Contains("ticks=0", line);
+        }
+
         // ── the shadow must never disturb the experiment ─────────────────────
 
         [Fact]
