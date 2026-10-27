@@ -231,7 +231,6 @@ namespace IMUMoCap
             _pipeline.OnFpaResult += (result, isTraining) => Dispatcher.BeginInvoke(() => OnFpaResult(result, isTraining));
             _pipeline.OnDiagnosticsFrame += row => Dispatcher.BeginInvoke(() =>
             {
-                _recorder.LatestPacketId = row.PacketId; // event log aligns to samples by PacketId, even while paused
                 _timelineBuffer.Enqueue(row);
                 if (_timelineBuffer.Count > TimelineCapacity) _timelineBuffer.Dequeue();
 
@@ -683,6 +682,9 @@ namespace IMUMoCap
 
             // One callback packet becomes a single-IMU sample, then a synchronized 3-IMU frame.
             var (sample, _) = _imuFrameCollector.Process(sensor, deviceId, packet);
+            // Event log aligns to the samples by PacketId. Taken from the raw packet path (not from diagnostics rows,
+            // which don't exist yet during the very first calibration), after the pause gate above.
+            _recorder.LatestPacketId = sample.PacketId;
             _imuSamples.Add(sample);
             _pipeline.ProcessPacket(sensor, deviceId, packet);
         }
@@ -1282,8 +1284,17 @@ namespace IMUMoCap
                 ["TargetMinDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetMinDeg,
                 ["IfRenderMode"] = _ifRenderMode,
                 ["LiveAngleIntervalMs"] = LiveAngleIntervalMs,
+                // The pipeline's frame-count thresholds are written for AssumedSampleRateHz; if the IMUs actually run at
+                // a different UpdateRateHz, every "N frames" threshold lasts a different amount of time (flow-review §2-15).
+                ["UpdateRateHz"] = CurrentUpdateRateHz(),
+                ["AssumedSampleRateHz"] = _sampleRateHz,
             },
         };
+
+        // Rate the IMUs were told to measure at (the app chooses it; there is no UI for it). -1 if unknown.
+        private int CurrentUpdateRateHz() =>
+            _content.SelectedRate >= 0 && _content.SelectedRate < _content.UpdateRates.Count
+            && int.TryParse(_content.UpdateRates[_content.SelectedRate], out var hz) ? hz : -1;
 
         private void BtnStartCondition_Click(object sender, RoutedEventArgs e)
         {
@@ -1319,6 +1330,9 @@ namespace IMUMoCap
 
             _recorder.StartCondition(participantId, condition);
             _recorder.SetRunConfig(BuildRunConfig());
+            int updateRateHz = CurrentUpdateRateHz();
+            if (updateRateHz > 0 && updateRateHz != _sampleRateHz)
+                log($"WARNING: IMUs are measuring at {updateRateHz} Hz, but the pipeline's frame-count thresholds assume {_sampleRateHz} Hz.");
             // Clears BaselineProfile and all per-module internal state (gait/motion/PD/FPA) left over
             // from whatever ran before — without this, RefreshChecklist() reads the PREVIOUS
             // participant/condition's BaselineProfile and shows Baseline as already done.
