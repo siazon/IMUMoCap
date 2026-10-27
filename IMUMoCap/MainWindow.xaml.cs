@@ -154,7 +154,7 @@ namespace IMUMoCap
             new("EF", -10, -10, "neutral", "neutral", "EF stones · toe-in 10° · neutral color\nAsk: Do the toes of both stones point in or out?"),
             new("EF",  10,  10, "neutral", "neutral", "EF stones · toe-out 10° · neutral color\nAsk: Do the toes of both stones point in or out?"),
             new("EF", -15, -15, "on",  "off",         "EF stones · 15° · left blue / right orange\nAsk: What color is each stone (left, right)? Which way does each point?"),
-            new("EF", -25, -25, "off", "on",          "EF stones · 25° · left orange / right blue\nAsk: What color is each stone (left, right)? Which way does each point? (colors swapped, larger angle)"),
+            new("EF", -25, -25, "off", "on",          "EF stones · 25° · left orange / right blue\nAsk: What color is each stone (left, right)? Which way does each point? "),
             new("IF",   0,   0, "neutral", "neutral", "IF footprints · 0° · neutral color\nAsk: Are the footprints pointing straight ahead?"),
             new("IF",  15,  15, "on",  "on",          "IF footprints · +15° toe-out · blue/blue\nAsk: Pointing in or out? What color?"),
             new("IF", -15, -15, "off", "off",         "IF footprints · -15° toe-in · orange/orange\nAsk: Pointing in or out? What color?"),
@@ -484,20 +484,7 @@ namespace IMUMoCap
                         break;
 
                     case "ReadyForCalibration":
-                        Dispatcher.Invoke(() =>
-                        {
-                            if (_pendingStageEntry != null)
-                            {
-                                if (_pipeline.TriggerRecalibration())
-                                    log($"WS: participant signaled ready — recalibration triggered before {_pendingStageEntry}.");
-                                else
-                                    log("WS: participant signaled ready for recalibration, but pipeline rejected it.");
-                            }
-                            else if (_pipeline.TriggerCalibration())
-                                log("WS: participant signaled ready — calibration triggered.");
-                            else
-                                log("WS: participant signaled ready, but calibration isn't armed yet (Start Condition not open).");
-                        });
+                        Dispatcher.Invoke(() => HandleReadyForCalibration("WS: participant"));
                         break;
 
                     case "stop":
@@ -718,6 +705,26 @@ namespace IMUMoCap
             _baselineTimer.Start();
         }
 
+        // The participant's "Ready" tap on the AR glasses (cmd "ReadyForCalibration") — also reachable from the
+        // operator's Ready (AR) button, for when the glasses' button is hard to press. Routes to the pre-stage
+        // recalibration when a stage transition is pending, otherwise to the session's first calibration.
+        private void HandleReadyForCalibration(string source)
+        {
+            if (_pendingStageEntry != null)
+            {
+                if (_pipeline.TriggerRecalibration())
+                    log($"{source} signaled ready — recalibration triggered before {_pendingStageEntry}.");
+                else
+                    log($"{source} signaled ready for recalibration, but pipeline rejected it.");
+            }
+            else if (_pipeline.TriggerCalibration())
+                log($"{source} signaled ready — calibration triggered.");
+            else
+                log($"{source} signaled ready, but calibration isn't armed yet (Start Condition not open).");
+        }
+
+        private void BtnReady_Click(object sender, RoutedEventArgs e) => HandleReadyForCalibration("Operator");
+
         private void BroadcastArState(string state, string reason = "", int restDurationSec = 0, int? blockOverride = null)
         {
             if (_wsServer == null) return;
@@ -725,6 +732,8 @@ namespace IMUMoCap
             int block = blockOverride ?? BlockForStage(_currentStage);
             var (targetL, directionL, targetR, directionR) = TargetForAr();
             _lastState = state;
+            // The AR client only shows its Ready button in the "armed" state — mirror that on the operator's button.
+            Dispatcher.BeginInvoke(() => BtnReady.IsEnabled = _lastState == "armed");
             _lastCondition = condition;
             _lastBlock = block;
             _lastRestDurationSec = restDurationSec;

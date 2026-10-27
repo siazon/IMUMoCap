@@ -116,6 +116,12 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                        <Button x:Name="BtnOpenDataFolder" Click="BtnOpenDataFolder_Click"
+         Style="{StaticResource SecondaryButtonStyle}"
+         HorizontalAlignment="Left" Width="120" Margin="0,0,0,3"
+         ToolTip="Open the folder containing the Session/Meta/QoE files for the current participant/condition">
+                            📁 Data Folder
+                        </Button>
                     </StackPanel>
                 </Border>
 
@@ -162,6 +168,10 @@
                                 <TextBlock Text="End Recording" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <Button x:Name="BtnPauseResume" Style="{StaticResource PrimaryButtonStyle}" Click="BtnPauseResume_Click" Width="120">Pause</Button>
+                            <Button x:Name="BtnReady" Style="{StaticResource PrimaryButtonStyle}" Click="BtnReady_Click" Width="120" IsEnabled="False"
+                                    ToolTip="Same as the participant tapping Ready on the AR glasses — starts (re)calibration. Enabled while the AR client is showing its Ready prompt">
+                                <TextBlock Text="Ready (AR)" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
                         </UniformGrid>
 
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
@@ -188,12 +198,7 @@
                         <TextBlock Text="{Binding TurningExclusionDisplay}" FontSize="12" Opacity="0.7"
                                     Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
 
-                        <Button x:Name="BtnOpenDataFolder" Click="BtnOpenDataFolder_Click"
-                                Style="{StaticResource SecondaryButtonStyle}"
-                                HorizontalAlignment="Left" Width="150" Margin="0,0,0,10"
-                                ToolTip="Open the folder containing the Session/Meta/QoE files for the current participant/condition">
-                            📁 Open Data Folder
-                        </Button>
+                       
 
                         <!-- ── Tools (folded into Session) ──────────────────────────── -->
                         <TextBlock Text="Tools" FontWeight="Bold" FontSize="12" Foreground="{StaticResource Brand.Navy}" Margin="0,4,0,6"/>
