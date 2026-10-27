@@ -30,6 +30,16 @@ namespace IMUMoCap.Methods
         private StreamWriter? _liveConsistencyWriter;
         private ConditionMeta? _meta;
         private PauseEvent? _openPause;
+        private string _eventStage = ""; // 事件日志里 Stage 列的默认值:最近一次 BeginStage 的阶段
+
+        /// <summary>
+        /// 最近一次处理的 IMU 包号,由 MainWindow 在每个 DiagnosticsRow 到达时更新(不受暂停影响)。
+        /// 事件日志用它与 Session CSV 的 PacketId 对齐。
+        /// </summary>
+        public long LatestPacketId { get; set; }
+
+        public IReadOnlyList<RecordedEvent> Events =>
+            (IReadOnlyList<RecordedEvent>?)_meta?.Events ?? Array.Empty<RecordedEvent>();
 
         private static string DataRoot =>
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data");
@@ -90,6 +100,7 @@ namespace IMUMoCap.Methods
 
             ParticipantId = participantId;
             Condition = condition;
+            _eventStage = "";
 
             var dir = Path.Combine(DataRoot, $"P{participantId}");
             Directory.CreateDirectory(dir);
@@ -108,6 +119,49 @@ namespace IMUMoCap.Methods
             _liveConsistencyWriter.Flush();
 
             _meta = new ConditionMeta { ParticipantId = participantId, Condition = condition };
+            RecordEvent("ConditionStart", $"P{participantId} {condition}");
+        }
+
+        /// <summary>
+        /// 追加一条事件并落盘。仅在录制中生效;须在 UI 线程调用(与 WriteRow/SaveMeta 同线程,不加锁)。
+        /// stage 缺省取最近一次 BeginStage 的阶段(Rest 期间仍是刚结束的训练阶段)。
+        /// </summary>
+        public void RecordEvent(string type, string detail = "", string? stage = null)
+        {
+            if (AddEvent(type, detail, stage)) SaveMeta();
+        }
+
+        // 只追加不落盘,供本身随后会 SaveMeta 的方法使用,避免重复写文件。
+        private bool AddEvent(string type, string detail, string? stage)
+        {
+            if (_meta == null || !IsRecording) return false;
+            stage ??= _eventStage;
+            _meta.Events.Add(new RecordedEvent
+            {
+                Seq      = _meta.Events.Count + 1,
+                Type     = type,
+                PacketId = LatestPacketId,
+                TsUtc    = DateTime.UtcNow,
+                Stage    = stage,
+                Attempt  = _meta.FinalAttempt.GetValueOrDefault(stage, 1),
+                Detail   = detail,
+            });
+            return true;
+        }
+
+        public void SetRunConfig(RunConfig config)
+        {
+            if (_meta == null) return;
+            _meta.RunConfig = config;
+            SaveMeta();
+        }
+
+        /// <summary>把事件日志导出为 CSV(Seq,Type,PacketId,TsUtc,Stage,Attempt,Detail),供与 Session CSV 按 PacketId 对齐分析。</summary>
+        public void WriteEventsCsv(string path)
+        {
+            using var sw = new StreamWriter(path, append: false, Encoding.UTF8);
+            sw.WriteLine(RecordedEvent.CsvHeader);
+            foreach (var e in Events) sw.WriteLine(e.ToCsvRow());
         }
 
         public void WriteRow(DiagnosticsRow row, string stage, int attempt)
@@ -143,6 +197,7 @@ namespace IMUMoCap.Methods
         public void BeginPause(string stage)
         {
             _openPause = new PauseEvent { Stage = stage, StartTime = DateTime.Now };
+            RecordEvent("PauseStart", "", stage);
         }
 
         // 原因现在在恢复时（Continue/Redo 都要填）才收集，而不是暂停当下。
@@ -153,6 +208,7 @@ namespace IMUMoCap.Methods
             _openPause.OperatorDecision = operatorDecision;
             _openPause.Reason = reason;
             _meta.PauseEvents.Add(_openPause);
+            AddEvent("PauseEnd", $"decision={operatorDecision}; reason={reason}", _openPause.Stage);
             _openPause = null;
             SaveMeta();
         }
@@ -161,6 +217,7 @@ namespace IMUMoCap.Methods
         {
             if (_meta == null) return;
             _meta.FinalAttempt[stage] = newAttempt;
+            AddEvent("Redo", $"attempt={newAttempt}", stage);
             SaveMeta();
         }
 
@@ -172,6 +229,11 @@ namespace IMUMoCap.Methods
         {
             if (_meta == null) return;
             _meta.StageMarkers.Add(new StageMarker { Stage = stage, TimestampUtc = DateTime.UtcNow });
+            const string recalPrefix = "Recalibrate_Before"; // written by MainWindow.AdvanceStage when the recalibration prompt is armed
+            if (stage.StartsWith(recalPrefix, StringComparison.Ordinal))
+                AddEvent("RecalPrompt", stage[recalPrefix.Length..], null);
+            else
+                AddEvent("Marker", stage, null);
             SaveMeta();
         }
 
@@ -179,6 +241,8 @@ namespace IMUMoCap.Methods
         {
             if (_meta == null) return;
             _meta.StageTimings[stage] = new StageTiming { StartTime = DateTime.Now };
+            _eventStage = stage;
+            RecordEvent("StageStart", "", stage);
         }
 
         /// <summary>结算 stage 的活跃时长：墙钟时长减去该阶段内已结束的操作员暂停时长。</summary>
@@ -192,6 +256,7 @@ namespace IMUMoCap.Methods
                 if (p.Stage == stage && p.EndTime.HasValue)
                     pausedSeconds += (p.EndTime.Value - p.StartTime).TotalSeconds;
             timing.ActiveSeconds = (timing.EndTime.Value - timing.StartTime).TotalSeconds - pausedSeconds;
+            RecordEvent("StageEnd", FormattableString.Invariant($"activeSeconds={timing.ActiveSeconds:F1}"), stage);
         }
 
         /// <summary>

@@ -171,11 +171,11 @@
 
 **字段**:`Seq`(自增)、`Type`、`PacketId`(日志写入时最近一次已处理的 `DiagnosticsRow.PacketId`)、`TsUtc`、`Stage`(沿用现有阶段名)、`Attempt`、`Detail`(文本/JSON)。`PacketId` 是"最近处理的包",与真实事件相差最多是 UI 线程调度延迟内的若干包。
 
-**类型**:`ConditionStart`(含参数快照、软件版本、`restartOf`)、`StageStart/StageEnd`、`PauseStart/PauseEnd(decision,reason)`、`Redo(newAttempt)`、`RecalPrompt/RecalStart/RecalDone/RecalFailed`、`Marker(name,late)`、`NextStage(fromPhase)`(操作员越权推进)、`MeasureStop/MeasureStart`、`ParamChange(name,old,new)`、`Abort(archivedTo)`、`BlockComplete(reason)`、`End(reason)`、被挂起事件的 `Deferred(type)`。
+**类型**:`ConditionStart`(参数快照与软件版本在顶层 `RunConfig`;`restartOf` 由 T12 加入)、`StageStart/StageEnd`、`PauseStart/PauseEnd(decision,reason)`、`Redo(newAttempt)`、`RecalPrompt`、`CalibrationStart/CalibrationDone/CalibrationFailed`(Detail 区分 `initial` 与 `recalibration before X`)、`Marker(name,late)`、`NextStage(fromPhase)`(操作员越权推进)、`MeasureStop/MeasureStart`、`ParamChange(name,old,new)`、`Abort(archivedTo)`、`BlockComplete(reason)`、`End(reason)`、被挂起事件的 `Deferred(type)`。
 
 **时间基准**:新增字段一律 UTC。**现有** `PauseEvents/StageTimings` 仍是本地时间(`DateTime.Now`),为不破坏分析脚本**不修改**;在文档里标明差异,分析时对齐到 `Events` 的 UTC。
 
-**参数快照**(`ConditionStart` 的 Detail):`PipelineParams` 全部公开属性、Rest/兜底超时/目标步数等 `MainWindow` 常量、IF 渲染模式;`ParamChange` 只记变化项。软件版本:优先用构建时写入的 git commit(`AssemblyInformationalVersion`),实现时确认项目格式是否支持。
+**参数快照**(顶层 `RunConfig`,T2 已实现):`AppVersion` 取 `AssemblyInformationalVersion`(含 git commit);`Params` 是 `PipelineParams` 全部属性的副本(开始时的值,之后实时修改不会改写它);`Constants` 当前包含 RestDurationSec、PostBlock3RestDurationSec、TrainingBlockMaxDurationMin、BaselineMaxDurationMin、ToleranceDeg、TargetDeltaDeg、TargetMinDeg、IfRenderMode(开始时的值)、LiveAngleIntervalMs。`ParamChange` 事件只记变化项(T13)。`Detail` 是普通字符串,结构化的快照放在 `RunConfig` 而不是塞进 Detail。
 
 **与现有字段的关系**:`StageMarkers/PauseEvents/FinalAttempt` 继续写;`Events` 是同一信息的统一视图。待分析脚本全部迁到 `Events` 后,再讨论去重。
 
@@ -371,4 +371,5 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | T3 | 完成(2026-10-27) | `9c51de36` | 6 个新单元测试;Retention 的步数结束逻辑在 `MainWindow`,无法单测,留给 T16 演练;ParamsDialog 的 XAML 绑定未启动界面验证,首次打开 Parameters 窗口时请确认滑块显示 |
 | T4 | 完成(2026-10-27) | `c28750f0` | 2 个新单元测试(Meta 顶层字段集合固定为契约);`OrderGroup` 在 `.py/.json` 中无引用,仓库内分析脚本不受影响;仓库外的脚本无法检查。旧 Meta 文件里已有的 `OrderGroup` 字段不会被修改;`docs/*.md` 里的提及留给 T15 |
 | T5 | 完成(2026-10-27) | `git log --grep "(T5)"` | 纯界面门控,无法单元测试:录制中 Screening 按钮禁用(60ms 定时器按 `_recorder.IsRecording` 刷新)并在处理器里再拦一次;只验证了编译与现有测试。**未启动界面确认**,留给 T16 演练 |
-| T2、T1 | 未开始 | — | 第 1 波剩余 |
+| T2 | 完成(2026-10-27) | `git log --grep "(T2)"` | 9 个新单元测试 + Meta 字段契约测试更新(新增 `Events`、`RunConfig`,旧字段不变)。已接入的事件:ConditionStart、StageStart/End、PauseStart/End、Redo、Marker、RecalPrompt、CalibrationStart/Done/Failed、End;Save Diagnostics 额外导出 `*_Events.csv`(诊断行为空时不导出)。**`MainWindow` 里的接线(PacketId 追踪、校准事件、End 事件、导出、`BuildRunConfig`)只验证了编译,未启动界面**,留给 T16 演练。`OperatorSkips` 字段推迟到 T11(目前没有任何代码会写它) |
+| T1 | 未开始 | — | 第 1 波剩余 |

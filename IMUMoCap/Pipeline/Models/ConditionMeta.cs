@@ -70,5 +70,45 @@ namespace IMUMoCap.Pipeline.Models
         public Dictionary<string, StepExclusionStats> StageStepStats { get; set; } = new();
         public Dictionary<string, StageTiming> StageTimings { get; set; } = new();
         public List<StageMarker> StageMarkers { get; set; } = new();
+
+        // ── 以下为增量字段(T2):旧字段不得改动,分析脚本依赖它们 ──
+        public RunConfig? RunConfig { get; set; }
+        public List<RecordedEvent> Events { get; set; } = new();
+    }
+
+    /// <summary>
+    /// 统一事件日志的一条记录(暂停/重校准/Mark/阶段切换等)。PacketId 是写入时最近处理的 IMU 包号,
+    /// 与 Session CSV 的 PacketId 列对齐;事件真实发生时刻与该包号相差最多是 UI 线程调度延迟内的若干包,
+    /// 分析时取事件之后的第一个包为参照。时间一律 UTC。
+    /// </summary>
+    public sealed class RecordedEvent
+    {
+        public int      Seq      { get; set; }
+        public string   Type     { get; set; } = "";
+        public long     PacketId { get; set; }
+        public DateTime TsUtc    { get; set; }
+        public string   Stage    { get; set; } = "";
+        public int      Attempt  { get; set; } = 1;
+        public string   Detail   { get; set; } = "";
+
+        public static string CsvHeader => "Seq,Type,PacketId,TsUtc,Stage,Attempt,Detail";
+
+        public string ToCsvRow() =>
+            $"{Seq},{CsvEscape(Type)},{PacketId},{TsUtc.ToString("o", System.Globalization.CultureInfo.InvariantCulture)}," +
+            $"{CsvEscape(Stage)},{Attempt},{CsvEscape(Detail)}";
+
+        private static string CsvEscape(string s) =>
+            s.IndexOfAny(new[] { ',', '"', '\n', '\r' }) < 0 ? s : "\"" + s.Replace("\"", "\"\"") + "\"";
+    }
+
+    /// <summary>
+    /// 开始一个 condition 时的运行配置快照:软件版本(含 git commit)、PipelineParams 全部属性、
+    /// 以及写在代码里的协议常量(Rest 时长、超时、容差等),事后可以确认这份数据是在什么设置下采集的。
+    /// </summary>
+    public sealed class RunConfig
+    {
+        public string AppVersion { get; set; } = "";
+        public PipelineParams Params { get; set; } = new();
+        public Dictionary<string, object> Constants { get; set; } = new();
     }
 }

@@ -231,6 +231,7 @@ namespace IMUMoCap
             _pipeline.OnFpaResult += (result, isTraining) => Dispatcher.BeginInvoke(() => OnFpaResult(result, isTraining));
             _pipeline.OnDiagnosticsFrame += row => Dispatcher.BeginInvoke(() =>
             {
+                _recorder.LatestPacketId = row.PacketId; // event log aligns to samples by PacketId, even while paused
                 _timelineBuffer.Enqueue(row);
                 if (_timelineBuffer.Count > TimelineCapacity) _timelineBuffer.Dequeue();
 
@@ -855,6 +856,14 @@ namespace IMUMoCap
 
         private void OnCalibrationStateChanged(CalibrationState state)
         {
+            string calDetail = _pendingStageEntry != null ? $"recalibration before {_pendingStageEntry}" : "initial";
+            switch (state)
+            {
+                case CalibrationState.CollectingStaticPose: _recorder.RecordEvent("CalibrationStart", calDetail); break;
+                case CalibrationState.Completed: _recorder.RecordEvent("CalibrationDone", calDetail); break;
+                case CalibrationState.Failed: _recorder.RecordEvent("CalibrationFailed", calDetail); break;
+            }
+
             switch (state)
             {
                 case CalibrationState.WaitingForStart:
@@ -1108,6 +1117,16 @@ namespace IMUMoCap
                     sw.WriteLine(row.ToCsvRow());
 
                 log($"Diagnostics saved: {rows.Count} rows → {dlg.FileName}");
+
+                // Pause / recalibration / marker / stage events of the current condition, next to the diagnostics CSV;
+                // aligned to its (and the Session CSV's) PacketId column.
+                if (_recorder.Events.Count > 0)
+                {
+                    var eventsPath = Path.Combine(Path.GetDirectoryName(dlg.FileName) ?? "",
+                        Path.GetFileNameWithoutExtension(dlg.FileName) + "_Events.csv");
+                    _recorder.WriteEventsCsv(eventsPath);
+                    log($"Events saved: {_recorder.Events.Count} events → {eventsPath}");
+                }
             }
             catch (Exception ex)
             {
@@ -1243,6 +1262,29 @@ namespace IMUMoCap
             BroadcastArState(_lastState, _lastReason, _lastRestDurationSec, _lastBlock);
         }
 
+        // Snapshot of everything that shapes the collected data but isn't visible in the CSVs: software version
+        // (includes the git commit), all PipelineParams, and the protocol constants hard-coded in this file/pipeline.
+        // Params are copied so later live edits don't rewrite the snapshot.
+        private RunConfig BuildRunConfig() => new()
+        {
+            AppVersion = System.Reflection.CustomAttributeExtensions
+                .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(MainWindow).Assembly)
+                ?.InformationalVersion ?? "",
+            Params = JsonSerializer.Deserialize<PipelineParams>(JsonSerializer.Serialize(_pipeline.Params))!,
+            Constants = new Dictionary<string, object>
+            {
+                ["RestDurationSec"] = RestDurationSec,
+                ["PostBlock3RestDurationSec"] = PostBlock3RestDurationSec,
+                ["TrainingBlockMaxDurationMin"] = TrainingBlockMaxDuration.TotalMinutes,
+                ["BaselineMaxDurationMin"] = BaselineMaxDuration.TotalMinutes,
+                ["ToleranceDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.ToleranceDeg,
+                ["TargetDeltaDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetDeltaDeg,
+                ["TargetMinDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetMinDeg,
+                ["IfRenderMode"] = _ifRenderMode,
+                ["LiveAngleIntervalMs"] = LiveAngleIntervalMs,
+            },
+        };
+
         private void BtnStartCondition_Click(object sender, RoutedEventArgs e)
         {
             string participantId = txtParticipantId.Text.Trim();
@@ -1276,6 +1318,7 @@ namespace IMUMoCap
             }
 
             _recorder.StartCondition(participantId, condition);
+            _recorder.SetRunConfig(BuildRunConfig());
             // Clears BaselineProfile and all per-module internal state (gait/motion/PD/FPA) left over
             // from whatever ran before — without this, RefreshChecklist() reads the PREVIOUS
             // participant/condition's BaselineProfile and shows Baseline as already done.
@@ -1619,6 +1662,7 @@ namespace IMUMoCap
             _pipeline.AwaitingRecalibration = false;
             _baselineTimer?.Stop();
             _recorder.EndStage(_currentStage);
+            _recorder.RecordEvent("End", reason);
             _recorder.FlushMeta();
             _recorder.Close();
             _pipeline.CalibrationArmed = false;

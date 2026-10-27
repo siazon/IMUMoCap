@@ -34,10 +34,11 @@ namespace IMUMoCap.Tests.Unit
             using var doc = JsonDocument.Parse(File.ReadAllText(_recorder.CurrentMetaFilePath!));
             var keys = doc.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(n => n).ToArray();
 
+            // 旧字段(分析脚本依赖)原样保留;Events、RunConfig 是 T2 新增的增量字段。
             var expected = new[]
             {
-                "Baseline", "Condition", "FinalAttempt", "ParticipantId",
-                "PauseEvents", "StageMarkers", "StageStepStats", "StageTimings",
+                "Baseline", "Condition", "Events", "FinalAttempt", "ParticipantId",
+                "PauseEvents", "RunConfig", "StageMarkers", "StageStepStats", "StageTimings",
             };
             Assert.Equal(expected, keys);
         }
