@@ -114,6 +114,23 @@ namespace IMUMoCap.Tests.Unit
         }
 
         [Fact]
+        public void MarkStageEvent_Late_IsFlaggedInTheMarkerListAndTheEventDetail()
+        {
+            Start();
+            _recorder.BeginStage("Training1");
+
+            _recorder.MarkStageEvent("ManipulationCheck_AfterBlock1", late: true);
+            _recorder.MarkStageEvent("NASA-TLX_Admin1");
+
+            var meta = JsonDocument.Parse(File.ReadAllText(_recorder.CurrentMetaFilePath!)).RootElement.GetProperty("StageMarkers");
+            Assert.True(meta[0].GetProperty("Late").GetBoolean());
+            Assert.False(meta[1].GetProperty("Late").GetBoolean());
+            var markers = _recorder.Events.Where(e => e.Type == "Marker").ToList();
+            Assert.Equal("ManipulationCheck_AfterBlock1; late=true", markers[0].Detail);
+            Assert.Equal("NASA-TLX_Admin1", markers[1].Detail);   // unchanged format for on-time markers
+        }
+
+        [Fact]
         public void RecordEvent_IsNoOp_WhenNotRecording()
         {
             _recorder.RecordEvent("Orphan");

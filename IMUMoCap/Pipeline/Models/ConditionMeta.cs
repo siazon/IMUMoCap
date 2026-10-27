@@ -54,6 +54,8 @@ namespace IMUMoCap.Pipeline.Models
     {
         public string Stage { get; set; } = "";
         public DateTime TimestampUtc { get; set; }
+        /// <summary>补点:在这个量表对应的窗口(Rest 等)结束之后才点击,时间戳不代表问卷实际发生的时刻。</summary>
+        public bool Late { get; set; }
     }
 
     /// <summary>

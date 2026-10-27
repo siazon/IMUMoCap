@@ -1544,9 +1544,10 @@ namespace IMUMoCap
         {
             if ((sender as FrameworkElement)?.DataContext is not Model.ChecklistItem { MarkerStage: { } stage, CanMark: true }) return;
 
-            if (!_shadow.Fire(Protocol.FlowEvent.Mark(stage)).Accepted) return; // window not open (or already past)
-            _recorder.MarkStageEvent(stage);
-            log($"Marker logged: {stage}");
+            bool late = _flow.IsMarkLate(stage); // past its window (e.g. the Rest was skipped): flagged, not refused
+            if (!_shadow.Fire(Protocol.FlowEvent.Mark(stage)).Accepted) return; // not due yet, or already added late
+            _recorder.MarkStageEvent(stage, late);
+            log(late ? $"Marker logged (late): {stage}" : $"Marker logged: {stage}");
             RefreshChecklist(); // instant feedback instead of waiting for the next 60ms timer tick
         }
 

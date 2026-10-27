@@ -573,13 +573,14 @@ namespace IMUMoCap.Tests.Unit
         // ── markers ──────────────────────────────────────────────────────────
 
         [Fact]
-        public void Mc1_IsMarkableOnlyInsideRest1()
+        public void Mc1_BecomesMarkableWhenRest1StartsAndNotBefore()
         {
             var f = AtTraining1();
             Assert.False(f.CanMark(FlowMarkers.Mc1));
 
             Go(f, FlowEvent.BlockComplete);
             Assert.True(f.CanMark(FlowMarkers.Mc1));
+            Assert.False(f.IsMarkLate(FlowMarkers.Mc1));          // inside its window
             Assert.False(f.CanMark(FlowMarkers.Mc3));
             Assert.False(f.CanMark(FlowMarkers.NasaTlx1));
 
@@ -588,28 +589,87 @@ namespace IMUMoCap.Tests.Unit
         }
 
         [Fact]
-        public void Rest3_OpensMc3_Tlx1_AndImiPc_ButNotMc1()
+        public void Rest3_OpensMc3_Tlx1_AndImiPc_AndMc1StaysOpenForALateMark()
         {
             var f = AtRest3();
 
             Assert.True(f.CanMark(FlowMarkers.Mc3));
             Assert.True(f.CanMark(FlowMarkers.NasaTlx1));
             Assert.True(f.CanMark(FlowMarkers.ImiPc));
-            Assert.False(f.CanMark(FlowMarkers.Mc1));
-            Assert.False(f.CanMark(FlowMarkers.NasaTlx2));
+            Assert.False(f.IsMarkLate(FlowMarkers.Mc3));
+            Assert.True(f.CanMark(FlowMarkers.Mc1));              // Rest1's window is over, but it was never marked
+            Assert.True(f.IsMarkLate(FlowMarkers.Mc1));
+            Assert.False(f.CanMark(FlowMarkers.NasaTlx2));        // not due before Retention is complete
         }
 
         [Fact]
-        public void Tlx2_OpensOnceRetentionIsComplete_AndStaysOpenAfterEnd()
+        public void Tlx2_OpensOnceRetentionIsComplete_AndClosesWithTheRecording()
         {
             var f = AtRetention();
             Assert.False(f.CanMark(FlowMarkers.NasaTlx2));
 
             Go(f, FlowEvent.RetentionTargetReached);
             Assert.True(f.CanMark(FlowMarkers.NasaTlx2));
+            Assert.False(f.IsMarkLate(FlowMarkers.NasaTlx2));     // its window lasts until End
 
             Go(f, FlowEvent.EndRecording);
-            Assert.True(f.CanMark(FlowMarkers.NasaTlx2)); // legacy: CanMark is not cleared by End
+            Assert.False(f.CanMark(FlowMarkers.NasaTlx2));        // nothing is being recorded any more
+        }
+
+        // ── T14: a marker whose window has passed can still be added, once, and is flagged late ──
+
+        [Fact]
+        public void LateMarker_CanBeAddedOnce_AfterItsWindowCloses()
+        {
+            var f = AtRest1();
+            Go(f, FlowEvent.RestElapsed);                          // Rest1 is over, MC1 was never marked
+
+            Assert.True(f.CanMark(FlowMarkers.Mc1));
+            Assert.True(f.IsMarkLate(FlowMarkers.Mc1));
+            Assert.Equal(ChecklistStatus.Missing, Status(f, "MC (Block1)"));
+            Assert.Equal(new[] { "Manipulation Check (Block1)" }, f.MissingExpectedMarkers());
+
+            Go(f, FlowEvent.Mark(FlowMarkers.Mc1));
+
+            Assert.True(f.IsMarked(FlowMarkers.Mc1));
+            Assert.Equal(ChecklistStatus.Done, Status(f, "MC (Block1)"));
+            Assert.Empty(f.MissingExpectedMarkers());
+            Assert.False(f.CanMark(FlowMarkers.Mc1));              // no endless duplicates outside the window
+            Assert.False(f.Fire(FlowEvent.Mark(FlowMarkers.Mc1)).Accepted);
+        }
+
+        [Fact]
+        public void MarkerInsideItsWindow_CanStillBeClickedAgain_AsBefore()
+        {
+            var f = AtRest1();
+            Go(f, FlowEvent.Mark(FlowMarkers.Mc1));
+
+            Assert.True(f.CanMark(FlowMarkers.Mc1));
+            Go(f, FlowEvent.Mark(FlowMarkers.Mc1));                // a deliberate re-mark inside the window
+        }
+
+        [Fact]
+        public void LateMarkers_AreNotOfferedBeforeTheyAreDue_OrOutsideARecording()
+        {
+            Assert.False(new ProtocolFlow().CanMark(FlowMarkers.Mc1));
+            Assert.False(AtTraining2().CanMark(FlowMarkers.Mc3));  // Rest3 hasn't happened
+            var ended = AtRest1();
+            Go(ended, FlowEvent.EndRecording);
+            Assert.False(ended.CanMark(FlowMarkers.Mc1));
+            Assert.False(ended.Fire(FlowEvent.Mark(FlowMarkers.Mc1)).Accepted);
+        }
+
+        [Fact]
+        public void MarkerSkippedByNextStage_CanBeAddedLate_SoTheEndWarningCanBeActedOn()
+        {
+            var f = AtTraining3();
+            Go(f, FlowEvent.BlockComplete, FlowEvent.NextStage);   // Rest3 skipped
+            Assert.Contains("NASA-TLX Admin 1", f.MissingExpectedMarkers());
+
+            Go(f, FlowEvent.Mark(FlowMarkers.NasaTlx1));
+
+            Assert.DoesNotContain("NASA-TLX Admin 1", f.MissingExpectedMarkers());
+            Assert.True(f.IsMarkLate(FlowMarkers.NasaTlx1));
         }
 
         [Fact]
@@ -895,7 +955,7 @@ namespace IMUMoCap.Tests.Unit
             Go(f, FlowEvent.NextStage);
 
             Assert.Equal(P(PhaseKind.RecalPending, Stage.Training2), f.Phase);
-            Assert.False(f.CanMark(FlowMarkers.Mc1)); // window closes immediately
+            Assert.True(f.IsMarkLate(FlowMarkers.Mc1)); // the window closes immediately; MC1 can still be added late (T14)
         }
 
         [Fact, Trait("Category", "KnownIssue")]
@@ -915,18 +975,6 @@ namespace IMUMoCap.Tests.Unit
             Go(f, FlowEvent.NextStage);
 
             Assert.Equal(P(PhaseKind.RecalPending, Stage.Training1), f.Phase);
-        }
-
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_12_MarkersCannotBeAddedAfterTheirWindowCloses()
-        {
-            var f = AtRest1();
-            Go(f, FlowEvent.RestElapsed);
-
-            Assert.False(f.CanMark(FlowMarkers.Mc1));                          // T14: should still be markable (late)
-            Assert.False(f.Fire(FlowEvent.Mark(FlowMarkers.Mc1)).Accepted);
-            Assert.Equal(ChecklistStatus.Missing, Status(f, "MC (Block1)"));   // due, but unclickable
-            Assert.Equal(new[] { "Manipulation Check (Block1)" }, f.MissingExpectedMarkers());
         }
 
         // §2-14 (fixed with the Restart-Condition work): a pause must not outlive the recording it belongs to,

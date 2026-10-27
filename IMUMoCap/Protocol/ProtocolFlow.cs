@@ -139,14 +139,32 @@ namespace IMUMoCap.Protocol
         public int AttemptOf(string stage) => _attempts.GetValueOrDefault(stage, 1);
         public bool IsMarked(string marker) => _marked.Contains(marker);
 
-        /// <summary>旧行为:marker 只在其窗口内可点(Rest 窗口随离开 Rest 关闭);NASA-TLX#2 在 Retention 完成后一直可点。</summary>
-        public bool CanMark(string marker) => marker switch
+        // marker 的"到期":流程已经走到过它所属的窗口(与 Flow 清单的橙色、End 前的缺失警告同一口径)。
+        private bool IsDue(string marker) => marker switch
         {
-            FlowMarkers.Mc1 => Phase is { Kind: PhaseKind.Rest, Stage: Stage.Training1 },
-            FlowMarkers.Mc3 or FlowMarkers.NasaTlx1 or FlowMarkers.ImiPc => Phase is { Kind: PhaseKind.Rest, Stage: Stage.Training3 },
+            FlowMarkers.Mc1 => RestBlockJustFinished >= 1,
+            FlowMarkers.Mc3 or FlowMarkers.NasaTlx1 or FlowMarkers.ImiPc => RestBlockJustFinished == 3,
             FlowMarkers.NasaTlx2 => _retentionCompleted,
             _ => false,
         };
+
+        // marker 的"窗口"正在进行:Rest1 / Rest3 本身;NASA-TLX#2 的窗口是 Retention 完成之后直到 End。
+        private bool InWindow(string marker) => marker switch
+        {
+            FlowMarkers.Mc1 => Phase is { Kind: PhaseKind.Rest, Stage: Stage.Training1 },
+            FlowMarkers.Mc3 or FlowMarkers.NasaTlx1 or FlowMarkers.ImiPc => Phase is { Kind: PhaseKind.Rest, Stage: Stage.Training3 },
+            FlowMarkers.NasaTlx2 => IsRecording && _retentionCompleted,
+            _ => false,
+        };
+
+        /// <summary>
+        /// T14(O4):marker 到期后一直可以点(录制中),窗口过后也行;窗口过后只能补一次,避免无限重复。
+        /// 窗口内沿用旧行为(可重复点)。录制结束后不可点。
+        /// </summary>
+        public bool CanMark(string marker) => IsRecording && IsDue(marker) && (InWindow(marker) || !IsMarked(marker));
+
+        /// <summary>这个 marker 现在被点击属于"补点":已经过了它的窗口。写入 Meta/事件时标 late。</summary>
+        public bool IsMarkLate(string marker) => IsDue(marker) && !InWindow(marker);
 
         /// <summary>复刻 MainWindow.MissingExpectedMarkers:只提示流程实际走到过的窗口。</summary>
         public IReadOnlyList<string> MissingExpectedMarkers()

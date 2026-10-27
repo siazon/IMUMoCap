@@ -239,15 +239,15 @@ namespace IMUMoCap.Methods
         /// 纯审计标记：记录一个由 RA 在纸面上主持的量表/检查（Manipulation Check、NASA-TLX、IMI-PC 等）
         /// 发生的 UTC 时间戳。软件不呈现这些量表的内容，只留痕。
         /// </summary>
-        public void MarkStageEvent(string stage)
+        public void MarkStageEvent(string stage, bool late = false)
         {
             if (_meta == null) return;
-            _meta.StageMarkers.Add(new StageMarker { Stage = stage, TimestampUtc = DateTime.UtcNow });
+            _meta.StageMarkers.Add(new StageMarker { Stage = stage, TimestampUtc = DateTime.UtcNow, Late = late });
             const string recalPrefix = "Recalibrate_Before"; // written by MainWindow.AdvanceStage when the recalibration prompt is armed
             if (stage.StartsWith(recalPrefix, StringComparison.Ordinal))
                 AddEvent("RecalPrompt", stage[recalPrefix.Length..], null);
             else
-                AddEvent("Marker", stage, null);
+                AddEvent("Marker", late ? $"{stage}; late=true" : stage, null);
             SaveMeta();
         }
 
