@@ -180,6 +180,8 @@
 
 **类型**:`ConditionStart`(参数快照与软件版本在顶层 `RunConfig`;`restartOf` 由 T12 加入)、`StageStart/StageEnd`、`PauseStart/PauseEnd(decision,reason)`、`Redo(newAttempt)`、`RecalPrompt`、`CalibrationStart/CalibrationDone/CalibrationFailed`(Detail 区分 `initial` 与 `recalibration before X`)、`Marker(name,late)`、`NextStage(fromPhase)`(操作员越权推进)、`MeasureStop/MeasureStart`、`ParamChange(name,old,new)`、`Abort(archivedTo)`、`BlockComplete(reason)`、`End(reason)`、被挂起事件的 `Deferred(type)`。
 
+**补充(2026-10-27,T2.2)**:实机数据显示 Rest 不是阶段,Rest 期间的行仍带训练阶段的标签,而原先的事件日志没有记录 block 实际结束的时刻,Rest 期间的样本无法切出(Training1 在第 8.8 秒达到目标,但标着 Training1 的数据又延续了 32.6 秒)。现已补三类事件:`BlockComplete`(Detail 含原因 `target reached`/`stall-prevention timeout`、此时每脚步数、后续是 `rest Ns follows` 还是 `no rest, recalibration follows`;对 Training1/3 它同时就是 Rest 开始)、`RestEnd`(Detail:`elapsed` 计时走完 / `skipped by Next Stage`)、`RetentionDone`(Detail 含原因与步数)。分析时:一个阶段的有效数据 = `StageStart` 到 `BlockComplete`(Retention 为 `RetentionDone`);`BlockComplete`..`RestEnd` 是休息;其后到 `StageEnd` 是等待重校准。
+
 **时间基准**:新增字段一律 UTC。**现有** `PauseEvents/StageTimings` 仍是本地时间(`DateTime.Now`),为不破坏分析脚本**不修改**;在文档里标明差异,分析时对齐到 `Events` 的 UTC。
 
 **参数快照**(顶层 `RunConfig`,T2 已实现):`AppVersion` 取 `AssemblyInformationalVersion`(含 git commit);`Params` 是 `PipelineParams` 全部属性的副本(开始时的值,之后实时修改不会改写它);`Constants` 当前包含 RestDurationSec、PostBlock3RestDurationSec、TrainingBlockMaxDurationMin、BaselineMaxDurationMin、ToleranceDeg、TargetDeltaDeg、TargetMinDeg、IfRenderMode(开始时的值)、LiveAngleIntervalMs。`ParamChange` 事件只记变化项(T13)。`Detail` 是普通字符串,结构化的快照放在 `RunConfig` 而不是塞进 Detail。
@@ -386,6 +388,7 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | T12a | 完成(2026-10-27,T12 的一部分) | `git log --grep "(T12a)"` | 校准失败可无限重试(§2-17);录制中 Start Calibration = 确认 + 归档 + 重新开始(§2-20);暂停不再跨 condition 残留(§2-14)。新增/改动 20 个单元测试(现 `[KnownIssue]` 剩 8 个)。`MainWindow` 内的确认弹窗、归档调用、`BeginCondition` 重构只验证了编译与影子模式比对逻辑,**未启动界面**。T12 剩余:基线步数不足的 `Failed` 恢复(只能 Abort 或 End,Abort 现已可用)、按钮更名。 |
 | T12b | 完成(2026-10-27) | `git log --grep "(T12b)"` | 基线超时随暂停停表(§2-19);按钮更名 "Restart Condition" 并去掉无录制时的重置行为(§2-20)。`PausableCountdown` 8 个测试(现共 102 通过)。**演练时请验证**:Baseline 中暂停几分钟再恢复,不应提前报"步数不足" |
 | T9 | 完成(2026-10-27) | `git log --grep "(T9)"` | Redo 新语义(O3/Q1/O7):Resume 对话框里选 Redo → 二次确认弹窗(说明会丢弃本阶段已计步数并重新校准)→ 写 `Redo` 事件 → 回到"等待 Ready 重新校准"(AR 显示 Ready)→ 校准完成后重新进入**同一阶段**,`EnterStage` 随之清零该阶段计数器与秒表(Training 的 `SetTrainingBlock`、Baseline 的 `StartBaseline` + 新超时、Retention 的步数),并写 `StageStart detail="redo attempt=N"`(保留阶段原始开始时间,不再调用 `BeginStage`)。Redo 只在 Baseline/Training/Retention 合法,Rest、等待/进行校准、Armed、RetentionDone、Failed 里对话框的 Redo 按钮置灰(由 `ProtocolFlow.CanRedo` 判定)。`ProtocolFlow` 新增 Redo 转换与 `CanRedo`,新增 12 个单元测试(含 7 个非法阶段的参数化测试),旧的 `KnownIssue_2_1` 删除。**`MainWindow`/对话框内的接线只验证了编译与全部接线点在位,未启动界面**。已知保留:阶段步数排除统计 `StageStepStats` 仍跨 attempt 累加;被作废尝试的数据行保留在 Session CSV 中并以 `Attempt` 列区分 |
+| T2.2 | 完成(2026-10-27) | `git log --grep "(T2.2)"` | 补 `BlockComplete` / `RestEnd` / `RetentionDone` 三条事件(见 §7.7 补充)。仅 `MainWindow` 内的 `RecordEvent` 调用,无法单测,验证了全部调用点在位与编译(116 通过)。**下次演练请确认**:Rest 用 Next Stage 跳过和自然走完两种情况下,`RestEnd` 的 Detail 分别为 `skipped by Next Stage` / `elapsed` |
 
 ### 8.7 T6 真人演练清单(影子模式验收)
 

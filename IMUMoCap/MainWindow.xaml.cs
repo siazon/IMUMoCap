@@ -298,7 +298,7 @@ namespace IMUMoCap
             _pipeline.OnTrainingBlockComplete += () => Dispatcher.BeginInvoke(() =>
             {
                 if (!_isReplaying && !_inRest && IsTrainingBlockStage(_currentStage))
-                    EndTrainingBlock();
+                    EndTrainingBlock("target reached");
             });
 
             _timelineTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
@@ -324,13 +324,13 @@ namespace IMUMoCap
                     {
                         log($"Rest complete ({requiredRestSec}s elapsed) — advancing to recalibration.");
                         _shadow.Fire(Protocol.FlowEvent.RestElapsed);
-                        AdvanceStage();
+                        AdvanceStage("elapsed");
                     }
                 }
 
                 // Training block stall-prevention fallback: ends the block at the timeout even if 100 steps/foot wasn't reached.
                 if (!_isReplaying && !_inRest && IsTrainingBlockStage(_currentStage) && _stageStopwatch.Elapsed >= TrainingBlockMaxDuration)
-                    EndTrainingBlock();
+                    EndTrainingBlock("stall-prevention timeout");
 
                 // Retention stall-prevention fallback: stops data collection at the timeout even if 100 steps/foot
                 // wasn't reached; the operator still finishes the flow manually via End Recording after NASA-TLX Admin 2.
@@ -1509,11 +1509,21 @@ namespace IMUMoCap
         // block is entered (AdvanceStage, in the trainingBlock > 0 branch).
         private bool _trainingBlockEnding = false;
 
-        private void EndTrainingBlock()
+        private void EndTrainingBlock(string reason)
         {
             if (_trainingBlockEnding) return; // stale duplicate completion event for this block — ignore
             _trainingBlockEnding = true;
             _shadow.Fire(Protocol.FlowEvent.BlockComplete);
+            // The only marker of where the block's data ends: from here on rows keep the training stage's tag
+            // (Rest is not a stage), so without this event Rest-time samples can't be told apart from training.
+            string follows = _currentStage switch
+            {
+                "Training1" => $"rest {RestDurationSec}s follows",
+                "Training3" => $"rest {PostBlock3RestDurationSec}s follows",
+                _ => "no rest, recalibration follows",
+            };
+            _recorder.RecordEvent("BlockComplete",
+                $"{reason}; steps L/R={_pipeline.TrainingStepsL}/{_pipeline.TrainingStepsR}; {follows}");
 
             switch (_currentStage)
             {
@@ -1629,9 +1639,10 @@ namespace IMUMoCap
         /// current stage and arms the recalibration prompt; EnterStage() (the old tail of this method)
         /// runs once the participant has stood still and CalibrationState.Completed fires again.
         /// </summary>
-        private void AdvanceStage()
+        private void AdvanceStage(string restEndReason = "skipped by Next Stage")
         {
             if (_pendingStageEntry != null) return; // already awaiting recalibration for the next stage
+            if (_inRest) _recorder.RecordEvent("RestEnd", restEndReason);
             _inRest = false; // any stage advance ends a pending rest
             if (FindMarkerItem("ManipulationCheck_AfterBlock1") is { } mc1) mc1.CanMark = false;
             if (FindMarkerItem("ManipulationCheck_AfterBlock3") is { } mc3) mc3.CanMark = false;
@@ -1814,6 +1825,8 @@ namespace IMUMoCap
             if (_retentionComplete) return;
             _retentionComplete = true;
             _shadow.Fire(Protocol.FlowEvent.RetentionTargetReached);
+            // Marks where Retention's counted data ends; rows written afterwards (waiting for NASA-TLX #2 / End) keep the Retention tag.
+            _recorder.RecordEvent("RetentionDone", $"{reason}; steps L/R={_retentionStepsL}/{_retentionStepsR}");
             if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = true;
             _content.StatusLabel = "Retention complete. Administer NASA-TLX (Admin 2), then click End Recording.";
             log($"Retention complete ({reason}) — awaiting NASA-TLX Admin 2 before ending. Click End Recording when done.");
