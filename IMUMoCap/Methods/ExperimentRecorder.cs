@@ -150,6 +150,19 @@ namespace IMUMoCap.Methods
             return true;
         }
 
+        /// <summary>
+        /// 录制中 IMU 测量的启停写进事件日志(操作员点 Measure、掉线后重连等都会改变设备状态)。
+        /// 事件的 PacketId 是状态变化前最后处理的包;按"取事件之后的第一个包"解读。
+        /// 设备侧的 RECORDING/FLUSHING 仍属于测量中,不算启停。
+        /// </summary>
+        public void RecordMeasurementTransition(States previous, States next)
+        {
+            static bool Measuring(States s) => s is States.MEASURING or States.RECORDING or States.FLUSHING;
+            bool was = Measuring(previous), now = Measuring(next);
+            if (!was && now && next == States.MEASURING) RecordEvent("MeasureStart", $"{previous} -> {next}");
+            else if (was && !now) RecordEvent("MeasureStop", $"{previous} -> {next}");
+        }
+
         public void SetRunConfig(RunConfig config)
         {
             if (_meta == null) return;

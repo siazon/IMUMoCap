@@ -211,6 +211,7 @@ namespace IMUMoCap
 
             _content.StatusLabel = "Ready to calibration";
             _shadow = new Protocol.ShadowMonitor(_flow, WriteShadowLine);
+            _paramChangeTimer.Tick += (_, _) => FlushParamChanges();
             _imuFrameCollector.SampleRateHz = _sampleRateHz;
             UpdateImuStatusIndicators();
 
@@ -356,7 +357,9 @@ namespace IMUMoCap
 
         private void OnDeviceStateChanged(States s)
         {
+            var previous = _content.DeviceState;
             _content.DeviceState = s;
+            _recorder.RecordMeasurementTransition(previous, s); // MeasureStart / MeasureStop while a condition is recording
             setWidgetsStates();
         }
 
@@ -999,8 +1002,31 @@ namespace IMUMoCap
 
         // ── 参数同步 ──────────────────────────────────────────────────────────
 
+        // Every Parameters change while a condition is recording is written to the event log (flow-review Q6), so the
+        // data can be explained afterwards. Sliders fire PropertyChanged for every tick of a drag, so changes are
+        // coalesced: ~0.8 s after the last change one ParamChange per parameter is written (value before the burst ->
+        // value after it).
+        private static readonly HashSet<string> PipelineParamNames =
+            typeof(PipelineParams).GetProperties().Select(p => p.Name).ToHashSet();
+        private readonly DispatcherTimer _paramChangeTimer = new() { Interval = TimeSpan.FromMilliseconds(800) };
+        private PipelineParams? _paramsAtLastRecord;
+
+        private void FlushParamChanges()
+        {
+            _paramChangeTimer.Stop();
+            if (!_recorder.IsRecording || _paramsAtLastRecord == null) return;
+            foreach (var change in PipelineParams.Diff(_paramsAtLastRecord, _pipeline.Params))
+                _recorder.RecordEvent("ParamChange", change.Describe());
+            _paramsAtLastRecord = _pipeline.Params.Clone();
+        }
+
         private void SyncParamToPipeline(string? propName)
         {
+            if (_recorder.IsRecording && propName != null && PipelineParamNames.Contains(propName))
+            {
+                _paramChangeTimer.Stop();   // restart the quiet-period countdown
+                _paramChangeTimer.Start();
+            }
             switch (propName)
             {
                 case nameof(MainPageVM.StaticGyroThreshold):
@@ -1226,10 +1252,13 @@ namespace IMUMoCap
                 _content.IsIfLiveMode = false;
             _suppressIfRenderModeSync = false;
 
+            var previousIfRenderMode = _ifRenderMode;
             _ifRenderMode = _content.IsIfLiveMode ? "live"
                           : _content.IsIfLastResultMode ? "lastResult"
                           : "placeholder";
             log($"[IF] Render mode switched to '{_ifRenderMode}'.");
+            if (_ifRenderMode != previousIfRenderMode)
+                _recorder.RecordEvent("ParamChange", new ParamChange("IfRenderMode", previousIfRenderMode, _ifRenderMode).Describe());
             BroadcastArState(_lastState, _lastReason, _lastRestDurationSec, _lastBlock);
         }
 
@@ -1403,6 +1432,7 @@ namespace IMUMoCap
             _recorder.StartCondition(participantId, condition);
             _shadow.Fire(Protocol.FlowEvent.StartCondition);
             _recorder.SetRunConfig(BuildRunConfig());
+            _paramsAtLastRecord = _pipeline.Params.Clone(); // later changes are reported relative to this snapshot
             int updateRateHz = CurrentUpdateRateHz();
             if (updateRateHz > 0 && updateRateHz != _sampleRateHz)
                 log($"WARNING: IMUs are measuring at {updateRateHz} Hz, but the pipeline's frame-count thresholds assume {_sampleRateHz} Hz.");
@@ -1698,6 +1728,7 @@ namespace IMUMoCap
         private void EndFlow(string reason)
         {
             if (!_recorder.IsRecording) return;
+            FlushParamChanges(); // don't lose a change made in the last moments
             _shadow.Fire(Protocol.FlowEvent.EndRecording);
             _shadow.ReportSummary();
             _pipeline.AwaitingRecalibration = false;
