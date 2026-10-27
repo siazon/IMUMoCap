@@ -583,10 +583,13 @@ namespace IMUMoCap.Services
 
                     State = States.ENABLED;
 
-                    // Set a default update rate of 75 (if available)
-                    int defaultIndex = rates.IndexOf(Convert.ToString(75));
+                    // Default to 100 Hz (what the pipeline's frame-count thresholds assume), else 75 (if available)
+                    int defaultIndex = rates.IndexOf(Convert.ToString(100));
+                    if (defaultIndex == -1)
+                        defaultIndex = rates.IndexOf(Convert.ToString(75));
                     if (defaultIndex != -1)
                         updateRateIndex = defaultIndex;
+                    Log?.Invoke($"Supported update rates (Hz): {string.Join(", ", rates)}; default selection: {(updateRateIndex >= 0 ? rates[updateRateIndex] : "none")}");
 
                     UpdateRatesAvailable?.Invoke(new UpdateRatesEvent(rates, updateRateIndex));
                 }

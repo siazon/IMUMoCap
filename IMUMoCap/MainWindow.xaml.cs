@@ -1365,6 +1365,7 @@ namespace IMUMoCap
                 // The pipeline's frame-count thresholds are written for AssumedSampleRateHz; if the IMUs actually run at
                 // a different UpdateRateHz, every "N frames" threshold lasts a different amount of time (flow-review §2-15).
                 ["UpdateRateHz"] = CurrentUpdateRateHz(),
+                ["SupportedUpdateRatesHz"] = string.Join(",", _content.UpdateRates),
                 ["AssumedSampleRateHz"] = _sampleRateHz,
             },
         };
