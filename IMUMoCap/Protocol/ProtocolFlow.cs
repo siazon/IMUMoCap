@@ -321,6 +321,9 @@ namespace IMUMoCap.Protocol
                     // 不检查 BaselineProfile(§2-6);"已在等待重校准"和"已是最后阶段"时不动。暂停中拒绝(T10,§2-2)。
                     if (!IsRecording) return Ignore("no active condition recording");
                     if (Paused) return Ignore("paused — resume first");
+                    // T11(§2-6):还没有 baseline 档案时不能跳,否则后面的阶段没有训练目标。
+                    if (Phase.Kind is PhaseKind.Armed or PhaseKind.Calibrating or PhaseKind.Baseline or PhaseKind.Failed)
+                        return Ignore("baseline not finished");
                     if (Phase.Kind is PhaseKind.RecalPending or PhaseKind.Recalibrating)
                         return Ignore("already awaiting recalibration for the next stage");
                     var next = Next(CurrentStageValue!.Value);

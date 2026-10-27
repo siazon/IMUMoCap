@@ -81,7 +81,7 @@ namespace IMUMoCap.Tests.Unit
 
             monitor.Fire(FlowEvent.StartCondition);   // accepted
             monitor.Fire(FlowEvent.BlockComplete);    // ignored
-            monitor.Fire(FlowEvent.NextStage);        // accepted (legacy semantics)
+            monitor.Fire(FlowEvent.Pause);            // accepted
             lines.Clear();
 
             monitor.ReportSummary();

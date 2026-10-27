@@ -962,23 +962,22 @@ namespace IMUMoCap.Tests.Unit
             Assert.True(f.IsMarkLate(FlowMarkers.Mc1)); // the window closes immediately; MC1 can still be added late (T14)
         }
 
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_6_NextStage_InBaseline_EntersTraining1_WithoutAnyBaselineProfile()
+        // §2-6 (fixed in T11): skipping before the baseline profile exists would leave later stages without a target.
+        [Fact]
+        public void NextStage_IsRejected_UntilBaselineIsFinished()
         {
-            var f = AtBaseline();
-            Go(f, FlowEvent.NextStage);
+            var baseline = AtBaseline();
+            Assert.False(baseline.Fire(FlowEvent.NextStage).Accepted);
+            Assert.Equal(P(PhaseKind.Baseline, Stage.Baseline), baseline.Phase);
+            Assert.Equal(ChecklistStatus.Pending, Status(baseline, "Baseline"));
 
-            Assert.Equal(P(PhaseKind.RecalPending, Stage.Training1), f.Phase); // T11: ignored in Baseline
-            Assert.Equal(ChecklistStatus.Pending, Status(f, "Baseline"));
-        }
+            var armed = AtArmed(); // never calibrated
+            Assert.False(armed.Fire(FlowEvent.NextStage).Accepted);
+            Assert.Equal(P(PhaseKind.Armed, Stage.Baseline), armed.Phase);
 
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_6_NextStage_FromArmed_ArmsARecalibrationThatCanNeverBeTriggered()
-        {
-            var f = AtArmed(); // never calibrated
-            Go(f, FlowEvent.NextStage);
-
-            Assert.Equal(P(PhaseKind.RecalPending, Stage.Training1), f.Phase);
+            var calibrating = AtArmed();
+            Go(calibrating, FlowEvent.CalibrationStarted);
+            Assert.False(calibrating.Fire(FlowEvent.NextStage).Accepted);
         }
 
         // §2-14 (fixed with the Restart-Condition work): a pause must not outlive the recording it belongs to,
