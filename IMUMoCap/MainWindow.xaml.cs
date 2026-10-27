@@ -707,9 +707,30 @@ namespace IMUMoCap
 
         // Force-finalizes baseline (insufficient steps → HandleBaselineCompleted reports the error) if
         // BaselineMaxDuration elapses before the step thresholds are met.
+        // Tracks how much of BaselineMaxDuration is left so the timeout stops counting while the operator has paused
+        // (data packets are dropped during a pause, so the participant can't accumulate steps then — flow-review §2-19).
+        private readonly Protocol.PausableCountdown _baselineCountdown = new();
+
+        private void PauseBaselineTimer()
+        {
+            if (_baselineTimer is not { IsEnabled: true } timer) return;
+            timer.Stop();
+            _baselineCountdown.Pause();
+        }
+
+        private void ResumeBaselineTimer()
+        {
+            if (_baselineTimer == null || !_baselineCountdown.IsPaused) return;
+            _baselineCountdown.Resume();
+            _baselineTimer.Interval = _baselineCountdown.Remaining > TimeSpan.Zero
+                ? _baselineCountdown.Remaining : TimeSpan.FromMilliseconds(1);
+            _baselineTimer.Start();
+        }
+
         private void StartBaselineTimeoutTimer()
         {
             _baselineTimer?.Stop();
+            _baselineCountdown.Start(BaselineMaxDuration);
             _baselineTimer = new DispatcherTimer { Interval = BaselineMaxDuration };
             _baselineTimer.Tick += (_, _) =>
             {
@@ -1089,7 +1110,7 @@ namespace IMUMoCap
 
         // ── 新增按钮处理器 ────────────────────────────────────────────────────
 
-        // "Start Calibration" while a condition is recording means: something went wrong, start this condition over
+        // "Restart Condition" (formerly "Start Calibration"): something went wrong, start this condition over
         // (flow-review Q3 / §7.8). The data so far is archived, never deleted, and the operator is asked first.
         private void RestartCondition()
         {
@@ -1107,7 +1128,7 @@ namespace IMUMoCap
             string? archived = _recorder.ArchiveCurrentFiles();
             log($"Previous data archived → {archived}");
 
-            // Clear the leftovers Start Calibration always cleared.
+            // Clear the leftovers the old Start Calibration button always cleared.
             _timelineBuffer.Clear();
             _imuSamples.Clear();
             _imuFrameCollector.Reset();
@@ -1125,31 +1146,7 @@ namespace IMUMoCap
         private void BtnStartCal_Click(object sender, RoutedEventArgs e)
         {
             if (_recorder.IsRecording) { RestartCondition(); return; }
-
-            _baselineTimer?.Stop();
-            _baselineTimer = null;
-            _pipeline.Reset();
-            _timelineBuffer.Clear();
-            _imuSamples.Clear();
-            _imuFrameCollector.Reset();
-            _content.LeftFpaTarget = "";
-            _content.RightFpaTarget = "";
-            _content.LeftFpaNote = "";
-            _content.RightFpaNote = "";
-            _content.LeftFpaBackground = MainPageVM.DefaultCardBg;
-            _content.RightFpaBackground = MainPageVM.DefaultCardBg;
-            _sessionState = TestState.Launching;
-
-            if (_pipeline.TriggerCalibration())
-            {
-                log("Calibration reset and started — stand still.");
-            }
-            else
-            {
-                _content.StatusLabel = "Reset. Click Start Condition first, then Start Calibration.";
-                BroadcastArState("waiting");
-                log("Calibration reset — not started (click Start Condition first).");
-            }
+            log("Restart Condition: no condition is recording — use Start Condition.");
         }
 
         private void BtnSaveDiagnostics_Click(object sender, RoutedEventArgs e)
@@ -1829,6 +1826,7 @@ namespace IMUMoCap
                 _content.IsPaused = true;
                 _shadow.Fire(Protocol.FlowEvent.Pause);
                 _stageStopwatch.Stop();
+                PauseBaselineTimer();
                 _recorder.BeginPause(_currentStage);
                 BtnPauseResume.Content = "Resume";
                 BroadcastArState("paused"); // operator emergency pause → AR shows its paused display
@@ -1865,6 +1863,7 @@ namespace IMUMoCap
                 var (resumeState, resumeReason, resumeRestSec, resumeBlock) = _arStateBeforePause;
                 BroadcastArState(resumeState, resumeReason, resumeRestSec, resumeBlock);
 
+                ResumeBaselineTimer();
                 _content.IsPaused = false;
                 BtnPauseResume.Content = "Pause";
             }
