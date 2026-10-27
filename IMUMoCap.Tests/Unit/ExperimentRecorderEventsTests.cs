@@ -130,6 +130,43 @@ namespace IMUMoCap.Tests.Unit
             Assert.Equal("NASA-TLX_Admin1", markers[1].Detail);   // unchanged format for on-time markers
         }
 
+        // Redo restarts the stage: ActiveSeconds covers the last attempt only, and a pause that led to the Redo
+        // (it ended before the restart) must not be subtracted from it.
+        [Fact]
+        public void RestartStageTiming_MakesActiveSecondsCoverOnlyTheLastAttempt()
+        {
+            Start();
+            _recorder.BeginStage("Baseline");
+            _recorder.BeginPause("Baseline");
+            System.Threading.Thread.Sleep(150);
+            _recorder.EndPause("Redo", "slipped");
+
+            _recorder.RestartStageTiming("Baseline");
+            System.Threading.Thread.Sleep(30);
+            _recorder.EndStage("Baseline");
+
+            var t = JsonDocument.Parse(File.ReadAllText(_recorder.CurrentMetaFilePath!)).RootElement
+                .GetProperty("StageTimings").GetProperty("Baseline");
+            double active = t.GetProperty("ActiveSeconds").GetDouble();
+            Assert.InRange(active, 0.0, 0.14); // not 0.18 (whole stage) and not negative (pause subtracted twice)
+        }
+
+        [Fact]
+        public void EndStage_StillSubtractsPausesInsideTheStage()
+        {
+            Start();
+            _recorder.BeginStage("Training1");
+            _recorder.BeginPause("Training1");
+            System.Threading.Thread.Sleep(150);
+            _recorder.EndPause("Continue", "x");
+            System.Threading.Thread.Sleep(30);
+            _recorder.EndStage("Training1");
+
+            var t = JsonDocument.Parse(File.ReadAllText(_recorder.CurrentMetaFilePath!)).RootElement
+                .GetProperty("StageTimings").GetProperty("Training1");
+            Assert.InRange(t.GetProperty("ActiveSeconds").GetDouble(), 0.0, 0.14);
+        }
+
         [Fact]
         public void RecordEvent_IsNoOp_WhenNotRecording()
         {

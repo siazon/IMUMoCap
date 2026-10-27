@@ -1597,8 +1597,11 @@ namespace IMUMoCap
             _sessionState = TestState.Step;
             if (!isRedo)
                 _recorder.BeginStage(_currentStage);
-            else // keep the stage's original start time (pauses are subtracted from it); log the new attempt instead
+            else // the timing restarts with the new attempt (ActiveSeconds = last attempt only); earlier attempts stay in the events
+            {
+                _recorder.RestartStageTiming(stage);
                 _recorder.RecordEvent("StageStart", $"redo attempt={_flow.AttemptOf(stage)}", stage);
+            }
             _recorder.FlushMeta();
             _stageStopwatch.Restart();
             _content.CurrentStageLabel = _currentStage;

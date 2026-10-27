@@ -259,7 +259,17 @@ namespace IMUMoCap.Methods
             RecordEvent("StageStart", "", stage);
         }
 
-        /// <summary>结算 stage 的活跃时长：墙钟时长减去该阶段内已结束的操作员暂停时长。</summary>
+        /// <summary>
+        /// Redo 重新开始同一阶段:StageTimings 的起点重置为现在,ActiveSeconds 只反映最后一次尝试
+        /// (此前尝试的起止仍在 StageStart/PauseStart/Redo 等事件里)。不产生事件,由调用方记 StageStart。
+        /// </summary>
+        public void RestartStageTiming(string stage)
+        {
+            if (_meta == null) return;
+            _meta.StageTimings[stage] = new StageTiming { StartTime = DateTime.Now };
+        }
+
+        /// <summary>结算 stage 的活跃时长：墙钟时长减去该阶段内已结束、且发生在本次计时起点之后的操作员暂停时长。</summary>
         public void EndStage(string stage)
         {
             if (_meta == null) return;
@@ -267,7 +277,7 @@ namespace IMUMoCap.Methods
             timing.EndTime = DateTime.Now;
             double pausedSeconds = 0;
             foreach (var p in _meta.PauseEvents)
-                if (p.Stage == stage && p.EndTime.HasValue)
+                if (p.Stage == stage && p.EndTime.HasValue && p.StartTime >= timing.StartTime)
                     pausedSeconds += (p.EndTime.Value - p.StartTime).TotalSeconds;
             timing.ActiveSeconds = (timing.EndTime.Value - timing.StartTime).TotalSeconds - pausedSeconds;
             RecordEvent("StageEnd", FormattableString.Invariant($"activeSeconds={timing.ActiveSeconds:F1}"), stage);
