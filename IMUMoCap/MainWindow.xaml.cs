@@ -748,6 +748,8 @@ namespace IMUMoCap
         // recalibration when a stage transition is pending, otherwise to the session's first calibration.
         private void HandleReadyForCalibration(string source)
         {
+            // While paused no packets reach the pipeline, so a calibration started now would just stall (T10).
+            if (_content.IsPaused) { log($"{source} signaled ready while paused — ignored; resume first."); return; }
             if (_pendingStageEntry != null)
             {
                 if (_pipeline.TriggerRecalibration())

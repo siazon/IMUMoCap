@@ -318,8 +318,9 @@ namespace IMUMoCap.Protocol
 
                 case FlowEventKind.NextStage:
                     // 旧 AdvanceStage:无条件推进到 CurrentStage 的下一个阶段,不经过 Rest(§2-5)、
-                    // 不检查 Paused(§2-2)、不检查 BaselineProfile(§2-6);只有"已在等待重校准"和"已是最后阶段"时才不动。
+                    // 不检查 BaselineProfile(§2-6);"已在等待重校准"和"已是最后阶段"时不动。暂停中拒绝(T10,§2-2)。
                     if (!IsRecording) return Ignore("no active condition recording");
+                    if (Paused) return Ignore("paused — resume first");
                     if (Phase.Kind is PhaseKind.RecalPending or PhaseKind.Recalibrating)
                         return Ignore("already awaiting recalibration for the next stage");
                     var next = Next(CurrentStageValue!.Value);

@@ -858,16 +858,20 @@ namespace IMUMoCap.Tests.Unit
         //  对应修复任务落地时翻转断言。
         // ═════════════════════════════════════════════════════════════════════
 
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_2_NextStage_IsAccepted_WhilePaused()
+        // §2-2 (fixed in T10): Next Stage while paused used to advance the stage and leave the pause dangling.
+        [Fact]
+        public void NextStage_IsRejected_WhilePaused_AndWorksAfterResume()
         {
             var f = AtTraining1();
             Go(f, FlowEvent.Pause);
 
             var r = f.Fire(FlowEvent.NextStage);
 
-            Assert.True(r.Accepted);                 // T10: should be rejected while paused
+            Assert.False(r.Accepted);
             Assert.True(f.Paused);
+            Assert.Equal(P(PhaseKind.Training, Stage.Training1), f.Phase);
+
+            Go(f, FlowEvent.ResumeContinue, FlowEvent.NextStage);
             Assert.Equal(P(PhaseKind.RecalPending, Stage.Training2), f.Phase);
         }
 
