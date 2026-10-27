@@ -33,6 +33,7 @@
 11. **Parameters 未入 Meta**:实验中改参数实时生效(`SyncParamToPipeline`),无记录。
 12. **漏点的 marker 事后无法补点,而 End 弹窗却建议"回去点 Mark"**:`AdvanceStage` 在离开 Rest 时把 MC1/MC3/NASA-TLX#1/IMI-PC 的 `CanMark` 全部置 false(`:1436-1439`),只有 Rest 窗口内可点。窗口过了,Flow 变橙(due)但标签不可点,`BtnEndCondition_Click` 弹窗里的"go back and click the matching Mark button first"(`:1518`)实际做不到。NASA-TLX#2 的窗口是 `CompleteRetention` 之后至 End,不受此影响。
 13. **`GetScreeningResult` 有隐式回退**:`ExperimentRecorder.cs:71` 在被试目录下只要存在任意 `*_Session.csv` 即返回 "Pass"。归档 Abort 的旧文件时,命名必须避开这个通配符(见 §7.8)。
+14. **暂停状态在 End Recording / Start Condition 之后不会清除**(T1 建模时发现):`IsPaused` 在 `EndFlow` 和 `BtnStartCondition_Click` 里都没有重置,而 `BtnPauseResume_Click` 在没有录制时直接返回,所以暂停中点 End Recording 后,Pause 按钮仍显示 "Resume" 且无法恢复;下一个 condition 开始后 `WriteRow` 受 `!IsPaused` 门控,**整个新 session 的数据行都不会写入**,直到操作员点 Resume。(未复现,依据读代码;`_openPause` 同样不会被重置。)
 
 ## 3. 待决定(截至本文,尚未回答)
 
@@ -372,4 +373,4 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | T4 | 完成(2026-10-27) | `c28750f0` | 2 个新单元测试(Meta 顶层字段集合固定为契约);`OrderGroup` 在 `.py/.json` 中无引用,仓库内分析脚本不受影响;仓库外的脚本无法检查。旧 Meta 文件里已有的 `OrderGroup` 字段不会被修改;`docs/*.md` 里的提及留给 T15 |
 | T5 | 完成(2026-10-27) | `git log --grep "(T5)"` | 纯界面门控,无法单元测试:录制中 Screening 按钮禁用(60ms 定时器按 `_recorder.IsRecording` 刷新)并在处理器里再拦一次;只验证了编译与现有测试。**未启动界面确认**,留给 T16 演练 |
 | T2 | 完成(2026-10-27) | `git log --grep "(T2)"` | 9 个新单元测试 + Meta 字段契约测试更新(新增 `Events`、`RunConfig`,旧字段不变)。已接入的事件:ConditionStart、StageStart/End、PauseStart/End、Redo、Marker、RecalPrompt、CalibrationStart/Done/Failed、End;Save Diagnostics 额外导出 `*_Events.csv`(诊断行为空时不导出)。**`MainWindow` 里的接线(PacketId 追踪、校准事件、End 事件、导出、`BuildRunConfig`)只验证了编译,未启动界面**,留给 T16 演练。`OperatorSkips` 字段推迟到 T11(目前没有任何代码会写它) |
-| T1 | 未开始 | — | 第 1 波剩余 |
+| T1 | 完成(2026-10-27) | `git log --grep "(T1)"` | 新增 `IMUMoCap/Protocol/ProtocolFlow.cs`(纯逻辑,**尚未接入 `MainWindow`**,接入在 T6)与 44 个单元测试(含 12 个 `[KnownIssue]`,固定 §2-1/2/4/5/6/12/14 的现状)。复刻的旧语义见类注释。**有意没有复刻**:(a) 在 Rest 中点 End 后旧代码 marker 窗口仍保持可点的怪异行为;(b) 旧代码在 StartCondition 时向 AR 广播 `armed`,而 `ArState` 对"暂停且正在录制"一律给 `paused`;(c) 未建模 Start Calibration、Screening、Measure、回放。这三处在 T6 影子模式里若出现不一致属预期,需逐条判定 |
