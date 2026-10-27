@@ -1,65 +1,38 @@
 // IMUMoCap/Protocol/ShadowMonitor.cs
 using System;
-using System.Collections.Generic;
-using IMUMoCap.Model;
 
 namespace IMUMoCap.Protocol
 {
-    /// <summary>MainWindow 里旧标志位在某一时刻的取值,供与 ProtocolFlow 比对。</summary>
-    public sealed record LegacySnapshot(
-        string CurrentStage,
-        bool InRest,
-        bool IsRetention,
-        bool RetentionComplete,
-        int RestBlockJustFinished,
-        string? PendingStageEntry,
-        bool IsPaused,
-        bool IsRecording,
-        IReadOnlyDictionary<string, bool> Marked,
-        IReadOnlyDictionary<string, bool> CanMark,
-        IReadOnlyDictionary<string, int> Attempts,
-        IReadOnlyList<(string Label, ChecklistStatus Status)> Checklist,
-        IReadOnlyList<string> MissingMarkers,
-        string ArState);
-
     /// <summary>
-    /// T6 影子模式:ProtocolFlow 与旧标志位并行运行,只比对、不生效。**T8 之后旧标志位已删除,MainWindow 只用 Fire(转发并记录被拒绝的事件)
-    /// 和 ReportSummary;Observe/LegacySnapshot/Differences 已无调用方,待后续清理(T8b)。**
-    /// 旧代码每走一步,MainWindow 就把对应事件喂给 <see cref="Fire"/>;每个定时器 tick 再用 <see cref="Observe"/>
-    /// 交一份旧状态快照。两边不一致且持续数个 tick 才写一条 SHADOW MISMATCH(避免瞬时抖动刷屏);
-    /// 被 ProtocolFlow 忽略的事件也记一条 SHADOW ignored,便于人工判断是否合理。
-    /// 所有方法都不会向调用方抛异常——影子逻辑绝不能影响正在进行的实验。
+    /// 流程事件的唯一入口:MainWindow 的每个状态转换都经过 <see cref="Fire"/>,由它转发给 ProtocolFlow(流程状态的唯一来源),
+    /// 并把被状态机拒绝的事件记成一条 "SHADOW ignored";condition 结束时 <see cref="ReportSummary"/> 输出一行汇总,
+    /// 使"日志里没有 ignored"可以被证明,而不是监视器没在跑。
+    ///
+    /// 名字是历史遗留:它起初(T6)是把 ProtocolFlow 与旧标志位并行运行的影子比对;T8 删除旧标志位、T8b 删除比对代码后,
+    /// 只剩转发与记录。日志前缀 SHADOW 与 Data/shadow_flow.log 的文件名保持不变,以免改变操作员的习惯。
+    /// 所有方法都不会向调用方抛异常——记录逻辑绝不能影响正在进行的实验。
     /// </summary>
     public sealed class ShadowMonitor
     {
-        private static readonly string[] MarkerNames =
-            { FlowMarkers.Mc1, FlowMarkers.Mc3, FlowMarkers.NasaTlx1, FlowMarkers.ImiPc, FlowMarkers.NasaTlx2 };
-
         private readonly ProtocolFlow _flow;
         private readonly Action<string> _sink;
-        private readonly int _debounceTicks;
 
         private string _lastEvent = "(none)";
-        private string _key = "";        // 当前这一串连续相同的差异
-        private int _count;              // 该差异已连续出现的 tick 数
-        private string _loggedKey = "";  // 最近一次已写入日志的差异("" = 当前处于一致状态)
+        // 每个 condition 一份的计数(StartCondition 时清零)。
+        private int _eventsFed, _eventsIgnored;
 
-        // 每个 condition 一份的计数(StartCondition 时清零),用于在结束时证明\"没有输出\"是因为真的一致,而不是监视器没在跑。
-        private int _eventsFed, _eventsIgnored, _ticksObserved, _mismatchReports;
-
-        public ShadowMonitor(ProtocolFlow flow, Action<string> sink, int debounceTicks = 3)
+        public ShadowMonitor(ProtocolFlow flow, Action<string> sink)
         {
             _flow = flow;
             _sink = sink;
-            _debounceTicks = Math.Max(1, debounceTicks);
         }
 
-        /// <summary>把旧代码刚做的一步喂给 ProtocolFlow。被忽略的事件记一条日志。</summary>
+        /// <summary>把一个流程事件交给状态机;被拒绝的事件记一条日志。返回状态机的裁决,调用方据此决定要不要执行副作用。</summary>
         public FireResult Fire(FlowEvent e)
         {
             _lastEvent = Describe(e);
             if (e.Kind == FlowEventKind.StartCondition)
-                _eventsFed = _eventsIgnored = _ticksObserved = _mismatchReports = 0;
+                _eventsFed = _eventsIgnored = 0;
             _eventsFed++;
             FireResult result;
             try
@@ -79,86 +52,9 @@ namespace IMUMoCap.Protocol
             return result;
         }
 
-        /// <summary>写一行汇总(事件数、被忽略数、观察的 tick 数、不一致报告数)。在 condition 结束时调用。</summary>
+        /// <summary>写一行汇总(事件数、被拒绝数)。在 condition 结束时调用。</summary>
         public void ReportSummary() =>
-            Say($"SHADOW summary: events={_eventsFed} ignored={_eventsIgnored} ticks={_ticksObserved} mismatches={_mismatchReports}");
-
-        /// <summary>每个定时器 tick 调用一次。</summary>
-        public void Observe(LegacySnapshot legacy)
-        {
-            try
-            {
-                _ticksObserved++;
-                string key = string.Join("; ", Differences(_flow, legacy));
-                if (key == _key) _count = Math.Min(_count + 1, int.MaxValue - 1);
-                else { _key = key; _count = 1; }
-                if (_count < _debounceTicks) return;
-
-                if (key.Length == 0)
-                {
-                    if (_loggedKey.Length > 0)
-                    {
-                        _loggedKey = "";
-                        Say("SHADOW OK — legacy and flow agree again");
-                    }
-                    return;
-                }
-                if (key != _loggedKey)
-                {
-                    _loggedKey = key;
-                    _mismatchReports++;
-                    Say($"SHADOW MISMATCH (last event: {_lastEvent}; flow phase: {DescribePhase(_flow.Phase)}): {key}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Say($"SHADOW error while observing: {ex.Message}");
-            }
-        }
-
-        /// <summary>旧状态与 ProtocolFlow 的逐项差异;空表示完全一致。</summary>
-        public static IReadOnlyList<string> Differences(ProtocolFlow f, LegacySnapshot l)
-        {
-            var d = new List<string>();
-            void Cmp<T>(string name, T legacy, T flow)
-            {
-                if (!EqualityComparer<T>.Default.Equals(legacy, flow))
-                    d.Add($"{name} legacy={legacy} flow={flow}");
-            }
-
-            Cmp("CurrentStage", l.CurrentStage, f.CurrentStage);
-            Cmp("InRest", l.InRest, f.InRest);
-            Cmp("IsRetention", l.IsRetention, f.IsRetention);
-            Cmp("RetentionComplete", l.RetentionComplete, f.RetentionComplete);
-            Cmp("RestBlockJustFinished", l.RestBlockJustFinished, f.RestBlockJustFinished);
-
-            string? flowPending = f.Phase.Kind is PhaseKind.RecalPending or PhaseKind.Recalibrating
-                ? f.Phase.Stage.ToString() : null;
-            Cmp("Pending", l.PendingStageEntry ?? "-", flowPending ?? "-");
-
-            Cmp("Paused", l.IsPaused, f.Paused);
-            Cmp("Recording", l.IsRecording, f.IsRecording);
-
-            foreach (var m in MarkerNames)
-            {
-                Cmp($"Marked[{m}]", l.Marked.GetValueOrDefault(m), f.IsMarked(m));
-                Cmp($"CanMark[{m}]", l.CanMark.GetValueOrDefault(m), f.CanMark(m));
-            }
-            foreach (var s in ProtocolFlow.StageNames)
-                Cmp($"Attempt[{s}]", l.Attempts.GetValueOrDefault(s, 1), f.AttemptOf(s));
-
-            foreach (var (label, status) in f.Checklist())
-            {
-                string legacyStatus = "(missing)";
-                foreach (var row in l.Checklist)
-                    if (row.Label == label) { legacyStatus = row.Status.ToString(); break; }
-                Cmp($"Checklist[{label}]", legacyStatus, status.ToString());
-            }
-
-            Cmp("MissingMarkers", string.Join("|", l.MissingMarkers), string.Join("|", f.MissingExpectedMarkers()));
-            Cmp("ArState", l.ArState, f.ArState);
-            return d;
-        }
+            Say($"SHADOW summary: events={_eventsFed} ignored={_eventsIgnored}");
 
         private void Say(string line)
         {
