@@ -194,16 +194,11 @@ namespace IMUMoCap.Protocol
         };
 
         /// <summary>
-        /// 旧行为(§2-4):Resume 后发给 AR 的 state 只由 CurrentStage 决定(MainWindow.ArStateForStage),
-        /// 所以在 Rest / 等待重校准期间恢复会发出 "training"。
+        /// Resume 后应发给 AR 的 state:暂停前 AR 所处的状态,即不含暂停叠加的 <see cref="ArState"/>。
+        /// (§2-4:旧实现按 CurrentStage 重新推一个 state,在等待 Ready / Rest 期间会发出 baseline/training,
+        /// 导致眼镜上没有 Ready 按钮、PC 的 Ready 按钮也被禁用,流程死锁。2026-10-27 已修,MainWindow 改为重发暂停前的 state。)
         /// </summary>
-        public string ArStateAfterResume => CurrentStage switch
-        {
-            "Baseline" => "baseline",
-            "Training1" or "Training2" or "Training3" => "training",
-            "Retention" => "retention",
-            _ => "armed",
-        };
+        public string ArStateAfterResume => ArStateIgnoringPause;
 
         // ── 事件入口 ──────────────────────────────────────────────────────────
 

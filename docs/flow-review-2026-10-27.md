@@ -23,7 +23,7 @@
 1. **Redo 不重置步数**:Redo 分支(`:1662-1671`)只改 attempt、记录 marker、重启秒表;`SetTrainingBlock` 只在 `EnterStage:1486` 调用,Retention 的 `_retentionStepsL/R` 也只在 `EnterStage` 清零。作废尝试的有效步数可能计入 100 步目标。
 2. **暂停中点 Next Stage**:`BtnNextStage_Click` 不检查 `IsPaused`;`WriteRow` 受 `!IsPaused` 门控,新阶段进入后数据行可能不写入。
 3. **暂停期间 block 完成**:`OnTrainingBlockComplete`(`:289`)不检查 `IsPaused`,pipeline 步数计数也不受暂停影响。 **更正(2026-10-27 实机数据)**:该前提不成立——`OnXsensData`(`MainWindow.xaml.cs:682`)在暂停时直接丢弃数据包,pipeline 的步数、fpa、CSV 行都会停止前进;实机数据里暂停窗口对应 257 个包的缺口(约 6.4 秒 @40 Hz),与暂停时长吻合。因此暂停期间几乎不会发生 block 完成,仅可能有暂停前已排入 Dispatcher 队列的 `OnTrainingBlockComplete`。T10 的"挂起并重放"只作极小的兜底。
-4. **Rest/重校准期间 Pause → Resume(Continue)**:Resume 调用 `ArStateForStage(_currentStage)`(`:1681`),Rest 时 `_currentStage` 仍是 `Training1`,眼镜被发成 `training`,PC 实际在 Rest。Rest 期间选 Redo 的语义也不成立。
+4. **Rest/重校准期间 Pause → Resume(Continue)**:Resume 调用 `ArStateForStage(_currentStage)`(`:1681`),Rest 时 `_currentStage` 仍是 `Training1`,眼镜被发成 `training`,PC 实际在 Rest。Rest 期间选 Redo 的语义也不成立。 **实机复现并已修(2026-10-27)**:Baseline 结束后、还没点 Ready 开始 Block1 时点 Pause→Continue,AR 被发成 `baseline`,眼镜上没有 Ready 按钮,PC 的 Ready (AR) 按钮也因 `_lastState != "armed"` 被禁用,Next Stage 又被忽略(已在等待重校准),继续走路没用(pipeline 处于 `AwaitingRecalibration`)——流程死锁,只能重来。事件日志(`Diagnostics_20261027_143232_Events.csv`)与影子日志(`SHADOW MISMATCH … ArState legacy=baseline flow=armed`)都记录了它。修复:`BroadcastArState` 记住最近一次非 `paused` 的 state,Resume 时原样重发(含 reason、休息时长、block),不再按 `_currentStage` 重新推;同类问题(Armed、校准中、Rest、Failed 期间暂停)一并解决。**Rest/等待校准期间选 Redo 仍被接受(§2-1)的问题未改**,留给 T9/T10。
 5. **Next Stage 绕过协议窗口**:直接调 `AdvanceStage`,不经 `EnterRest`;Training1/3 点它会跳过 Rest 与 marker 窗口,且 `MissingExpectedMarkers()` 不会提醒。
 6. **Baseline 阶段点 Next Stage**:未检查 `BaselineProfile`,可能在无 target 的情况下进入 Training1,`StartTraining()`/`SaveBaseline` 被跳过,`_baselineTimer` 不停。
 7. **Start Calibration 名不副实**:只做 `_pipeline.Reset()`(会清掉 BaselineProfile),不重置阶段/recorder/marker 标志/AR 状态,且无确认弹窗、不检查是否录制中。
@@ -378,6 +378,7 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | T2.1 | 完成(2026-10-27) | `git log --grep "(T2.1)"` | `LatestPacketId` 改由原始包路径(`OnXsensData`,暂停门控之后)更新,修复 §2-16;`RunConfig.Constants` 新增 `UpdateRateHz`、`AssumedSampleRateHz`;Start Condition 时若实际速率 ≠ 100 Hz 打 WARNING。均在 `MainWindow` 内,无法单测,只验证了编译与现有测试(61 通过),留给 T16 演练。**不改变任何采集行为** |
 | T1 | 完成(2026-10-27) | `git log --grep "(T1)"` | 新增 `IMUMoCap/Protocol/ProtocolFlow.cs`(纯逻辑,**尚未接入 `MainWindow`**,接入在 T6)与 44 个单元测试(含 12 个 `[KnownIssue]`,固定 §2-1/2/4/5/6/12/14 的现状)。复刻的旧语义见类注释。**有意没有复刻**:(a) 在 Rest 中点 End 后旧代码 marker 窗口仍保持可点的怪异行为;(b) 旧代码在 StartCondition 时向 AR 广播 `armed`,而 `ArState` 对"暂停且正在录制"一律给 `paused`;(c) 未建模 Start Calibration、Screening、Measure、回放。这三处在 T6 影子模式里若出现不一致属预期,需逐条判定 |
 | T6 | 代码完成,**待真人演练**(2026-10-27) | `git log --grep "(T6)"` | 新增 `IMUMoCap/Protocol/ShadowMonitor.cs`(逐项比对 + 去抖日志,13 个单元测试)并接入 `MainWindow`:14 个事件点喂给 `ProtocolFlow`,每 60ms tick 交一份旧状态快照;不一致连续 3 个 tick 才写 `SHADOW MISMATCH`,被 flow 忽略的事件写 `SHADOW ignored`;日志同时写入操作日志和 `Data/shadow_flow.log`(位于 exe 旁)。所有影子调用均吞掉异常,不影响实验。**验收(零 MISMATCH)尚未完成**,见 §8.7 |
+| T10a | 完成(2026-10-27,T10 的一部分,因实机死锁提前做) | `git log --grep "(T10a)"` | 修复 §2-4 的 AR state 部分:Resume 重发暂停前的 state。`ProtocolFlow.ArStateAfterResume` 同步改为不含暂停叠加的 `ArState`,2 个 `[KnownIssue]` 测试翻转为正式测试并新增 1 个覆盖 10 个阶段的测试(现 `[KnownIssue]` 剩 10 个)。MainWindow 里的广播改动无法单测,验证方式:编译 + 下一次演练中影子日志不应再出现该 ArState 差异。T10 其余部分(Paused 时拒绝 Next Stage/Ready、Rest 期间禁用 Redo 等)仍未做 |
 
 ### 8.7 T6 真人演练清单(影子模式验收)
 
@@ -401,7 +402,7 @@ Parameters 里把 **Target Steps / Foot** 设为 5,**关窗口不要点 Save**�
 - `SHADOW ignored: X in <Phase>`:旧代码做了某步而 ProtocolFlow 认为不合法,**每条都值得看**(可能是转换表漏了,也可能旧代码本身有缺陷)。
 - `SHADOW MISMATCH`:两边状态不一致,逐项列出 `legacy=… flow=…`。
 - **预期会出现、不算失败的差异**:
-  - 在 Rest 期间 Pause→Resume 后,`ArState legacy=training flow=rest`(§2-4,旧缺陷,T10 修)。
+  - ~~在 Rest 期间 Pause→Resume 后 `ArState legacy=training flow=rest`~~ 已于 2026-10-27 修复(见 §2-4),修复后若再出现该差异属于异常,请报告。
   - Start Condition / End Recording 之后与暂停有关的差异(§2-14)。
   - 旧代码在 StartCondition 时向 AR 广播 `armed`,而 flow 对"暂停且正在录制"给 `paused`。
 - 其余任何差异都意味着转换表与旧行为不符,需要在进入 T7 之前修正。

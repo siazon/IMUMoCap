@@ -108,6 +108,11 @@ namespace IMUMoCap
         private int _lastBlock = 0;
         private int _lastRestDurationSec = 0;
         private string _lastReason = "";
+        // What the AR client was last shown before an operator pause (the latest non-"paused" broadcast). Resume
+        // re-sends exactly this: recomputing a state from _currentStage is wrong while waiting for Ready or resting
+        // (_currentStage is still the previous stage then), and it left the AR with no Ready button and the
+        // operator's Ready (AR) button disabled — a deadlock.
+        private (string State, string Reason, int RestSec, int Block) _arStateBeforePause = ("waiting", "", 0, 0);
 
         // IF render-mode toggle (ParamsDialog checkboxes bound to MainPageVM.IsIfLiveMode /
         // IsIfLastResultMode, mutually exclusive): tells the AR client which rendering mode to
@@ -748,6 +753,7 @@ namespace IMUMoCap
             _lastBlock = block;
             _lastRestDurationSec = restDurationSec;
             _lastReason = reason;
+            if (state != "paused") _arStateBeforePause = (state, reason, restDurationSec, block);
             _ = _wsServer.BroadcastJsonAsync(new
             {
                 type = "state",
@@ -1760,15 +1766,6 @@ namespace IMUMoCap
             log($"Recording closed ({reason}): {_content.CurrentSessionFileName}");
         }
 
-        // Maps the current stage to the AR state string, used to restore the AR display after a resume.
-        private static string ArStateForStage(string stage) => stage switch
-        {
-            "Baseline" => "baseline",
-            "Training1" or "Training2" or "Training3" => "training",
-            "Retention" => "retention",
-            _ => "armed",
-        };
-
         private void BtnPauseResume_Click(object sender, RoutedEventArgs e)
         {
             if (!_recorder.IsRecording) { log("No active recording to pause."); return; }
@@ -1808,9 +1805,11 @@ namespace IMUMoCap
                     log($"Resumed, continuing {_currentStage}: {dlg.Reason}");
                 }
 
-                // Tell AR the participant is resuming: it shows a "keep walking" text prompt for the
-                // current stage and only switches back to the graphic group when the next fpa arrives.
-                BroadcastArState(ArStateForStage(_currentStage));
+                // Put the AR back exactly where it was before the pause (state + reason + rest duration + block).
+                // For a training/baseline/retention state it shows the "keep walking" text prompt and only switches
+                // back to the graphic group when the next fpa arrives; for "armed" it brings the Ready button back.
+                var (resumeState, resumeReason, resumeRestSec, resumeBlock) = _arStateBeforePause;
+                BroadcastArState(resumeState, resumeReason, resumeRestSec, resumeBlock);
 
                 _content.IsPaused = false;
                 BtnPauseResume.Content = "Pause";

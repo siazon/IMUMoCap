@@ -607,22 +607,57 @@ namespace IMUMoCap.Tests.Unit
             Assert.Equal(P(PhaseKind.RecalPending, Stage.Training2), f.Phase);
         }
 
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_4_ArStateAfterResume_IsTraining_EvenInRest()
+        // §2-4 (fixed 2026-10-27 after it deadlocked a real run): resuming from a pause must put the AR client back
+        // in the state it was in before the pause, not a state recomputed from CurrentStage.
+        [Fact]
+        public void ArStateAfterResume_InRest_IsRest()
         {
             var f = AtRest1();
             Go(f, FlowEvent.Pause);
 
-            Assert.Equal("training", f.ArStateAfterResume); // T10: should be "rest"
+            Assert.Equal("rest", f.ArStateAfterResume);
         }
 
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_4_ArStateAfterResume_IsTraining_EvenWhileWaitingForRecalibration()
+        [Fact]
+        public void ArStateAfterResume_WhileWaitingForRecalibration_IsArmed_SoTheReadyButtonComesBack()
         {
             var f = AtRest1();
             Go(f, FlowEvent.RestElapsed, FlowEvent.Pause);
 
-            Assert.Equal("training", f.ArStateAfterResume); // T10: should be "armed"
+            Assert.Equal("armed", f.ArStateAfterResume);
+        }
+
+        [Fact]
+        public void ArStateAfterResume_AlwaysEqualsTheStateBeforeThePause()
+        {
+            var phases = new Dictionary<string, ProtocolFlow>
+            {
+                ["Armed"] = AtArmed(),
+                ["Baseline"] = AtBaseline(),
+                ["Training1"] = AtTraining1(),
+                ["Rest1"] = AtRest1(),
+                ["Training3"] = AtTraining3(),
+                ["Rest3"] = AtRest3(),
+                ["Retention"] = AtRetention(),
+                ["RetentionDone"] = AtRetentionDone(),
+            };
+            // plus phases that are mid-recalibration or waiting for Ready
+            var pending = AtRest1(); Go(pending, FlowEvent.RestElapsed);
+            phases["RecalPending"] = pending;
+            var recal = AtRest1(); Go(recal, FlowEvent.RestElapsed, FlowEvent.CalibrationStarted);
+            phases["Recalibrating"] = recal;
+            var failed = AtBaseline(); Go(failed, FlowEvent.BaselineCompleted(false));
+            phases["Failed"] = failed;
+
+            foreach (var (name, f) in phases)
+            {
+                string before = f.ArState;
+                Go(f, FlowEvent.Pause);
+                Assert.Equal(before, f.ArStateAfterResume);
+                Assert.Equal("paused", f.ArState);
+                Go(f, FlowEvent.ResumeContinue);
+                Assert.Equal(before, f.ArState);
+            }
         }
 
         [Fact, Trait("Category", "KnownIssue")]
