@@ -490,23 +490,8 @@ namespace IMUMoCap
                         _ = _wsServer?.SendJsonAsync(clientId, new { type = "pong", ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
                         break;
 
-                    case "Start":
-                        Dispatcher.Invoke(() =>
-                        {
-                            log("WS: start");
-                        });
-                        break;
-
                     case "ReadyForCalibration":
                         Dispatcher.Invoke(() => HandleReadyForCalibration("WS: participant"));
-                        break;
-
-                    case "stop":
-                    case "Stop":
-                        Dispatcher.Invoke(() =>
-                        {
-                            log("WS: stop");
-                        });
                         break;
 
                     default:

@@ -182,7 +182,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 
   由 `MainWindow` 的 `ConditionStages = {Baseline, Training1, Training2, Training3, Retention}`/`AdvanceStage()`/`EndTrainingBlock()`/`EnterRest()`/`CompleteRetention()` 管理。要点:
   - **Block2→Block3 之间没有 Rest/MC 窗口**,是刻意设计(`EndTrainingBlock()` 对 `_currentStage=="Training2"` 直接 `AdvanceStage()`);Rest+MC 只出现在 Block1 后和 Block3 后。
-  - 两个 Rest 窗口复用同一套"操作员/AR 端手动确认 + 最短时长下限"机制(`_inRest`/`HandleContinueTraining`/`BtnContinueRest`),**不会自动跳过**——即使时间到了也要等 AR 客户端发 `continueTraining` 或操作员点 Continue 按钮。Block1 后窗口 120s 起(`RestDurationSec`),Block3 后窗口(含 NASA-TLX Admin1 + IMI-PC,纸面/RA 主持)300s 起(`PostBlock3RestDurationSec`,协议只规定了问卷本身约 5 分钟,窗口整体下限是估算值,需研究者确认)。
+  - 两个 Rest 窗口(`_inRest`)由 PC 自己的 stopwatch 计时,**到点自动推进**(再进入赛前重标定门控),不再需要 AR 端 `continueTraining` 或操作员 Continue 按钮(均已移除)。Block1 后窗口 120s(`RestDurationSec`),Block3 后窗口(含 NASA-TLX Admin1 + IMI-PC,纸面/RA 主持)300s(`PostBlock3RestDurationSec`,窗口整体下限是估算值,需研究者确认)。Rest 期间的 MC / 问卷由操作员点击 Flow 标签手动记录,窗口过后仍可补点(标 `late`)。
   - **Retention 完成后不会自动结束录制**:达到 100 步/脚或超时后 `CompleteRetention()` 只停止计步、启用"Mark NASA-TLX #2"按钮,真正关闭 session 文件仍需操作员手动点击既有的 "End Recording" 按钮。
   - **End Recording 前的非阻断完整性检查**(2026-09-08 新增,`MissingExpectedMarkers()`):只检查 3 个**需要操作员手动点击**的标记(`NASA-TLX_Admin1`/`IMI-PC`/`NASA-TLX_Admin2`;两个 `ManipulationCheck_*` 是 `EnterRest()` 自动写入的,不会漏),且只在流程**实际走到过**对应窗口时才视为"应有"——`_restBlockJustFinished==3` 才检查前两者,`_retentionComplete==true` 才检查第三者,避免在提前终止(退出/设备故障)场景里对根本不该存在的标记持续误报。缺失时弹出 Yes/No 确认框而非硬拦截,操作员可选择"仍要结束"覆盖。`_nasaTlx1Marked`/`_imiPcMarked`/`_nasaTlx2Marked` 三个"是否已点击"标志只在 `BtnStartCondition_Click`(开新 condition)时清零,暂停/恢复/Redo 均不影响(纸面量表是否做过是既成事实,不因数据重录而改变)。**`_restBlockJustFinished` 本身也必须在 `BtnStartCondition_Click` 清零到 0**(2026-09-08 补的一处遗漏修复)——否则同一次程序运行里连续跑第二个 condition(比如 EF 跑完接着跑 IF)时,这个字段会带着上一个 condition 结束时的值(如 3)进入新 condition,导致新 condition 明明还没走到 Block3 就被误判"该有 NASA-TLX1/IMI-PC 了",完整性检查和 Flow 面板都会被这个陈旧值污染。
   - **审计标记(纯留痕,不渲染问卷内容)**:`ManipulationCheck_AfterBlock1`/`ManipulationCheck_AfterBlock3` 在进入对应 Rest 窗口时自动记录;`NASA-TLX_Admin1`/`IMI-PC`/`NASA-TLX_Admin2` 由操作员点击对应的 3 个小按钮手动记录(RA 在纸面上实际主持这些量表,软件只留时间戳),写入 `ConditionMeta.StageMarkers`(见 §3.10)。
@@ -190,7 +190,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 ### 3.9 UI(`MainWindow.xaml` + `.xaml.cs`)
 
 - 顶部深蓝 header:标题 + 已连接 WS/AR 客户端列表(绿点)
-- 左侧面板:Session 卡片(Participant ID、Condition EF/IF、Order Group、Start/Pause/Resume/Continue-Rest/End 按钮)、左右 FPA 大数字卡(达标/未达标背景变色)
+- 左侧面板:Session 卡片(Participant ID、Condition EF/IF、Start Condition/Restart Condition/Pause/Resume/Next Stage/End 按钮(无 Order Group、无 Continue-Rest))、左右 FPA 大数字卡(达标/未达标背景变色)
 - **Flow 一览面板**(2026-09-08 新增,`FlowChecklist`/`ChecklistItem`,`Model/ChecklistItem.cs`):Session 卡片内的一行小圆点+标签清单,横向自动换行,10 项对应完整协议流程(Baseline/Training1/MC(Block1)/Training2/Training3/MC(Block3)/NASA-TLX#1/IMI-PC/Retention/NASA-TLX#2)。灰=未到、绿=完成、橙=窗口已到但审计标记还没点。**3 个手动审计标记(NASA-TLX#1/IMI-PC/NASA-TLX#2)对应的"Mark"按钮直接内嵌在各自的流程条目里**(2026-09-08 由独立的一排按钮改为内嵌,`ChecklistItem.MarkerStage`/`IsMarkable`/`CanMark` 驱动,`IsMarkable` 为 true 的行才渲染按钮、`CanMark` 控制是否可点),点哪个标记就在流程图上哪个位置点,不用再去别处找对应按钮;其余 7 行是纯状态展示,没有按钮。所有 3 个按钮共用一个处理器 `BtnMarkFlowItem_Click`(从被点击行的 `DataContext` 读出 `MarkerStage` 分发,而不是各自独立的 3 个 handler)。由 `MainWindow.RefreshChecklist()` 每次 60ms 定时器 tick 时整体重算状态圆点(不是在各处散落推送),纯读现有的 `_restBlockJustFinished`/`_retentionComplete`/`_nasaTlx*Marked`/`_pipeline.BaselineProfile` 等信号,保证不会和真实状态漂移;点击 Mark 按钮时额外立即调用一次 `RefreshChecklist()`,不用等 60ms。让操作员在点 "End Recording" 之前就能持续看到有没有漏项,而不是只在点击那一刻才通过前面提到的确认弹窗(`MissingExpectedMarkers()`)得知。
 - 状态栏:3 个 IMU 连接指示灯(Pelvis/Left/Right)+ 丢包计数
 - 自绘时间线(`DrawTimeline()`,`DrawingVisual`/`RenderTargetBitmap`,6 条 lane:PD valid / L stance / R stance / IsWalking / motion context / FPA gate reason)
@@ -249,7 +249,7 @@ Manipulation Check / NASA-TLX / IMI-PC 等纸面量表**不通过 WebSocket 传�
 
 **通信**:单条常驻 WebSocket,`ws://192.168.137.1:8765/ws/`(硬编码 ICS 热点 IP,`FootWebSocketClient` 的 Inspector 字段 `serverUrl` 可改但无环境切换机制);PC 是 WS 服务端,眼镜是客户端;无鉴权,假设可信局域网。断线自动重连(指数退避 1s→10s),心跳 10s 一次。所有 socket I/O 在后台线程,通过 `ConcurrentQueue<Action>` 在 `Update()` 里搬回主线程(Unity API 非线程安全)。
 
-**状态机**(`FootHudController.OnStateChange`,与 §4.1 的 `state` 值完全对应):`waiting → armed → calibrating → baseline → training ⇄ rest ⇄ retention → ended`,`paused`/`error` 可从多数状态进入;`armed` 之后和每次 `rest` 之后都需要显式的操作员/参与者确认点击(Start/Continue 按钮)才会通知服务端推进——**客户端从不自动前进**,这与 PC 端的门控设计(§3.8)完全对称,已在两端交叉验证一致。
+**状态机**(`FootHudController.OnStateChange`,与 §4.1 的 `state` 值完全对应):`waiting → armed → calibrating → baseline → training ⇄ rest ⇄ retention → ended`,`paused`/`error` 可从多数状态进入;`armed`(首次校准与每次赛前重标定)需要显式的 Ready 点击才会通知服务端推进;`rest` 由 PC 到点自动推进,不再需要 Continue——**客户端从不自动前进**,这与 PC 端的门控设计(§3.8)完全对称,已在两端交叉验证一致。
 
 **训练条件差异**(`condition` 字段 `EF`/`IF`):EF(stepping stones)只在 `state.targetL/R`+`directionL/R` 到达时设置一次固定目标朝向,不消费 `live` 流;每次收到 `fpa` 消息时额外把实际脚印(`footOutL/R`)短暂叠加在石头上做对比(按 `fpa.errorL/R`+`fpa.onTargetL/R` 旋转变色),`FootOutDisplaySec`(0.2s)后自动隐藏。IF(footprint)每步根据 `fpa.errorL/R`+`fpa.onTargetL/R` 变色旋转,并在两步之间由 `live` 流驱动连续旋转。`FootHudController.OnLiveUpdate` 本身不区分 condition(收到 `live` 就强制显示 footprint 组、隐藏 stone 组),EF 下的固定视图完全依赖 PC 端的发送侧门控,而非客户端判断。
 

@@ -20,7 +20,7 @@ Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data")
 
 ### Session CSV — `P{participantId}_{condition}_Session.csv`
 
-- 每次 `StartCondition(participantId, condition, orderGroup)` 调用时以 `append: false` 打开（**覆盖重建**，不是追加到旧文件），先写入一行 header：`DiagnosticsRow.CsvHeader`（该类型属于「数据模型」模块，此处不重复定义）。
+- 每次 `StartCondition(participantId, condition)` 调用时以 `append: false` 打开（**覆盖重建**，不是追加到旧文件），先写入一行 header：`DiagnosticsRow.CsvHeader`（该类型属于「数据模型」模块，此处不重复定义）。
 - 之后每帧调用一次 `WriteRow(DiagnosticsRow row, string stage, int attempt)`：先把 `row.Stage`/`row.Attempt` 写回该行对象，再 `WriteLine(row.ToCsvRow())` 追加写入。写入是同步的、逐行 `WriteLine`，没有内部缓冲攒批，落盘时机完全跟随调用节奏（即 pipeline 每帧产出诊断行的频率，见「步态分析核心流水线」模块）。
 - `SessionFileExists(participantId, condition)` 是静态方法，仅检查文件是否已存在，供 UI 层在开始录制前判断"是否会覆盖已有数据"并提示操作员。
 
@@ -37,7 +37,7 @@ Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data")
 
 | 方法 | 触发时机 / 作用 |
 |---|---|
-| `StartCondition(participantId, condition, orderGroup)` | 开始一个新的 condition 录制：先 `Close()` 关闭上一个 writer，再创建目录、打开新 Session CSV（覆盖）、初始化内存中的 `ConditionMeta` |
+| `StartCondition(participantId, condition)` | 开始一个新的 condition 录制：先 `Close()` 关闭上一个 writer，再创建目录、打开新 Session CSV（覆盖）、初始化内存中的 `ConditionMeta` |
 | `WriteRow(row, stage, attempt)` | 逐帧写 Session CSV 一行 |
 | `SaveBaseline(profile)` | 把 `BaselineProfile` 写入 `_meta.Baseline` 并立即 `SaveMeta()` |
 | `BeginPause(stage)` / `EndPause(operatorDecision, reason)` | 暂停开始只记 `StartTime`；暂停结束时才一次性补全 `EndTime`/`OperatorDecision`/`Reason` 并 append 进 `PauseEvents`——原因是"恢复时（Continue/Redo）才收集原因，而不是暂停发生的当下"，代码注释明确说明这一设计 |

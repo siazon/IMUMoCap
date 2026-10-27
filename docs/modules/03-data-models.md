@@ -61,7 +61,7 @@ Condition（EF/IF）级别的元数据，落盘为 Meta JSON：
 - `StepExclusionStats`：某 stage 内 `Emitted` vs 各类排除计数（`ExcludedTurning`/`ExcludedReacquiring`/`ExcludedLowConfidence`/`ExcludedPdInvalid`），`TotalAttempted`/`TurningExclusionRate` 是计算属性（转身+方向重获取合并为"转身相关排除率"）。
 - `StageTiming`：某 stage 的起止墙钟时间 + 扣除暂停后的 `ActiveSeconds`。
 - `StageMarker`：`{Stage, TimestampUtc}`，Manipulation Check / NASA-TLX / IMI-PC 等纸面量表的审计时间戳（软件不渲染内容）。
-- `ConditionMeta` 本体：`ParticipantId`/`Condition`/`OrderGroup` + `Baseline`（`BaselineProfile?`）+ 上述四类记录的容器（`PauseEvents` 列表、`FinalAttempt`/`StageStepStats`/`StageTimings` 字典、`StageMarkers` 列表）。
+- `ConditionMeta` 本体：`ParticipantId`/`Condition` + `Baseline`（`BaselineProfile?`）+ 上述四类记录的容器（`PauseEvents` 列表、`FinalAttempt`/`StageStepStats`/`StageTimings` 字典、`StageMarkers` 列表）。
 
 ### `PipelineParams.cs`
 实时可调参数容器，`GaitPipeline` 每次 `Process()` 调用都会读取并下发给各子处理器，修改立即生效：

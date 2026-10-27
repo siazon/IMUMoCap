@@ -63,15 +63,14 @@ fields.
 
 **Client → Server commands** (`FootWebSocketClient` public methods, plain-text JSON, no envelope):
 - `SendReadyForCalibrationAsync()` → `{"cmd":"ReadyForCalibration"}`
-- `SendContinueTrainingAsync(fromBlock)` → `{"cmd":"continueTraining","fromBlock":N}`
 
-Both are fired from HUD confirm-button clicks, never automatically.
+Fired from the HUD confirm-button click, never automatically. (The old `continueTraining` command was removed:
+Rest now ends on the PC's own timer.)
 
 **State machine** (`state` field values, handled in `FootHudController.OnStateChange`):
 `waiting → armed → calibrating → baseline → training ⇄ rest ⇄ retention → ended`, with
-`paused` and `error` reachable from most states. `armed` and post-`rest` require an explicit
-operator/user confirm tap (`Start` / `Continue` buttons) before the client tells the server to
-proceed — the server does not auto-advance past those gates.
+`paused` and `error` reachable from most states. `armed` requires an explicit confirm tap (Ready) before the
+client tells the server to proceed; `rest` ends automatically on the PC (no Continue tap).
 
 **Training condition** (`condition` field: `""` | `"EF"` | `"IF"`) selects which graphic group
 is shown during `training`:
@@ -93,8 +92,7 @@ in the Inspector on `FootHudController`):
 
 - `FootprintRoot` (IF condition) → `FootL`/`FootOutlineL`, `FootR`/`FootOutlineR`
 - `StoneRoot` (EF condition) → `StoneL`, `StoneR`
-- `CalibOverlay` → text + `Button` (repurposed for both "Start" and "Continue" prompts,
-  label/handler swapped at runtime) + `Slider` (step-count progress bar)
+- `CalibOverlay` → text + `Button` (the "Tap Ready" prompt) + `Slider` (step-count progress bar)
 
 `FootHudController` toggles `FootprintRoot`/`StoneRoot`/`CalibOverlay` active state as mutually
 exclusive groups depending on `state`/`condition` — never assumes more than one is visible at once.

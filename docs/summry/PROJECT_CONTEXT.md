@@ -192,7 +192,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 ### 3.9 UI(`MainWindow.xaml` + `.xaml.cs`)
 
 - 顶部深蓝 header:标题 + 已连接 WS/AR 客户端列表(绿点)
-- 左侧面板:Session 卡片(Participant ID、Condition EF/IF、Order Group、Start/Pause/Resume/End 按钮;原 Continue-Rest 按钮已移除)、左右 FPA 大数字卡(达标/未达标背景变色)
+- 左侧面板:Session 卡片(Participant ID、Condition EF/IF、Start Condition/Restart Condition/Pause/Resume/Next Stage/End 按钮;Order Group 与 Continue-Rest 已移除)、左右 FPA 大数字卡(达标/未达标背景变色)
 - **Flow 一览面板**(2026-09-08 新增,`FlowChecklist`/`ChecklistItem`,`Model/ChecklistItem.cs`):(2026-10-21 起改为窗口顶部最左侧的**竖向流程图**:圆点 + 竖线(某步已完成,它连向下一步的线段变绿,否则为灰色),不再在 Session 卡片内;Mark 按钮已取消,改为点击带下划线的文字)10 项对应完整协议流程(Baseline/Training1/MC(Block1)/Training2/Training3/MC(Block3)/NASA-TLX#1/IMI-PC/Retention/NASA-TLX#2)。灰=未到、绿=完成、橙=窗口已到但审计标记还没点。**3 个手动审计标记(NASA-TLX#1/IMI-PC/NASA-TLX#2)对应的"Mark"按钮直接内嵌在各自的流程条目里**(2026-09-08 由独立的一排按钮改为内嵌,`ChecklistItem.MarkerStage`/`IsMarkable`/`CanMark` 驱动,`IsMarkable` 为 true 的行才渲染按钮、`CanMark` 控制是否可点),点哪个标记就在流程图上哪个位置点,不用再去别处找对应按钮;其余 7 行是纯状态展示,没有按钮。所有 3 个可点击文字共用一个处理器 `FlowItem_MouseLeftButtonUp`(从被点击行的 `DataContext` 读出 `MarkerStage` 分发,而不是各自独立的 3 个 handler;仅在该行 `CanMark` 为 true、文字带下划线且为青色时可点)。由 `MainWindow.RefreshChecklist()` 每次 60ms 定时器 tick 时整体重算状态圆点(不是在各处散落推送),纯读现有的 `_restBlockJustFinished`/`_retentionComplete`/`_nasaTlx*Marked`/`_pipeline.BaselineProfile` 等信号,保证不会和真实状态漂移;点击标记文字时额外立即调用一次 `RefreshChecklist()`,不用等 60ms。让操作员在点 "End Recording" 之前就能持续看到有没有漏项,而不是只在点击那一刻才通过前面提到的确认弹窗(`MissingExpectedMarkers()`)得知。
 - 状态栏:3 个 IMU 连接指示灯(Pelvis/Left/Right)+ 丢包计数
 - 自绘时间线(`DrawTimeline()`,`DrawingVisual`/`RenderTargetBitmap`,6 条 lane:PD valid / L stance / R stance / IsWalking / motion context / FPA gate reason)

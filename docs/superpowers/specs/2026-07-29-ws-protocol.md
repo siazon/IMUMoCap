@@ -2,6 +2,10 @@
 
 Date: 2026-07-29
 
+> **Partly superseded (2026-10-27):** `continueTraining` and the "Continue after rest" rows below no longer exist —
+> Rest now ends automatically on the PC's timer and goes straight into the pre-stage recalibration prompt
+> (`ReadyForCalibration`). Current flow: `docs/flow-review-2026-10-27.md`.
+
 Supersedes the WS message shapes in `2026-04-09-ui-design.md` / `2026-04-09-ar-unity-xreal.md`
 (those assumed a receive-only AR client and 5 flat states; this spec adds EF/IF condition,
 training block number, the Training2→Training3 rest period, and AR→PC commands).
