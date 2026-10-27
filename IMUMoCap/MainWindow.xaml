@@ -198,7 +198,7 @@
 
                         <UniformGrid Columns="4" Margin="0,0,0,4">
                             <Button x:Name="BtnStartCal" Style="{StaticResource PrimaryButtonStyle}" Click="BtnStartCal_Click"
-                                    Width="120" ToolTip="Reset pipeline and immediately start calibration">
+                                    Width="120" ToolTip="While a condition is recording: restart it from the beginning after a mishap (asks first; the data so far is archived in the participant's Aborted folder). Otherwise: reset the pipeline and start calibration.">
                                 <TextBlock Text="Start Calibration" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <Button x:Name="BtnMeasure" Style="{StaticResource PrimaryButtonStyle}" Click="BtnMeasure_Click" Width="120">

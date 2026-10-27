@@ -101,6 +101,7 @@ namespace IMUMoCap.Methods
             ParticipantId = participantId;
             Condition = condition;
             _eventStage = "";
+            _openPause = null;
 
             var dir = Path.Combine(DataRoot, $"P{participantId}");
             Directory.CreateDirectory(dir);
@@ -290,6 +291,29 @@ namespace IMUMoCap.Methods
             if (_meta == null || CurrentMetaFilePath == null) return;
             var json = JsonSerializer.Serialize(_meta, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(CurrentMetaFilePath, json, Encoding.UTF8);
+        }
+
+        /// <summary>
+        /// 重新开始 condition 时归档当前这次的全部文件(不删除):移到 Data/P{id}/Aborted/{UTC 时间戳}/。
+        /// 放进子文件夹而不是改文件名,是因为 GetScreeningResult 会把被试目录下任意 *_Session.csv 当作隐式 Pass,
+        /// SessionFileExists 也按原文件名判断——归档后两者都不应被旧数据影响。返回归档目录;没有开始过则返回 null。
+        /// </summary>
+        public string? ArchiveCurrentFiles()
+        {
+            Close();
+            if (CurrentSessionFilePath == null) return null;
+
+            var dest = Path.Combine(Path.GetDirectoryName(CurrentSessionFilePath)!, "Aborted",
+                DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmssfff'Z'"));
+            Directory.CreateDirectory(dest);
+            foreach (var path in new[] { CurrentSessionFilePath, CurrentMetaFilePath, CurrentQoeFilePath, CurrentLiveConsistencyFilePath })
+                if (path != null && File.Exists(path))
+                    File.Move(path, Path.Combine(dest, Path.GetFileName(path)));
+
+            CurrentSessionFilePath = CurrentMetaFilePath = CurrentQoeFilePath = CurrentLiveConsistencyFilePath = null;
+            _meta = null;
+            _openPause = null;
+            return dest;
         }
 
         public void Close()

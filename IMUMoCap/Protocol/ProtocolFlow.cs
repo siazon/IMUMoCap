@@ -85,9 +85,7 @@ namespace IMUMoCap.Protocol
 
         public Phase Phase { get; private set; } = new(PhaseKind.Idle);
 
-        /// <summary>
-        /// 暂停叠加标志。**不会被 StartCondition / EndRecording 清除**(旧行为,§2-14)。
-        /// </summary>
+        /// <summary>暂停叠加标志。StartCondition / EndRecording 会清除它(§2-14)。</summary>
         public bool Paused { get; private set; }
 
         private readonly HashSet<string> _marked = new();
@@ -216,8 +214,9 @@ namespace IMUMoCap.Protocol
             switch (e.Kind)
             {
                 case FlowEventKind.StartCondition:
-                    // 旧行为:任何时候都可以开始新 condition;重置每个 condition 的事实,但不重置 Paused。
+                    // 任何时候都可以开始新 condition(含\"重新开始\");重置每个 condition 的事实,并清除暂停(§2-14)。
                     ResetConditionFacts();
+                    Paused = false;
                     Phase = new(PhaseKind.Armed, Stage.Baseline);
                     return Accept;
 
@@ -244,8 +243,8 @@ namespace IMUMoCap.Protocol
                 case FlowEventKind.CalibrationFailed:
                     switch (Phase.Kind)
                     {
-                        // 旧行为:首次校准失败只能重启程序(AR 显示 error)
-                        case PhaseKind.Calibrating: Phase = new(PhaseKind.Failed, Stage.Baseline); return Accept;
+                        // 校准失败一律可重试(O5、§2-17):首次校准失败回到 Armed,再点 Ready 即可
+                        case PhaseKind.Calibrating: Phase = new(PhaseKind.Armed, Stage.Baseline); return Accept;
                         case PhaseKind.Recalibrating: Phase = new(PhaseKind.RecalPending, Phase.Stage); return Accept;
                     }
                     return Ignore($"calibration cannot fail in {Phase.Kind}");
@@ -324,6 +323,7 @@ namespace IMUMoCap.Protocol
                     // 但 _pipeline.Reset() 会清掉 BaselineProfile。
                     Phase = new(PhaseKind.Ended, CurrentStageValue);
                     _baselineDone = false;
+                    Paused = false; // a pause must not outlive its recording (§2-14)
                     return Accept;
             }
             return Ignore($"unknown event {e.Kind}");

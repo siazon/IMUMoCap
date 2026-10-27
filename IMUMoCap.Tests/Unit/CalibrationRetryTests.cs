@@ -1,5 +1,4 @@
 // IMUMoCap.Tests/Unit/CalibrationRetryTests.cs
-using System.Collections.Generic;
 using System.Numerics;
 using IMUMoCap.Pipeline;
 using Xunit;
@@ -7,8 +6,8 @@ using Xunit;
 namespace IMUMoCap.Tests.Unit
 {
     /// <summary>
-    /// 特征测试(docs/flow-review-2026-10-27.md §2-17):校准一旦 Failed,GaitPipeline 就没有任何入口可以重试。
-    /// 操作员已决定\"校准失败应重试直到成功\"(O5),T12 需要先让这里成为可能。标 [KnownIssue] 的断言固定的是有缺陷的现状。
+    /// 校准失败后必须能重试(docs/flow-review-2026-10-27.md §2-17、O5):
+    /// 操作员的规则是\"校准失败应重试直到成功,多次不成功才由操作员判断重启软件\"。
     /// </summary>
     public class CalibrationRetryTests
     {
@@ -31,10 +30,18 @@ namespace IMUMoCap.Tests.Unit
             public CalibrationState Last = CalibrationState.WaitingForStart;
             private long _pid = 1000;
 
-            public Rig()
+            /// <param name="awaitingRecalibration">true keeps frames after calibration from reaching the gait modules
+            /// (what MainWindow does between stages); false mirrors the very first calibration.</param>
+            public Rig(bool awaitingRecalibration = true)
             {
-                Pipeline.AwaitingRecalibration = true; // keeps frames after calibration from reaching the gait modules
+                Pipeline.AwaitingRecalibration = awaitingRecalibration;
+                Pipeline.CalibrationArmed = true;
                 Pipeline.OnCalibrationStateChanged += s => Last = s;
+            }
+
+            public void Feed(int frames, Vector3 gyro)
+            {
+                for (int i = 0; i < frames; i++) Pipeline.Process(Bundle(_pid++, gyro));
             }
 
             /// <summary>Feeds frames until the calibration reaches <paramref name="target"/> (cap: 3000 frames).</summary>
@@ -50,10 +57,9 @@ namespace IMUMoCap.Tests.Unit
         private static readonly Vector3 Moving = new(1f, 0f, 0f); // > 0.3 rad/s: never counts as static
 
         [Fact]
-        public void Baseline_StillParticipant_CalibratesSuccessfully()
+        public void StillParticipant_CalibratesSuccessfully()
         {
-            var rig = new Rig { };
-            rig.Pipeline.CalibrationArmed = true;
+            var rig = new Rig();
             Assert.True(rig.Pipeline.TriggerCalibration());
 
             rig.FeedUntil(CalibrationState.Completed, Still);
@@ -65,52 +71,97 @@ namespace IMUMoCap.Tests.Unit
         public void ParticipantNeverStandsStill_TimesOutAndFails()
         {
             var rig = new Rig();
-            rig.Pipeline.CalibrationArmed = true;
             rig.Pipeline.TriggerCalibration();
 
             rig.FeedUntil(CalibrationState.Failed, Moving);
-        }
-
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_17_AfterAFailedFirstCalibration_NeitherReadyPathCanRetry()
-        {
-            var rig = new Rig();
-            rig.Pipeline.CalibrationArmed = true;
-            rig.Pipeline.TriggerCalibration();
-            rig.FeedUntil(CalibrationState.Failed, Moving);
-
-            // MainWindow.HandleReadyForCalibration calls TriggerCalibration (first calibration) or TriggerRecalibration.
-            Assert.False(rig.Pipeline.TriggerCalibration());     // T12: should be able to retry
-            Assert.False(rig.Pipeline.TriggerRecalibration());   // T12: should be able to retry
-        }
-
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_17_AfterAFailedRecalibration_ReadyIsRejected_ButARIsToldToTapReadyAgain()
-        {
-            var rig = new Rig();
-            rig.Pipeline.CalibrationArmed = true;
-            rig.Pipeline.TriggerCalibration();
-            rig.FeedUntil(CalibrationState.Completed, Still);
-
-            // between stages: recalibration starts, then the participant keeps moving until it times out
-            Assert.True(rig.Pipeline.TriggerRecalibration());
-            rig.Last = CalibrationState.CollectingStaticPose;
-            rig.FeedUntil(CalibrationState.Failed, Moving);
-
-            // MainWindow then broadcasts state "armed" ("Tap Ready when you are") — but tapping Ready does:
-            Assert.False(rig.Pipeline.TriggerRecalibration());   // T12: should be accepted
-            Assert.False(rig.Pipeline.TriggerCalibration());
         }
 
         [Fact]
-        public void Reset_IsTheOnlyWayOut_AndItDiscardsTheBaseline()
+        public void AfterAFailedFirstCalibration_ReadyRetriesAndCanSucceed()
         {
-            var rig = new Rig();
-            rig.Pipeline.CalibrationArmed = true;
+            var rig = new Rig(awaitingRecalibration: false);
             rig.Pipeline.TriggerCalibration();
             rig.FeedUntil(CalibrationState.Failed, Moving);
 
-            rig.Pipeline.Reset();                                // what the Start Calibration button does
+            Assert.True(rig.Pipeline.TriggerCalibration());      // Ready → retry
+            Assert.Equal(CalibrationState.CollectingStaticPose, rig.Last);
+            rig.FeedUntil(CalibrationState.Completed, Still);
+
+            Assert.NotNull(rig.Pipeline.CalibrationProfile);
+        }
+
+        [Fact]
+        public void AfterAFailedRecalibration_ReadyRetriesAndCanSucceed()
+        {
+            var rig = new Rig();
+            rig.Pipeline.TriggerCalibration();
+            rig.FeedUntil(CalibrationState.Completed, Still);
+
+            Assert.True(rig.Pipeline.TriggerRecalibration());    // between stages
+            rig.FeedUntil(CalibrationState.Failed, Moving);
+
+            Assert.True(rig.Pipeline.TriggerRecalibration());    // Ready → retry
+            rig.FeedUntil(CalibrationState.Completed, Still);
+
+            Assert.NotNull(rig.Pipeline.CalibrationProfile);
+        }
+
+        [Fact]
+        public void RetryIsUnlimited_ThreeFailuresThenSuccess()
+        {
+            var rig = new Rig(awaitingRecalibration: false);
+            rig.Pipeline.TriggerCalibration();
+
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                rig.FeedUntil(CalibrationState.Failed, Moving);
+                Assert.True(rig.Pipeline.TriggerCalibration());
+                rig.Last = CalibrationState.CollectingStaticPose;
+            }
+            rig.FeedUntil(CalibrationState.Completed, Still);
+
+            Assert.NotNull(rig.Pipeline.CalibrationProfile);
+        }
+
+        [Fact]
+        public void FramesKeepArrivingWhileWaitingForTheRetry_WithoutThrowing()
+        {
+            var rig = new Rig(awaitingRecalibration: false); // first calibration: nothing else gates the later modules
+            rig.Pipeline.TriggerCalibration();
+            rig.FeedUntil(CalibrationState.Failed, Moving);
+
+            var ex = Record.Exception(() => rig.Feed(50, Moving));
+
+            Assert.Null(ex);
+            Assert.Null(rig.Pipeline.CalibrationProfile);
+        }
+
+        [Fact]
+        public void RetryIsRefused_WhileACalibrationIsAlreadyRunning()
+        {
+            var rig = new Rig();
+            rig.Pipeline.TriggerCalibration();
+            rig.Feed(10, Moving);
+
+            Assert.False(rig.Pipeline.TriggerCalibration());
+            Assert.False(rig.Pipeline.TriggerRecalibration());
+        }
+
+        [Fact]
+        public void FirstCalibration_StillRequiresStartConditionToArmIt()
+        {
+            var pipeline = new GaitPipeline();           // CalibrationArmed is false
+            Assert.False(pipeline.TriggerCalibration());
+        }
+
+        [Fact]
+        public void Reset_StillWorksAfterAFailedCalibration()
+        {
+            var rig = new Rig();
+            rig.Pipeline.TriggerCalibration();
+            rig.FeedUntil(CalibrationState.Failed, Moving);
+
+            rig.Pipeline.Reset();
 
             Assert.True(rig.Pipeline.TriggerCalibration());
         }

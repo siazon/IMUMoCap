@@ -132,6 +132,8 @@ namespace IMUMoCap.Pipeline
         public bool TriggerCalibration()
         {
             if (!CalibrationArmed) return false;
+            // A failed first calibration is retried by tapping Ready again (flow-review §2-17).
+            if (_calibration.State == CalibrationState.Failed) _calibration.Reset();
             if (_calibration.State != CalibrationState.WaitingForStart) return false;
             _calibration.TriggerStart();
             OnCalibrationStateChanged?.Invoke(_calibration.State);
@@ -145,7 +147,8 @@ namespace IMUMoCap.Pipeline
         /// </summary>
         public bool TriggerRecalibration()
         {
-            if (_calibration.State != CalibrationState.Completed) return false;
+            // Completed = normal between-stage recalibration; Failed = retry after a recalibration that timed out.
+            if (_calibration.State != CalibrationState.Completed && _calibration.State != CalibrationState.Failed) return false;
             _calibration.Reset();
             _pd.Reset();
             _fpa.Reset();
@@ -176,13 +179,15 @@ namespace IMUMoCap.Pipeline
                     if (_calibration.State == CalibrationState.Completed)
                         OnLog?.Invoke("Calibration completed.");
                     else if (_calibration.State == CalibrationState.Failed)
-                        OnLog?.Invoke("Calibration failed — please restart.");
+                        OnLog?.Invoke("Calibration failed — stand still and tap Ready to retry.");
                 }
                 // 校准完成前，后续模块不运行
                 if (_calibration.State != CalibrationState.Completed) return;
             }
 
-            var profile = _calibration.Profile!;
+            // Failed (waiting for the retry) has no profile — nothing downstream can run yet.
+            if (_calibration.Profile == null) return;
+            var profile = _calibration.Profile;
             if (AwaitingRecalibration) return;
 
             // Step 4: GaitEventDetector

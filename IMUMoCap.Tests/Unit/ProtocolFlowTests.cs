@@ -255,13 +255,27 @@ namespace IMUMoCap.Tests.Unit
         // ── failures ─────────────────────────────────────────────────────────
 
         [Fact]
-        public void FirstCalibrationFailure_GoesToFailed_WhichOnlyEndOrRestartCanLeave()
+        public void FirstCalibrationFailure_GoesBackToArmed_SoReadyCanRetryWithoutLimit()
         {
             var f = AtArmed();
-            Go(f, FlowEvent.CalibrationStarted, FlowEvent.CalibrationFailed);
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                Go(f, FlowEvent.CalibrationStarted, FlowEvent.CalibrationFailed);
+                Assert.Equal(P(PhaseKind.Armed, Stage.Baseline), f.Phase);
+                Assert.Equal("armed", f.ArState);   // the AR shows its Ready button again
+            }
+
+            Go(f, Recal);
+            Assert.Equal(P(PhaseKind.Baseline, Stage.Baseline), f.Phase);
+        }
+
+        [Fact]
+        public void FailedPhase_IsOnlyForInsufficientBaseline_AndOnlyEndCanLeaveIt()
+        {
+            var f = AtBaseline();
+            Go(f, FlowEvent.BaselineCompleted(false));
 
             Assert.Equal(P(PhaseKind.Failed, Stage.Baseline), f.Phase);
-            Assert.Equal("error", f.ArState);
             Assert.False(f.Fire(FlowEvent.CalibrationStarted).Accepted);
             Assert.False(f.Fire(FlowEvent.CalibrationCompleted).Accepted);
 
@@ -738,26 +752,44 @@ namespace IMUMoCap.Tests.Unit
             Assert.Equal(new[] { "Manipulation Check (Block1)" }, f.MissingExpectedMarkers());
         }
 
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_14_Paused_SurvivesEndRecording_AndStartCondition()
+        // §2-14 (fixed with the Restart-Condition work): a pause must not outlive the recording it belongs to,
+        // otherwise the next condition starts "paused" and silently writes no data rows.
+        [Fact]
+        public void EndRecording_ClearsAPendingPause()
         {
             var f = AtTraining1();
             Go(f, FlowEvent.Pause, FlowEvent.EndRecording);
 
-            Assert.True(f.Paused);                    // T10: End/Start should clear the pause
-
-            Go(f, FlowEvent.StartCondition);
-            Assert.True(f.Paused);                    // legacy: the new condition starts "paused" (data rows not written)
+            Assert.False(f.Paused);
+            Assert.Equal("ended", f.ArState);
         }
 
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_14_Resume_IsIgnored_WhenNotRecording_SoAStalePauseCannotBeCleared()
+        [Fact]
+        public void StartCondition_ClearsAPause()
         {
             var f = AtTraining1();
-            Go(f, FlowEvent.Pause, FlowEvent.EndRecording);
+            Go(f, FlowEvent.Pause);
 
-            Assert.False(f.Fire(FlowEvent.ResumeContinue).Accepted);
-            Assert.True(f.Paused);
+            Go(f, FlowEvent.StartCondition);          // e.g. restart after an accident while paused
+
+            Assert.False(f.Paused);
+            Assert.Equal("armed", f.ArState);
+        }
+
+        [Fact]
+        public void RestartCondition_FromAnyRecordingPhase_ReturnsToAGenuinelyFreshArmedState()
+        {
+            var f = AtRest3();
+            Go(f, FlowEvent.Mark(FlowMarkers.Mc3), FlowEvent.Pause);
+
+            Go(f, FlowEvent.EndRecording, FlowEvent.StartCondition);   // what MainWindow's restart does
+
+            Assert.Equal(P(PhaseKind.Armed, Stage.Baseline), f.Phase);
+            Assert.False(f.Paused);
+            Assert.Equal(0, f.RestBlockJustFinished);
+            Assert.False(f.IsMarked(FlowMarkers.Mc3));
+            Assert.Empty(f.MissingExpectedMarkers());
+            Assert.All(f.Checklist(), c => Assert.Equal(ChecklistStatus.Pending, c.Status));
         }
     }
 }

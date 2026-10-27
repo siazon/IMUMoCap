@@ -930,14 +930,15 @@ namespace IMUMoCap
                 case CalibrationState.Failed:
                     if (_pendingStageEntry != null)
                     {
-                        _content.StatusLabel = $"Recalibration before {_pendingStageEntry} failed — please stand still and try again.";
-                        BroadcastArState("armed", reason: "Quick recheck before continuing.\nTap Ready when you are.");
+                        _content.StatusLabel = $"Recalibration before {_pendingStageEntry} failed — please stand still and tap Ready to retry.";
+                        BroadcastArState("armed", reason: "Calibration didn't complete.\nStand still and tap Ready to try again.");
                     }
                     else
                     {
-                        _content.StatusLabel = "Calibration failed. Please restart the application.";
+                        // Retry is unlimited (flow-review O5); if it keeps failing the operator decides whether to restart.
+                        _content.StatusLabel = "Calibration failed — please stand still and tap Ready to retry.";
                         _sessionState = TestState.Launching;
-                        BroadcastArState("error", "Calibration failed");
+                        BroadcastArState("armed", reason: "Calibration didn't complete.\nStand still and tap Ready to try again.");
                     }
                     break;
             }
@@ -1088,8 +1089,43 @@ namespace IMUMoCap
 
         // ── 新增按钮处理器 ────────────────────────────────────────────────────
 
+        // "Start Calibration" while a condition is recording means: something went wrong, start this condition over
+        // (flow-review Q3 / §7.8). The data so far is archived, never deleted, and the operator is asked first.
+        private void RestartCondition()
+        {
+            string participantId = _recorder.ParticipantId;
+            string condition = _recorder.Condition;
+            var confirm = MessageBox.Show(
+                $"Restart P{participantId} {condition} from the beginning?\n\n" +
+                "The data recorded so far is archived (not deleted) in the participant's Aborted folder, " +
+                "and the experiment starts over at calibration.",
+                "Restart condition", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (confirm != MessageBoxResult.Yes) { log("Restart cancelled."); return; }
+
+            _recorder.RecordEvent("Abort", "operator restarted the condition");
+            EndFlow("restarted by operator");
+            string? archived = _recorder.ArchiveCurrentFiles();
+            log($"Previous data archived → {archived}");
+
+            // Clear the leftovers Start Calibration always cleared.
+            _timelineBuffer.Clear();
+            _imuSamples.Clear();
+            _imuFrameCollector.Reset();
+            _content.LeftFpaTarget = "";
+            _content.RightFpaTarget = "";
+            _content.LeftFpaNote = "";
+            _content.RightFpaNote = "";
+            _content.LeftFpaBackground = MainPageVM.DefaultCardBg;
+            _content.RightFpaBackground = MainPageVM.DefaultCardBg;
+            _sessionState = TestState.Launching;
+
+            BeginCondition(participantId, condition);
+        }
+
         private void BtnStartCal_Click(object sender, RoutedEventArgs e)
         {
+            if (_recorder.IsRecording) { RestartCondition(); return; }
+
             _baselineTimer?.Stop();
             _baselineTimer = null;
             _pipeline.Reset();
@@ -1399,6 +1435,16 @@ namespace IMUMoCap
                 }
             }
 
+            BeginCondition(participantId, condition);
+        }
+
+        // Everything that starts a condition once BtnStartCondition_Click's checks have passed. Shared with
+        // RestartCondition so there is a single reset list instead of two that can drift apart.
+        private void BeginCondition(string participantId, string condition)
+        {
+            // A pause must not carry over into the new recording: while IsPaused, no data rows are written.
+            _content.IsPaused = false;
+            BtnPauseResume.Content = "Pause";
             _recorder.StartCondition(participantId, condition);
             _shadow.Fire(Protocol.FlowEvent.StartCondition);
             _recorder.SetRunConfig(BuildRunConfig());
@@ -1753,6 +1799,13 @@ namespace IMUMoCap
             _pendingStageEntry = null;
             _pipeline.AwaitingRecalibration = false;
             _baselineTimer?.Stop();
+            if (_content.IsPaused)
+            {
+                // Ending while paused: close the open pause so it is logged, and don't leave the next condition paused.
+                _recorder.EndPause("Ended", "recording ended while paused");
+                _content.IsPaused = false;
+                BtnPauseResume.Content = "Pause";
+            }
             _recorder.EndStage(_currentStage);
             _recorder.RecordEvent("End", reason);
             _recorder.FlushMeta();
