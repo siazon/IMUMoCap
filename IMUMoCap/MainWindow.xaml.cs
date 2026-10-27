@@ -89,6 +89,10 @@ namespace IMUMoCap
             ("Retention", null), ("NASA-TLX #2", "NASA-TLX_Admin2"),
         };
         private readonly Methods.ExperimentRecorder _recorder = new();
+        // T6 shadow mode: ProtocolFlow runs alongside the legacy flags below. It is fed the same steps and only
+        // compared against them (mismatches go to the log and Data/shadow_flow.log); it never drives anything.
+        private readonly Protocol.ProtocolFlow _flow = new();
+        private readonly Protocol.ShadowMonitor _shadow;
         private string _currentStage = "";
         private bool _isRetention = false; // true once _currentStage == "Retention": AR feedback removed
         // True once Retention's 100/foot target (or the stall-prevention timeout) is reached. Data collection
@@ -201,6 +205,7 @@ namespace IMUMoCap
             _deviceManager.BatteryLevelChanged += ev => Dispatcher.BeginInvoke(() => OnBattery(ev));
 
             _content.StatusLabel = "Ready to calibration";
+            _shadow = new Protocol.ShadowMonitor(_flow, WriteShadowLine);
             _imuFrameCollector.SampleRateHz = _sampleRateHz;
             UpdateImuStatusIndicators();
 
@@ -313,6 +318,7 @@ namespace IMUMoCap
                     if (_stageStopwatch.Elapsed >= TimeSpan.FromSeconds(requiredRestSec))
                     {
                         log($"Rest complete ({requiredRestSec}s elapsed) — advancing to recalibration.");
+                        _shadow.Fire(Protocol.FlowEvent.RestElapsed);
                         AdvanceStage();
                     }
                 }
@@ -327,6 +333,7 @@ namespace IMUMoCap
                     CompleteRetention("retention stall-prevention timeout");
 
                 RefreshChecklist();
+                ObserveShadow();
             };
             _timelineTimer.Start();
 
@@ -861,9 +868,18 @@ namespace IMUMoCap
             string calDetail = _pendingStageEntry != null ? $"recalibration before {_pendingStageEntry}" : "initial";
             switch (state)
             {
-                case CalibrationState.CollectingStaticPose: _recorder.RecordEvent("CalibrationStart", calDetail); break;
-                case CalibrationState.Completed: _recorder.RecordEvent("CalibrationDone", calDetail); break;
-                case CalibrationState.Failed: _recorder.RecordEvent("CalibrationFailed", calDetail); break;
+                case CalibrationState.CollectingStaticPose:
+                    _recorder.RecordEvent("CalibrationStart", calDetail);
+                    _shadow.Fire(Protocol.FlowEvent.CalibrationStarted);
+                    break;
+                case CalibrationState.Completed:
+                    _recorder.RecordEvent("CalibrationDone", calDetail);
+                    _shadow.Fire(Protocol.FlowEvent.CalibrationCompleted);
+                    break;
+                case CalibrationState.Failed:
+                    _recorder.RecordEvent("CalibrationFailed", calDetail);
+                    _shadow.Fire(Protocol.FlowEvent.CalibrationFailed);
+                    break;
             }
 
             switch (state)
@@ -924,6 +940,7 @@ namespace IMUMoCap
         private void HandleBaselineCompleted(BaselineProfile? profile)
         {
             _baselineTimer?.Stop();
+            _shadow.Fire(Protocol.FlowEvent.BaselineCompleted(profile is { IsValid: true }));
             if (profile == null || !profile.IsValid)
             {
                 string detail = profile == null
@@ -1264,6 +1281,54 @@ namespace IMUMoCap
             BroadcastArState(_lastState, _lastReason, _lastRestDurationSec, _lastBlock);
         }
 
+        private static readonly string ShadowLogPath =
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data", "shadow_flow.log");
+
+        private void WriteShadowLine(string line)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(ShadowLogPath)!);
+                File.AppendAllText(ShadowLogPath, $"{DateTime.UtcNow:O} {line}{Environment.NewLine}");
+            }
+            catch { /* diagnostics must never disturb the experiment */ }
+            log(line);
+        }
+
+        // Called every timeline tick: hands the shadow monitor the current values of the legacy flags.
+        private void ObserveShadow()
+        {
+            try
+            {
+                string[] markers = { Protocol.FlowMarkers.Mc1, Protocol.FlowMarkers.Mc3, Protocol.FlowMarkers.NasaTlx1,
+                                     Protocol.FlowMarkers.ImiPc, Protocol.FlowMarkers.NasaTlx2 };
+                bool Marked(string m) => m switch
+                {
+                    Protocol.FlowMarkers.Mc1 => _mc1Marked,
+                    Protocol.FlowMarkers.Mc3 => _mc3Marked,
+                    Protocol.FlowMarkers.NasaTlx1 => _nasaTlx1Marked,
+                    Protocol.FlowMarkers.ImiPc => _imiPcMarked,
+                    Protocol.FlowMarkers.NasaTlx2 => _nasaTlx2Marked,
+                    _ => false,
+                };
+                _shadow.Observe(new Protocol.LegacySnapshot(
+                    CurrentStage: _currentStage,
+                    InRest: _inRest,
+                    IsRetention: _isRetention,
+                    RetentionComplete: _retentionComplete,
+                    RestBlockJustFinished: _restBlockJustFinished,
+                    PendingStageEntry: _pendingStageEntry,
+                    IsPaused: _content.IsPaused,
+                    IsRecording: _recorder.IsRecording,
+                    Marked: markers.ToDictionary(m => m, Marked),
+                    CanMark: markers.ToDictionary(m => m, m => FindMarkerItem(m)?.CanMark ?? false),
+                    Attempts: ConditionStages.ToDictionary(s => s, s => _stageAttempt.GetValueOrDefault(s, 1)),
+                    Checklist: _content.FlowChecklist.Select(i => (i.Label, i.Status)).ToList(),
+                    ArState: _lastState));
+            }
+            catch { /* never disturb the experiment */ }
+        }
+
         // Snapshot of everything that shapes the collected data but isn't visible in the CSVs: software version
         // (includes the git commit), all PipelineParams, and the protocol constants hard-coded in this file/pipeline.
         // Params are copied so later live edits don't rewrite the snapshot.
@@ -1329,6 +1394,7 @@ namespace IMUMoCap
             }
 
             _recorder.StartCondition(participantId, condition);
+            _shadow.Fire(Protocol.FlowEvent.StartCondition);
             _recorder.SetRunConfig(BuildRunConfig());
             int updateRateHz = CurrentUpdateRateHz();
             if (updateRateHz > 0 && updateRateHz != _sampleRateHz)
@@ -1371,6 +1437,7 @@ namespace IMUMoCap
 
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             if (idx < 0 || idx >= ConditionStages.Length - 1) { log("Already at final stage (Retention)."); return; }
+            _shadow.Fire(Protocol.FlowEvent.NextStage);
 
             AdvanceStage();
         }
@@ -1393,6 +1460,7 @@ namespace IMUMoCap
         {
             if (_trainingBlockEnding) return; // stale duplicate completion event for this block — ignore
             _trainingBlockEnding = true;
+            _shadow.Fire(Protocol.FlowEvent.BlockComplete);
 
             switch (_currentStage)
             {
@@ -1457,6 +1525,7 @@ namespace IMUMoCap
             if ((sender as FrameworkElement)?.DataContext is not Model.ChecklistItem { MarkerStage: { } stage, CanMark: true }) return;
 
             _recorder.MarkStageEvent(stage);
+            _shadow.Fire(Protocol.FlowEvent.Mark(stage));
             switch (stage)
             {
                 case "ManipulationCheck_AfterBlock1": _mc1Marked = true; break;
@@ -1657,6 +1726,7 @@ namespace IMUMoCap
         {
             if (_retentionComplete) return;
             _retentionComplete = true;
+            _shadow.Fire(Protocol.FlowEvent.RetentionTargetReached);
             if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = true;
             _content.StatusLabel = "Retention complete. Administer NASA-TLX (Admin 2), then click End Recording.";
             log($"Retention complete ({reason}) — awaiting NASA-TLX Admin 2 before ending. Click End Recording when done.");
@@ -1670,6 +1740,7 @@ namespace IMUMoCap
         private void EndFlow(string reason)
         {
             if (!_recorder.IsRecording) return;
+            _shadow.Fire(Protocol.FlowEvent.EndRecording);
             _isRetention = false;
             _inRest = false;
             _pendingStageEntry = null;
@@ -1705,6 +1776,7 @@ namespace IMUMoCap
             if (!_content.IsPaused)
             {
                 _content.IsPaused = true;
+                _shadow.Fire(Protocol.FlowEvent.Pause);
                 _stageStopwatch.Stop();
                 _recorder.BeginPause(_currentStage);
                 BtnPauseResume.Content = "Resume";
@@ -1722,6 +1794,7 @@ namespace IMUMoCap
                     int nextAttempt = _stageAttempt.GetValueOrDefault(_currentStage, 1) + 1;
                     _stageAttempt[_currentStage] = nextAttempt;
                     _recorder.EndPause("Redo", dlg.Reason);
+                    _shadow.Fire(Protocol.FlowEvent.ResumeRedo);
                     _recorder.MarkRedo(_currentStage, nextAttempt);
                     _stageStopwatch.Restart();
                     BroadcastRedo(_currentStage, nextAttempt, dlg.Reason);
@@ -1730,6 +1803,7 @@ namespace IMUMoCap
                 else
                 {
                     _recorder.EndPause("Continue", dlg.Reason);
+                    _shadow.Fire(Protocol.FlowEvent.ResumeContinue);
                     _stageStopwatch.Start();
                     log($"Resumed, continuing {_currentStage}: {dlg.Reason}");
                 }

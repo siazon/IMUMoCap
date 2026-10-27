@@ -377,3 +377,31 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | T2 | 完成(2026-10-27) | `git log --grep "(T2)"` | 9 个新单元测试 + Meta 字段契约测试更新(新增 `Events`、`RunConfig`,旧字段不变)。已接入的事件:ConditionStart、StageStart/End、PauseStart/End、Redo、Marker、RecalPrompt、CalibrationStart/Done/Failed、End;Save Diagnostics 额外导出 `*_Events.csv`(诊断行为空时不导出)。**`MainWindow` 里的接线(PacketId 追踪、校准事件、End 事件、导出、`BuildRunConfig`)只验证了编译,未启动界面**,留给 T16 演练。`OperatorSkips` 字段推迟到 T11(目前没有任何代码会写它) |
 | T2.1 | 完成(2026-10-27) | `git log --grep "(T2.1)"` | `LatestPacketId` 改由原始包路径(`OnXsensData`,暂停门控之后)更新,修复 §2-16;`RunConfig.Constants` 新增 `UpdateRateHz`、`AssumedSampleRateHz`;Start Condition 时若实际速率 ≠ 100 Hz 打 WARNING。均在 `MainWindow` 内,无法单测,只验证了编译与现有测试(61 通过),留给 T16 演练。**不改变任何采集行为** |
 | T1 | 完成(2026-10-27) | `git log --grep "(T1)"` | 新增 `IMUMoCap/Protocol/ProtocolFlow.cs`(纯逻辑,**尚未接入 `MainWindow`**,接入在 T6)与 44 个单元测试(含 12 个 `[KnownIssue]`,固定 §2-1/2/4/5/6/12/14 的现状)。复刻的旧语义见类注释。**有意没有复刻**:(a) 在 Rest 中点 End 后旧代码 marker 窗口仍保持可点的怪异行为;(b) 旧代码在 StartCondition 时向 AR 广播 `armed`,而 `ArState` 对"暂停且正在录制"一律给 `paused`;(c) 未建模 Start Calibration、Screening、Measure、回放。这三处在 T6 影子模式里若出现不一致属预期,需逐条判定 |
+| T6 | 代码完成,**待真人演练**(2026-10-27) | `git log --grep "(T6)"` | 新增 `IMUMoCap/Protocol/ShadowMonitor.cs`(逐项比对 + 去抖日志,13 个单元测试)并接入 `MainWindow`:14 个事件点喂给 `ProtocolFlow`,每 60ms tick 交一份旧状态快照;不一致连续 3 个 tick 才写 `SHADOW MISMATCH`,被 flow 忽略的事件写 `SHADOW ignored`;日志同时写入操作日志和 `Data/shadow_flow.log`(位于 exe 旁)。所有影子调用均吞掉异常,不影响实验。**验收(零 MISMATCH)尚未完成**,见 §8.7 |
+
+### 8.7 T6 真人演练清单(影子模式验收)
+
+**准备**:关闭正在运行的软件 → 重新构建并启动(正在运行的 exe 会锁住 bin,所以之前我是在临时目录验证的)→ 删掉旧的 `Data/shadow_flow.log`(它是追加写入的)。
+Parameters 里把 **Target Steps / Foot** 设为 5,**关窗口不要点 Save**。用一个一次性的测试被试 ID(需已通过 Screening)。
+
+**操作顺序**(约 15–20 分钟)
+1. Start Condition(EF)→ Ready → 校准 → Baseline(走到每脚 5 步)。
+2. Ready → Training1(走 5 步)→ 进入 Rest1:**点一次 `MC (Block1)`**,然后**等 Rest 计时走完**(120 秒,覆盖 `RestElapsed`)。
+3. Ready → Training2 → 结束后直接 Ready(无 Rest)→ Training3。
+4. Training3 里做一次 **Pause → Continue**,再做一次 **Pause → Redo**(弹窗中的 Redo)。
+5. Training3 结束进入 Rest3:依次点 `MC (Block3)`、`NASA-TLX #1`、`IMI-PC`,然后点 **Next Stage** 跳过剩余 Rest。
+6. Ready → Retention(走 5 步)→ 完成后点 `NASA-TLX #2` → **End Recording**。
+7. 再 Start Condition 一次(IF),走到 Baseline 即可,验证第二个 condition 不继承上一个的状态;最后 End Recording。
+8. (可选)在某次重校准时故意晃动,触发一次校准失败再重试。
+
+**把这些发给我**:`Data/shadow_flow.log`,以及 `Data/P<id>/` 下两个 condition 的 Meta JSON。
+
+**如何解读**
+- `SHADOW OK`:恢复一致,正常。
+- `SHADOW ignored: X in <Phase>`:旧代码做了某步而 ProtocolFlow 认为不合法,**每条都值得看**(可能是转换表漏了,也可能旧代码本身有缺陷)。
+- `SHADOW MISMATCH`:两边状态不一致,逐项列出 `legacy=… flow=…`。
+- **预期会出现、不算失败的差异**:
+  - 在 Rest 期间 Pause→Resume 后,`ArState legacy=training flow=rest`(§2-4,旧缺陷,T10 修)。
+  - Start Condition / End Recording 之后与暂停有关的差异(§2-14)。
+  - 旧代码在 StartCondition 时向 AR 广播 `armed`,而 flow 对"暂停且正在录制"给 `paused`。
+- 其余任何差异都意味着转换表与旧行为不符,需要在进入 T7 之前修正。
