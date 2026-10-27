@@ -34,11 +34,11 @@
         <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
                 Value="{Binding PdStabilityThreshold, Mode=TwoWay}" Margin="0,0,0,8"/>
 
-        <!-- 6. Min baseline steps -->
-        <TextBlock Text="{Binding MinBaselineSteps, StringFormat='Min Baseline Steps: {0}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
+        <!-- 6. Target steps per foot (Baseline / Training / Retention) -->
+        <TextBlock Text="{Binding TargetStepsPerFoot, StringFormat='Target Steps / Foot: {0}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>
         <Slider Minimum="1" Maximum="150" SmallChange="1" LargeChange="5"
                 IsSnapToTickEnabled="True" TickFrequency="1"
-                Value="{Binding MinBaselineSteps, Mode=TwoWay}" Margin="0,0,0,8"/>
+                Value="{Binding TargetStepsPerFoot, Mode=TwoWay}" Margin="0,0,0,8"/>
 
         <!-- 7. Baseline L/R step count imbalance warning threshold -->
         <TextBlock Text="{Binding BaselineImbalanceRatioThreshold, StringFormat='Baseline Imbalance Ratio: {0:F2}'}" FontSize="12" Foreground="{StaticResource Brand.Navy}"/>

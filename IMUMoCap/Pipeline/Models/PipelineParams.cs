@@ -19,8 +19,8 @@ namespace IMUMoCap.Pipeline.Models
         public float PdConfidenceThreshold   { get; set; } = 0.7f;  // 0.3–1.0
         public float PdStabilityThreshold    { get; set; } = 0.7f;  // 0.3–1.0
 
-        // BaselineProcessor
-        public int   MinBaselineSteps        { get; set; } = 100;  // 1–150
+        // BaselineProcessor / Training / Retention：每脚每阶段的目标有效步数
+        public int   TargetStepsPerFoot      { get; set; } = 100;  // 1–150
         public float BaselineImbalanceRatioThreshold { get; set; } = 0.7f;  // 0.3–1.0，L/R步数比低于此值时警示
     }
 }

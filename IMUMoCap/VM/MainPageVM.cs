@@ -413,11 +413,11 @@ namespace IMUMoCap
             set { _pdStabilityThreshold = value; OnPropertyChanged(nameof(PdStabilityThreshold)); }
         }
 
-        private int _minBaselineSteps = 100;
-        public int MinBaselineSteps
+        private int _targetStepsPerFoot = 100;
+        public int TargetStepsPerFoot
         {
-            get { return _minBaselineSteps; }
-            set { _minBaselineSteps = value; OnPropertyChanged(nameof(MinBaselineSteps)); }
+            get { return _targetStepsPerFoot; }
+            set { _targetStepsPerFoot = value; OnPropertyChanged(nameof(TargetStepsPerFoot)); }
         }
 
         private float _baselineImbalanceRatioThreshold = 0.7f;

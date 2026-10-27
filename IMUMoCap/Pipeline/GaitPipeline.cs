@@ -48,7 +48,7 @@ namespace IMUMoCap.Pipeline
         public event Action<string>?           OnLog;
         public event Action<DiagnosticsRow>?   OnDiagnosticsFrame;
         public event Action<string, bool, StepExclusionReason?>? OnStepOutcome;
-        public event Action?                   OnTrainingBlockComplete; // both feet reached TrainingBlockTargetSteps
+        public event Action?                   OnTrainingBlockComplete; // both feet reached Params.TargetStepsPerFoot
 
         public GaitPipeline()
         {
@@ -77,8 +77,7 @@ namespace IMUMoCap.Pipeline
         /// </summary>
         public bool AwaitingRecalibration { get; set; } = false;
 
-        // 协议 §2.6：每个 training block 在两脚均达到 100 个有效步时自动结束（另有停滞保护超时上限，由 MainWindow 的计时器负责，非并列退出条件）
-        public const int TrainingBlockTargetSteps = 100;
+        // 协议 §2.6：每个 training block 在两脚均达到 Params.TargetStepsPerFoot（默认 100）个有效步时自动结束（另有停滞保护超时上限，由 MainWindow 的计时器负责，非并列退出条件）
         private int  _trainingStepsL, _trainingStepsR;
         private bool _trainingBlockDone;
 
@@ -91,7 +90,7 @@ namespace IMUMoCap.Pipeline
             _trainingStepsL = _trainingStepsR = 0;
             _trainingBlockDone = false;
             OnLog?.Invoke($"Training block {blockNumber1Based}: tolerance w={IMUMoCap.Pipeline.Models.BaselineProfile.ToleranceDeg:F0}° (fixed), " +
-                $"target {TrainingBlockTargetSteps} valid steps/foot");
+                $"target {Params.TargetStepsPerFoot} valid steps/foot");
         }
 
         // ── 主入口 ────────────────────────────────────────────────────────────
@@ -119,7 +118,7 @@ namespace IMUMoCap.Pipeline
             _fpa.PdStabilityThreshold       = Params.PdStabilityThreshold;
 
             // BaselineProcessor
-            _baseline.MinValidSteps = Params.MinBaselineSteps;
+            _baseline.MinValidSteps = Params.TargetStepsPerFoot;
             _baseline.ImbalanceRatioThreshold = Params.BaselineImbalanceRatioThreshold;
         }
 
@@ -262,19 +261,26 @@ namespace IMUMoCap.Pipeline
             {
                 OnFpaResult?.Invoke(fpaResult, true);
 
-                // 当前 training block 的两脚有效步数统计，达标（100/foot）后自动通知 MainWindow 结束该 block
-                if (!_trainingBlockDone)
-                {
-                    if (!float.IsNaN(fpaResult.Fpa_L)) _trainingStepsL++;
-                    if (!float.IsNaN(fpaResult.Fpa_R)) _trainingStepsR++;
+                CountTrainingStep(fpaResult);
+            }
+        }
 
-                    if (_trainingStepsL >= TrainingBlockTargetSteps && _trainingStepsR >= TrainingBlockTargetSteps)
-                    {
-                        _trainingBlockDone = true;
-                        OnLog?.Invoke($"Training block target reached (L={_trainingStepsL} R={_trainingStepsR} valid steps).");
-                        OnTrainingBlockComplete?.Invoke();
-                    }
-                }
+        /// <summary>
+        /// 当前 training block 的两脚有效步数统计，达标（Params.TargetStepsPerFoot）后自动通知 MainWindow 结束该 block。
+        /// 从 Process() 抽出，仅为让这段计数逻辑可以单独测试，行为不变。
+        /// </summary>
+        internal void CountTrainingStep(FpaResult fpaResult)
+        {
+            if (_trainingBlockDone) return;
+
+            if (!float.IsNaN(fpaResult.Fpa_L)) _trainingStepsL++;
+            if (!float.IsNaN(fpaResult.Fpa_R)) _trainingStepsR++;
+
+            if (_trainingStepsL >= Params.TargetStepsPerFoot && _trainingStepsR >= Params.TargetStepsPerFoot)
+            {
+                _trainingBlockDone = true;
+                OnLog?.Invoke($"Training block target reached (L={_trainingStepsL} R={_trainingStepsR} valid steps).");
+                OnTrainingBlockComplete?.Invoke();
             }
         }
 

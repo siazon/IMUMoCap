@@ -135,7 +135,6 @@ namespace IMUMoCap
         // turning exclusion) — force-finalize after this long so the flow never hangs. Widened alongside
         // TrainingBlockMaxDuration for the same 100-step-target reason; same assumption applies.
         private static readonly TimeSpan BaselineMaxDuration = TimeSpan.FromMinutes(10);
-        private const int RetentionTargetSteps = 100; // Retention ends at 100 valid steps/foot; TrainingBlockMaxDuration is the stall-prevention fallback (Research Overview §2.6)
         private const int RestDurationSec = 120; // Rest+MC window after Training1 (Research Overview §2.5)
         // Rest+MC+NASA-TLX Admin1(~5min)+IMI-PC window after Training3, before Retention.
         // ASSUMPTION: exact floor not specified by the protocol doc (only the ~5min instrument portion is) —
@@ -223,7 +222,7 @@ namespace IMUMoCap
                 log($"Baseline: L={l} steps, R={r} steps");
                 _content.BlockStepsDisplay = $"L {l} · R {r}";
                 if (!_isReplaying)
-                    BroadcastStepProgress("baseline", l, r, _pipeline.Params.MinBaselineSteps);
+                    BroadcastStepProgress("baseline", l, r, _pipeline.Params.TargetStepsPerFoot);
             });
             _pipeline.OnBaselineCompleted += profile =>
             {
@@ -889,7 +888,7 @@ namespace IMUMoCap
                         _pipeline.StartBaseline();
                         BroadcastArState("baseline");
                         _sessionState = TestState.Baseline;
-                        _content.StatusLabel = "Baseline: Walk until both feet reach 100 steps.";
+                        _content.StatusLabel = $"Baseline: Walk until both feet reach {_pipeline.Params.TargetStepsPerFoot} steps.";
                         StartBaselineTimeoutTimer();
                     }
                     break;
@@ -965,8 +964,8 @@ namespace IMUMoCap
                     _pipeline.Params.PdConfidenceThreshold = _content.PdConfidenceThreshold; break;
                 case nameof(MainPageVM.PdStabilityThreshold):
                     _pipeline.Params.PdStabilityThreshold = _content.PdStabilityThreshold; break;
-                case nameof(MainPageVM.MinBaselineSteps):
-                    _pipeline.Params.MinBaselineSteps = _content.MinBaselineSteps; break;
+                case nameof(MainPageVM.TargetStepsPerFoot):
+                    _pipeline.Params.TargetStepsPerFoot = _content.TargetStepsPerFoot; break;
                 case nameof(MainPageVM.BaselineImbalanceRatioThreshold):
                     _pipeline.Params.BaselineImbalanceRatioThreshold = _content.BaselineImbalanceRatioThreshold; break;
             }
@@ -987,7 +986,7 @@ namespace IMUMoCap
             _content.StanceGyroThreshold = p.StanceGyroThreshold;
             _content.PdConfidenceThreshold = p.PdConfidenceThreshold;
             _content.PdStabilityThreshold = p.PdStabilityThreshold;
-            _content.MinBaselineSteps = p.MinBaselineSteps;
+            _content.TargetStepsPerFoot = p.TargetStepsPerFoot;
             _content.BaselineImbalanceRatioThreshold = p.BaselineImbalanceRatioThreshold;
             _pipeline.Params.StanceFootPitchThreshold = p.StanceFootPitchThreshold;
         }
@@ -1820,7 +1819,7 @@ namespace IMUMoCap
                 bundles,
                 _pipeline.GetDiagnosticsSnapshot(),
                 LegacyStompThreshold_ms2, // live calibration no longer uses stomp; this is only for interpreting old recordings
-                _pipeline.Params.MinBaselineSteps));
+                _pipeline.Params.TargetStepsPerFoot));
             log("Replay done. Save diagnostics to inspect results.");
             _content.StatusLabel = "Replay done. Save diagnostics to inspect results.";
         }
@@ -1991,7 +1990,7 @@ namespace IMUMoCap
             string conclusion = fpaL >= minBaselineSteps && fpaR >= minBaselineSteps
                 ? "Baseline done"
                 : "Insufficient steps → Baseline incomplete → Training not started";
-            events.Add(("Total", $"FPA: L={fpaL} steps / R={fpaR} steps, MinBaselineSteps={minBaselineSteps} → {conclusion}"));
+            events.Add(("Total", $"FPA: L={fpaL} steps / R={fpaR} steps, TargetStepsPerFoot={minBaselineSteps} → {conclusion}"));
 
             if (trainOkL + trainMissL + trainOkR + trainMissR > 0)
                 events.Add(($"{trainFirstPid}–{trainLastPid}",
@@ -2201,8 +2200,8 @@ namespace IMUMoCap
                 if (!float.IsNaN(result.Fpa_L)) _retentionStepsL++;
                 if (!float.IsNaN(result.Fpa_R)) _retentionStepsR++;
                 _content.BlockStepsDisplay = $"L {_retentionStepsL} · R {_retentionStepsR}";
-                BroadcastStepProgress("retention", _retentionStepsL, _retentionStepsR, RetentionTargetSteps);
-                if (_retentionStepsL >= RetentionTargetSteps && _retentionStepsR >= RetentionTargetSteps)
+                BroadcastStepProgress("retention", _retentionStepsL, _retentionStepsR, _pipeline.Params.TargetStepsPerFoot);
+                if (_retentionStepsL >= _pipeline.Params.TargetStepsPerFoot && _retentionStepsR >= _pipeline.Params.TargetStepsPerFoot)
                 {
                     CompleteRetention($"retention target reached ({_retentionStepsL}/{_retentionStepsR} valid steps)");
                     return;

@@ -66,7 +66,7 @@ MIN_STANCE_FLOOR, SETTLE_GYRO_THR, SETTLE_QUIET_F, MAX_STANCE_FOR_SETTLE = 2, 0.
 TARGET_DELTA_DEG = 10.0        # BaselineProfile.TargetDeltaDeg
 TARGET_MIN_DEG = -25.0         # BaselineProfile.TargetMinDeg
 TOLERANCE_DEG = 4.0            # BaselineProfile.ToleranceDeg
-MIN_BASELINE_STEPS = 100       # PipelineParams.MinBaselineSteps / BaselineProcessor default
+MIN_BASELINE_STEPS = 100       # PipelineParams.TargetStepsPerFoot / BaselineProcessor default
 
 LIVE_INTERVAL_FRAMES = int(round((100.0 / 10.0)))  # 10Hz throttle on a 100Hz source, same as PC side
 
@@ -504,7 +504,7 @@ for foot in ('L', 'R'):
           f"Tolerance(fixed)={tolerance():4.2f} deg")
     if baseline_n[foot] < MIN_BASELINE_STEPS:
         print(f"     NOTE: only {baseline_n[foot]} settled steps available — short of the real "
-              f"experiment's MinBaselineSteps={MIN_BASELINE_STEPS}; Target/SD here are a pilot proxy, not production-grade.")
+              f"experiment's TargetStepsPerFoot={MIN_BASELINE_STEPS}; Target/SD here are a pilot proxy, not production-grade.")
 print(f"\nHeld-out evaluation steps (after each foot's own baseline window): "
       f"L={sum(1 for r in eval_rows if r[0]=='L')}  R={sum(1 for r in eval_rows if r[0]=='R')}\n")
 
