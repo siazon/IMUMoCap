@@ -390,7 +390,7 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | T9 | 完成(2026-10-27) | `git log --grep "(T9)"` | Redo 新语义(O3/Q1/O7):Resume 对话框里选 Redo → 二次确认弹窗(说明会丢弃本阶段已计步数并重新校准)→ 写 `Redo` 事件 → 回到"等待 Ready 重新校准"(AR 显示 Ready)→ 校准完成后重新进入**同一阶段**,`EnterStage` 随之清零该阶段计数器与秒表(Training 的 `SetTrainingBlock`、Baseline 的 `StartBaseline` + 新超时、Retention 的步数),并写 `StageStart detail="redo attempt=N"`(保留阶段原始开始时间,不再调用 `BeginStage`)。Redo 只在 Baseline/Training/Retention 合法,Rest、等待/进行校准、Armed、RetentionDone、Failed 里对话框的 Redo 按钮置灰(由 `ProtocolFlow.CanRedo` 判定)。`ProtocolFlow` 新增 Redo 转换与 `CanRedo`,新增 12 个单元测试(含 7 个非法阶段的参数化测试),旧的 `KnownIssue_2_1` 删除。**`MainWindow`/对话框内的接线只验证了编译与全部接线点在位,未启动界面**。已知保留:阶段步数排除统计 `StageStepStats` 仍跨 attempt 累加;被作废尝试的数据行保留在 Session CSV 中并以 `Attempt` 列区分 |
 | T2.2 | 完成(2026-10-27) | `git log --grep "(T2.2)"` | 补 `BlockComplete` / `RestEnd` / `RetentionDone` 三条事件(见 §7.7 补充)。仅 `MainWindow` 内的 `RecordEvent` 调用,无法单测,验证了全部调用点在位与编译(116 通过)。**下次演练请确认**:Rest 用 Next Stage 跳过和自然走完两种情况下,`RestEnd` 的 Detail 分别为 `skipped by Next Stage` / `elapsed` |
 | T7 | 完成(2026-10-27) | `git log --grep "(T7)"` | **只切换显示类输出**(操作员 2026-10-27 确认):Flow 清单各行状态、Mark 标签能否点击(`CanMark`)、End Recording 前的"缺失 marker"警告,现在读 `ProtocolFlow`(`RefreshChecklist` 取 `_flow.Checklist()`/`_flow.CanMark`,`MissingExpectedMarkers` 取 `_flow.MissingExpectedMarkers()`)。**没有动**任何转换逻辑、AR 状态广播、Ready 按钮启用(仍由旧标志位驱动,留给 T8)。旧的计算(`ComputeLegacyChecklist`、`LegacyMissingExpectedMarkers`、`_legacyCanMark` 及 15 处写入点)全部保留,只喂给影子比对,使比对继续是"独立两套"而不是自己比自己;影子快照新增 `MissingMarkers` 一项(1 个新测试,现共 117 通过)。**没有加回退开关**(未获确认,且显示出错不会让流程卡住)。已知差异:回放模式下 `ProtocolFlow` 不被喂事件,Flow 面板会一直显示未开始(以前会按 pipeline 的 BaselineProfile 显示 Baseline 完成)。`MainWindow` 内改动无法单测,只验证了编译与全部旧写入点已改写;**未启动界面** |
-| T8 | **代码完成,待演练验收**(2026-10-27) | `git log --grep "(T8)"`;回退点:标签 `pre-t8-2026-10-27`(= T7 提交 `7258f924`) | 转换入口改由 `ProtocolFlow` 驱动,旧标志位删除:`_currentStage`、`_isRetention`、`_retentionComplete`、`_inRest`、`_restBlockJustFinished`、`_pendingStageEntry`、`_redoPending`、五个 `*Marked` 改为 `ProtocolFlow` 的只读视图(编译器因此保证不会残留任何赋值),`_stageAttempt` 改读 `_flow.AttemptOf`;`AdvanceStage()` 拆成"状态转换(Fire)"与"副作用(`EnterRecalPrompt`)"。**行为变化**:各入口现在以 flow 的裁决为准——被 flow 拒绝的事件不再触发副作用(`BlockComplete`、`RestElapsed`、`NextStage`、`RetentionTargetReached`、`Mark`、`ResumeRedo`、`BaselineCompleted`、三种校准回调),同时消除了"重启前排队的过期回调误触发流程"这类隐患;删除了 `HandleBaselineCompleted` 里'无录制'的不可达分支;删除影子比对(`ObserveShadow`、`ComputeLegacyChecklist`、`LegacyMissingExpectedMarkers`、`_legacyCanMark`)——**此后不再有独立的第二套实现可供比对**。需要读"Fire 之前的值"的地方都已改为先取局部变量(校准回调的 `pending`/`redo`、Next Stage 的 `wasResting`)。新增 `ProtocolFlow.PendingStageEntry`/`IsRedoRecalibration`(3 个测试,现共 120 通过)。**没有迁移**:`_sessionState`(UI/回放用的另一套枚举)、`IsPaused`(VM 属性)、`_trainingBlockEnding`(幂等守卫)、AR 状态缓存 `_lastState`。**未启动界面,不要直接用于被试**:验收按 §8.9 的演练清单。ShadowMonitor 的 Observe/LegacySnapshot 已无调用方,待 T8b 清理;其 `SHADOW summary` 行里 `ticks=0` 是预期 |
+| T8 | **完成,演练通过**(2026-10-27;操作员确认"一切正常",下方数据佐证) | `git log --grep "(T8)"`;回退点:标签 `pre-t8-2026-10-27`(= T7 提交 `7258f924`) | 转换入口改由 `ProtocolFlow` 驱动,旧标志位删除:`_currentStage`、`_isRetention`、`_retentionComplete`、`_inRest`、`_restBlockJustFinished`、`_pendingStageEntry`、`_redoPending`、五个 `*Marked` 改为 `ProtocolFlow` 的只读视图(编译器因此保证不会残留任何赋值),`_stageAttempt` 改读 `_flow.AttemptOf`;`AdvanceStage()` 拆成"状态转换(Fire)"与"副作用(`EnterRecalPrompt`)"。**行为变化**:各入口现在以 flow 的裁决为准——被 flow 拒绝的事件不再触发副作用(`BlockComplete`、`RestElapsed`、`NextStage`、`RetentionTargetReached`、`Mark`、`ResumeRedo`、`BaselineCompleted`、三种校准回调),同时消除了"重启前排队的过期回调误触发流程"这类隐患;删除了 `HandleBaselineCompleted` 里'无录制'的不可达分支;删除影子比对(`ObserveShadow`、`ComputeLegacyChecklist`、`LegacyMissingExpectedMarkers`、`_legacyCanMark`)——**此后不再有独立的第二套实现可供比对**。需要读"Fire 之前的值"的地方都已改为先取局部变量(校准回调的 `pending`/`redo`、Next Stage 的 `wasResting`)。新增 `ProtocolFlow.PendingStageEntry`/`IsRedoRecalibration`(3 个测试,现共 120 通过)。**没有迁移**:`_sessionState`(UI/回放用的另一套枚举)、`IsPaused`(VM 属性)、`_trainingBlockEnding`(幂等守卫)、AR 状态缓存 `_lastState`。**未启动界面,不要直接用于被试**:验收按 §8.9 的演练清单。ShadowMonitor 的 Observe/LegacySnapshot 已无调用方,待 T8b 清理;其 `SHADOW summary` 行里 `ticks=0` 是预期 |
 
 ### 8.7 T6 真人演练清单(影子模式验收)
 
@@ -448,3 +448,17 @@ T8 之前,影子比对能在旧代码与新状态机不一致时报警;T8 之后
 8. 看 `Data/shadow_flow.log`:不应出现 `SHADOW ignored`(出现即说明某个入口被状态机拒绝,需逐条判断)。
 
 **通过标准**:以上每一项的 Flow 面板、AR 画面、Meta/Events 内容与 T7 时一致。任何一项不符 → 先回退到标签 `pre-t8-2026-10-27`,再排查。
+
+### 8.10 T8 演练结果(2026-10-27 16:14–16:25,构建 `b1c88fa1`,被试 Po8)
+
+**操作员结论**:一切正常。
+
+**可从磁盘数据独立佐证的部分**(我没有看到演练过程,只看了落盘的日志与 Meta):
+- 三个 condition(EF 被 Restart 一次 + EF + IF),`AppVersion` 均为 `b1c88fa1`;`shadow_flow.log` 的三条汇总全部 `ignored=0`,无 `SHADOW error`(`ticks=0` 是预期,因为比对已删除)。
+- 事件日志覆盖:暂停 8 次、Redo 2 次(Baseline 与 Training2)、Restart(Abort)1 次、校准失败 1 次、问卷 Marker 9 条、`BlockComplete` 6 条、`RestEnd` 4 条、`RetentionDone` 2 条。
+- Redo 的完整轨迹正确:`CalibrationStart/Done`(detail 含 `redo`)→ `StageStart detail="redo attempt=2"`,Baseline 与 Training2 各一遍。
+- `RestEnd` 两种 detail 都出现过:`elapsed` ×1、`skipped by Next Stage` ×3。`BlockComplete` 的 detail 正确区分 `rest 120s follows` / `rest 300s follows` / `no rest, recalibration follows`。
+
+**仅由操作员报告、数据无法佐证的项**:Retention 中的 Redo、Rest 中 Redo 按钮置灰、漏点 marker 后 End 的警告弹窗、AR 眼镜画面。
+
+**结论**:T8 验收通过,回退标签 `pre-t8-2026-10-27` 可以保留但不再需要。后续任务(T8b、T10–T16)基于 T8 之后的代码。
