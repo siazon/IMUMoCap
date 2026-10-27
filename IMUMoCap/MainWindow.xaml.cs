@@ -892,7 +892,9 @@ namespace IMUMoCap
 
         private void OnCalibrationStateChanged(CalibrationState state)
         {
-            string calDetail = _pendingStageEntry != null ? $"recalibration before {_pendingStageEntry}" : "initial";
+            string calDetail = _pendingStageEntry == null ? "initial"
+                : _redoPending ? $"recalibration for redo of {_pendingStageEntry}"
+                : $"recalibration before {_pendingStageEntry}";
             switch (state)
             {
                 case CalibrationState.CollectingStaticPose:
@@ -932,8 +934,10 @@ namespace IMUMoCap
                 case CalibrationState.Completed:
                     if (_pendingStageEntry is { } nextStage)
                     {
+                        bool redo = _redoPending;
                         _pendingStageEntry = null;
-                        EnterStage(nextStage);
+                        _redoPending = false;
+                        EnterStage(nextStage, redo);
                     }
                     else
                     {
@@ -1594,6 +1598,27 @@ namespace IMUMoCap
         // holds the stage name we're about to enter once CalibrationState.Completed fires again.
         private string? _pendingStageEntry;
 
+        // True when that pending entry is a Redo of the stage being collected (not a move to the next stage).
+        private bool _redoPending;
+
+        /// <summary>
+        /// Redo (flow-review T9): restart the stage that is currently being collected. It goes through the same
+        /// "recalibrate, then enter the stage" gate as a normal stage change — EnterStage then clears that stage's
+        /// counters and timers, so steps from the abandoned attempt can no longer count towards its target
+        /// (before this, a Baseline redo finished after 3 s with the 8+7 steps of the discarded attempt).
+        /// </summary>
+        private void BeginRedoRecalibration()
+        {
+            _redoPending = true;
+            _pendingStageEntry = _currentStage;
+            _pipeline.AwaitingRecalibration = true; // freeze fpa/step output until the participant taps Ready
+            // The stage stopwatch and (for Baseline) the timeout stay stopped while we wait; EnterStage restarts them.
+            _content.CurrentStageLabel = $"{_currentStage} (Redo — recalibrating)";
+            _content.StatusLabel = $"Redo {_currentStage} — waiting for participant to tap Ready.";
+            BroadcastArState("armed", reason: "Redo — quick recheck.\nTap Ready when you are.");
+            log($"Redo {_currentStage} — recalibrating first, waiting for participant ready signal.");
+        }
+
         /// <summary>
         /// Moves _currentStage to the next entry in ConditionStages. Called both manually (Next Stage button)
         /// and automatically — training block auto-completion (100 valid steps/foot) and the stall-prevention
@@ -1630,7 +1655,7 @@ namespace IMUMoCap
         /// Actually begins `stage` — the old tail of AdvanceStage(), run once the pre-stage recalibration
         /// (armed above) completes. Unchanged from before the recalibration gate was added.
         /// </summary>
-        private void EnterStage(string stage)
+        private void EnterStage(string stage, bool isRedo = false)
         {
             _pipeline.AwaitingRecalibration = false;
             // OnCalibrationStateChanged's CollectingStaticPose case set _sessionState = Calibrating for
@@ -1640,7 +1665,10 @@ namespace IMUMoCap
             // recalibration gate (Baseline→Training1 included).
             _sessionState = TestState.Step;
             _currentStage = stage;
-            _recorder.BeginStage(_currentStage);
+            if (!isRedo)
+                _recorder.BeginStage(_currentStage);
+            else // keep the stage's original start time (pauses are subtracted from it); log the new attempt instead
+                _recorder.RecordEvent("StageStart", $"redo attempt={_stageAttempt.GetValueOrDefault(stage, 1)}", stage);
             _recorder.FlushMeta();
             _stageStopwatch.Restart();
             _content.CurrentStageLabel = _currentStage;
@@ -1679,8 +1707,18 @@ namespace IMUMoCap
                 _content.StatusLabel = "Retention: AR feedback removed, walk naturally.";
                 BroadcastArState("retention");
             }
+            else if (_currentStage == "Baseline")
+            {
+                // Only reached when the baseline is redone: start collecting it from scratch (StartBaseline resets
+                // the collected steps), with a fresh timeout.
+                _pipeline.StartBaseline();
+                _sessionState = TestState.Baseline;
+                _content.StatusLabel = $"Baseline: Walk until both feet reach {_pipeline.Params.TargetStepsPerFoot} steps.";
+                BroadcastArState("baseline");
+                StartBaselineTimeoutTimer();
+            }
 
-            log($"Stage → {_currentStage}");
+            log(isRedo ? $"Stage → {_currentStage} (redo)" : $"Stage → {_currentStage}");
         }
 
         private void BtnEndCondition_Click(object sender, RoutedEventArgs e)
@@ -1794,6 +1832,7 @@ namespace IMUMoCap
             _isRetention = false;
             _inRest = false;
             _pendingStageEntry = null;
+            _redoPending = false;
             _pipeline.AwaitingRecalibration = false;
             _baselineTimer?.Stop();
             if (_content.IsPaused)
@@ -1834,20 +1873,32 @@ namespace IMUMoCap
             }
             else
             {
-                var dlg = new PauseResumeDialog(_recorder.PauseElapsed) { Owner = this };
+                var dlg = new PauseResumeDialog(_recorder.PauseElapsed, redoAllowed: _flow.CanRedo) { Owner = this };
                 bool? ok = dlg.ShowDialog();
                 if (ok != true) return; // 关闭对话框但没填写/没选择 → 保持暂停状态
 
                 if (dlg.Redo)
                 {
+                    // Redo throws away the steps counted in this stage and needs a new calibration, so ask first
+                    // (typical reason: an IMU came loose or shifted).
+                    var sure = MessageBox.Show(
+                        $"Redo {_currentStage}?\n\n" +
+                        "The steps counted so far in this stage are discarded and the participant must calibrate again " +
+                        "before the stage starts over. Use this when something went wrong, e.g. an IMU came loose or shifted.",
+                        "Redo stage", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    if (sure != MessageBoxResult.Yes) { log("Redo cancelled — still paused."); return; }
+
                     int nextAttempt = _stageAttempt.GetValueOrDefault(_currentStage, 1) + 1;
                     _stageAttempt[_currentStage] = nextAttempt;
                     _recorder.EndPause("Redo", dlg.Reason);
                     _shadow.Fire(Protocol.FlowEvent.ResumeRedo);
                     _recorder.MarkRedo(_currentStage, nextAttempt);
-                    _stageStopwatch.Restart();
                     BroadcastRedo(_currentStage, nextAttempt, dlg.Reason);
                     log($"Resumed with Redo — {_currentStage} attempt #{nextAttempt}: {dlg.Reason}");
+                    BeginRedoRecalibration();
+                    _content.IsPaused = false;
+                    BtnPauseResume.Content = "Pause";
+                    return; // the AR is now asked for Ready; don't restore the pre-pause state or restart timers
                 }
                 else
                 {

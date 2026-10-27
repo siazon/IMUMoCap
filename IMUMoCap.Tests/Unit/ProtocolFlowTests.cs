@@ -357,8 +357,10 @@ namespace IMUMoCap.Tests.Unit
             Assert.Equal(1, f.AttemptOf("Training1"));
         }
 
+        // ── Redo (T9): only while data is being collected; restarts the stage from a fresh calibration ──
+
         [Fact]
-        public void ResumeRedo_IncrementsAttemptOfTheCurrentStage()
+        public void ResumeRedo_InTraining_BumpsTheAttempt_AndWaitsForARecalibrationOfTheSameStage()
         {
             var f = AtTraining1();
             Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
@@ -366,7 +368,155 @@ namespace IMUMoCap.Tests.Unit
             Assert.Equal(2, f.AttemptOf("Training1"));
             Assert.Equal(1, f.AttemptOf("Training2"));
             Assert.False(f.Paused);
+            Assert.Equal(P(PhaseKind.RecalPending, Stage.Training1), f.Phase);
+            Assert.Equal("Training1", f.CurrentStage);   // still the stage being redone, not the previous one
+            Assert.Equal("armed", f.ArState);            // the AR shows its Ready button
+            Assert.False(f.InRest);
+        }
+
+        [Fact]
+        public void ResumeRedo_ThenReady_RestartsTheSameStage()
+        {
+            var f = AtTraining1();
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
+
+            Go(f, Recal);
+
             Assert.Equal(P(PhaseKind.Training, Stage.Training1), f.Phase);
+            Assert.Equal("training", f.ArState);
+            Assert.Equal(2, f.AttemptOf("Training1"));
+        }
+
+        [Fact]
+        public void ResumeRedo_CanBeRepeated_AndEachRedoIsANewAttempt()
+        {
+            var f = AtTraining1();
+            for (int i = 0; i < 3; i++)
+            {
+                Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
+                Go(f, Recal);
+            }
+
+            Assert.Equal(4, f.AttemptOf("Training1"));
+            Assert.Equal(P(PhaseKind.Training, Stage.Training1), f.Phase);
+        }
+
+        [Fact]
+        public void ResumeRedo_InBaseline_RestartsTheBaseline()
+        {
+            var f = AtBaseline();
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
+
+            Assert.Equal(P(PhaseKind.RecalPending, Stage.Baseline), f.Phase);
+            Assert.Equal("Baseline", f.CurrentStage);
+            Assert.Equal(2, f.AttemptOf("Baseline"));
+
+            Go(f, Recal);
+            Assert.Equal(P(PhaseKind.Baseline, Stage.Baseline), f.Phase);
+            Assert.Equal("baseline", f.ArState);
+            Assert.Equal(ChecklistStatus.Pending, Status(f, "Baseline"));
+        }
+
+        [Fact]
+        public void ResumeRedo_InRetention_StaysARetentionStage_AndItsNotComplete()
+        {
+            var f = AtRetention();
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
+
+            Assert.Equal(P(PhaseKind.RecalPending, Stage.Retention), f.Phase);
+            Assert.True(f.IsRetention);                  // AR feedback must stay off while waiting
+            Assert.False(f.RetentionComplete);
+            Assert.Equal("Retention", f.CurrentStage);
+
+            Go(f, Recal);
+            Assert.Equal(P(PhaseKind.Retention, Stage.Retention), f.Phase);
+            Assert.Equal(2, f.AttemptOf("Retention"));
+        }
+
+        [Fact]
+        public void ResumeRedo_DoesNotTouchMarkersOrTheRestHistory()
+        {
+            var f = AtRest1();
+            Go(f, FlowEvent.Mark(FlowMarkers.Mc1), FlowEvent.RestElapsed);
+            Go(f, Recal);                                  // Training2
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
+
+            Assert.True(f.IsMarked(FlowMarkers.Mc1));
+            Assert.Equal(1, f.RestBlockJustFinished);
+            Assert.Equal(ChecklistStatus.Done, Status(f, "Training1"));
+        }
+
+        [Fact]
+        public void RecalibrationFailureDuringARedo_RetriesTheSameStage()
+        {
+            var f = AtTraining1();
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo, FlowEvent.CalibrationStarted, FlowEvent.CalibrationFailed);
+
+            Assert.Equal(P(PhaseKind.RecalPending, Stage.Training1), f.Phase);
+            Assert.Equal("Training1", f.CurrentStage);
+
+            Go(f, Recal);
+            Assert.Equal(P(PhaseKind.Training, Stage.Training1), f.Phase);
+        }
+
+        [Fact]
+        public void EndingWhileWaitingForARedoRecalibration_KeepsTheStageBeingRedone()
+        {
+            var f = AtTraining1();
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo, FlowEvent.EndRecording);
+
+            Assert.Equal("Training1", f.CurrentStage);
+            Assert.Equal(PhaseKind.Ended, f.Phase.Kind);
+        }
+
+        public static IEnumerable<object[]> PhasesWhereRedoIsNotLegal() => new[]
+        {
+            new object[] { "Armed" }, new object[] { "Calibrating" }, new object[] { "Rest" },
+            new object[] { "RecalPending" }, new object[] { "Recalibrating" }, new object[] { "RetentionDone" },
+            new object[] { "Failed" },
+        };
+
+        private static ProtocolFlow InPhase(string name)
+        {
+            switch (name)
+            {
+                case "Armed": return AtArmed();
+                case "Calibrating": { var f = AtArmed(); Go(f, FlowEvent.CalibrationStarted); return f; }
+                case "Rest": return AtRest1();
+                case "RecalPending": { var f = AtRest1(); Go(f, FlowEvent.RestElapsed); return f; }
+                case "Recalibrating": { var f = AtRest1(); Go(f, FlowEvent.RestElapsed, FlowEvent.CalibrationStarted); return f; }
+                case "RetentionDone": return AtRetentionDone();
+                case "Failed": { var f = AtBaseline(); Go(f, FlowEvent.BaselineCompleted(false)); return f; }
+            }
+            throw new ArgumentException(name);
+        }
+
+        [Theory]
+        [MemberData(nameof(PhasesWhereRedoIsNotLegal))]
+        public void ResumeRedo_IsRefused_OutsideDataCollection_AndThePauseStays(string phaseName)
+        {
+            var f = InPhase(phaseName);
+            var phase = f.Phase;
+            Go(f, FlowEvent.Pause);
+
+            Assert.False(f.CanRedo);
+            var r = f.Fire(FlowEvent.ResumeRedo);
+
+            Assert.False(r.Accepted);
+            Assert.True(f.Paused);                       // nothing happened; the operator can still Continue
+            Assert.Equal(phase, f.Phase);
+            Assert.Equal(1, f.AttemptOf(f.CurrentStage));
+        }
+
+        [Fact]
+        public void CanRedo_IsTrueExactlyWhileBaselineTrainingOrRetentionIsRunning()
+        {
+            Assert.True(AtBaseline().CanRedo);
+            Assert.True(AtTraining1().CanRedo);
+            Assert.True(AtTraining3().CanRedo);
+            Assert.True(AtRetention().CanRedo);
+            Assert.False(new ProtocolFlow().CanRedo);
+            Assert.False(AtRest3().CanRedo);
         }
 
         [Fact]
@@ -533,7 +683,7 @@ namespace IMUMoCap.Tests.Unit
         {
             var f = AtRest3();
             Go(f, FlowEvent.Mark(FlowMarkers.Mc3));
-            Go(f, FlowEvent.Pause, FlowEvent.ResumeRedo);
+            Go(f, FlowEvent.Pause, FlowEvent.ResumeContinue);
             Go(f, FlowEvent.EndRecording);
 
             Go(f, FlowEvent.StartCondition);
@@ -672,19 +822,6 @@ namespace IMUMoCap.Tests.Unit
                 Go(f, FlowEvent.ResumeContinue);
                 Assert.Equal(before, f.ArState);
             }
-        }
-
-        [Fact, Trait("Category", "KnownIssue")]
-        public void KnownIssue_2_1_ResumeRedo_IsAccepted_InRest_AndBumpsTheFinishedBlocksAttempt()
-        {
-            var f = AtRest1();
-            Go(f, FlowEvent.Pause);
-
-            var r = f.Fire(FlowEvent.ResumeRedo);
-
-            Assert.True(r.Accepted);                       // T9/T10: Redo is not legal in Rest
-            Assert.Equal(2, f.AttemptOf("Training1"));
-            Assert.Equal(P(PhaseKind.Rest, Stage.Training1), f.Phase);
         }
 
         [Fact, Trait("Category", "KnownIssue")]

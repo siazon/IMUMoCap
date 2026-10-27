@@ -93,6 +93,8 @@ namespace IMUMoCap.Protocol
         private bool _rest1Entered, _rest3Entered;
         private bool _retentionCompleted;
         private bool _baselineDone; // 旧代码里是 _pipeline.BaselineProfile != null
+        // 正在为"重做当前阶段"重新校准(RecalPending/Recalibrating 的目标就是当前阶段本身,而不是下一个阶段)。
+        private bool _redo;
 
         /// <summary>每个被接受的事件触发一次(包括不改变 Phase 的,如 Pause/Mark)。参数:事件、之前的 Phase、之后的 Phase。</summary>
         public event Action<FlowEvent, Phase, Phase>? Transitioned;
@@ -101,7 +103,15 @@ namespace IMUMoCap.Protocol
 
         public bool IsRecording => Phase.Kind is not (PhaseKind.Idle or PhaseKind.Ended);
         public bool InRest => Phase.Kind == PhaseKind.Rest;
-        public bool IsRetention => Phase.Kind is PhaseKind.Retention or PhaseKind.RetentionDone;
+        public bool IsRetention =>
+            Phase.Kind is PhaseKind.Retention or PhaseKind.RetentionDone
+            || (_redo && Phase.Stage == Stage.Retention && Phase.Kind is PhaseKind.RecalPending or PhaseKind.Recalibrating);
+
+        /// <summary>
+        /// Redo(重做当前阶段)只在正在采集数据时合法:Baseline / Training / Retention。
+        /// Rest、等待/进行校准、Armed、RetentionDone、Failed 里没有"当前阶段"可重做(Q1)。
+        /// </summary>
+        public bool CanRedo => Phase.Kind is PhaseKind.Baseline or PhaseKind.Training or PhaseKind.Retention;
         public bool RetentionComplete => _retentionCompleted;
 
         /// <summary>旧 _restBlockJustFinished:进入过 Rest3 为 3,进入过 Rest1 为 1,否则 0。</summary>
@@ -111,7 +121,7 @@ namespace IMUMoCap.Protocol
         {
             PhaseKind.Armed or PhaseKind.Calibrating or PhaseKind.Baseline or PhaseKind.Failed => Stage.Baseline,
             // 旧行为:等待/进行阶段间重校准期间 _currentStage 仍是上一个阶段,直到 EnterStage
-            PhaseKind.RecalPending or PhaseKind.Recalibrating => Previous(Phase.Stage!.Value),
+            PhaseKind.RecalPending or PhaseKind.Recalibrating => _redo ? Phase.Stage : Previous(Phase.Stage!.Value),
             PhaseKind.Training or PhaseKind.Rest or PhaseKind.Retention or PhaseKind.RetentionDone or PhaseKind.Ended => Phase.Stage,
             _ => null,
         };
@@ -307,9 +317,13 @@ namespace IMUMoCap.Protocol
                 case FlowEventKind.ResumeRedo:
                     if (!IsRecording) return Ignore("no active recording");
                     if (!Paused) return Ignore("not paused");
-                    // 旧行为(§2-1、§2-4):任何 Phase 下都只是 attempt+1,不重置计数器,Rest/等待校准期间也一样。
+                    // T9:Redo 只在采集阶段合法(Q1);确认后 attempt+1,并回到"等待 Ready 重新校准",
+                    // 校准完成后重新开始同一阶段(计数器与秒表在 MainWindow.EnterStage 里随之清零)。
+                    if (!CanRedo) return Ignore($"redo is not legal in {Phase.Kind}");
                     _attempts[CurrentStage] = AttemptOf(CurrentStage) + 1;
                     Paused = false;
+                    _redo = true;
+                    Phase = new(PhaseKind.RecalPending, Phase.Stage);
                     return Accept;
 
                 case FlowEventKind.Mark:
@@ -323,6 +337,7 @@ namespace IMUMoCap.Protocol
                     // 但 _pipeline.Reset() 会清掉 BaselineProfile。
                     Phase = new(PhaseKind.Ended, CurrentStageValue);
                     _baselineDone = false;
+                    _redo = false;
                     Paused = false; // a pause must not outlive its recording (§2-14)
                     return Accept;
             }
@@ -332,7 +347,12 @@ namespace IMUMoCap.Protocol
         // 旧 EnterStage:阶段间重校准完成后真正进入该阶段。
         private void EnterStage(Stage stage)
         {
-            if (stage == Stage.Retention)
+            _redo = false;
+            if (stage == Stage.Baseline)
+            {
+                Phase = new(PhaseKind.Baseline, Stage.Baseline);   // only reached by redoing the baseline
+            }
+            else if (stage == Stage.Retention)
             {
                 _retentionCompleted = false;
                 Phase = new(PhaseKind.Retention, Stage.Retention);
@@ -350,6 +370,7 @@ namespace IMUMoCap.Protocol
             _rest1Entered = _rest3Entered = false;
             _retentionCompleted = false;
             _baselineDone = false;
+            _redo = false;
         }
 
         private static Stage? Next(Stage s) => s == Stage.Retention ? null : (Stage)((int)s + 1);

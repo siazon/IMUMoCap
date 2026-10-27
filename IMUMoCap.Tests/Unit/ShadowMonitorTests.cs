@@ -57,7 +57,7 @@ namespace IMUMoCap.Tests.Unit
                 FlowEvent.BaselineCompleted(true), FlowEvent.CalibrationStarted, FlowEvent.CalibrationCompleted,
                 FlowEvent.BlockComplete, FlowEvent.Mark(FlowMarkers.Mc1), FlowEvent.RestElapsed,
                 FlowEvent.CalibrationStarted, FlowEvent.CalibrationCompleted,
-                FlowEvent.Pause, FlowEvent.ResumeRedo,
+                FlowEvent.Pause, FlowEvent.ResumeRedo, FlowEvent.CalibrationStarted, FlowEvent.CalibrationCompleted,
                 FlowEvent.BlockComplete, FlowEvent.CalibrationStarted, FlowEvent.CalibrationCompleted,
                 FlowEvent.BlockComplete, FlowEvent.Mark(FlowMarkers.Mc3), FlowEvent.RestElapsed,
                 FlowEvent.CalibrationStarted, FlowEvent.CalibrationCompleted,

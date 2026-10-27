@@ -11,10 +11,18 @@ namespace IMUMoCap
         public string Reason { get; private set; } = "";
         public bool Redo { get; private set; }
 
-        public PauseResumeDialog(TimeSpan pauseElapsed)
+        /// <param name="redoAllowed">Redo restarts the stage being collected, so it only makes sense while the
+        /// baseline / a training block / retention is running — not during rest, calibration or waiting for Ready.</param>
+        public PauseResumeDialog(TimeSpan pauseElapsed, bool redoAllowed = true)
         {
             InitializeComponent();
             txtDuration.Text = $"Pause duration: {pauseElapsed.TotalMinutes:F1} min.";
+            if (!redoAllowed)
+            {
+                btnRedo.IsEnabled = false;
+                btnRedo.ToolTip = "Redo restarts the stage that is being collected. There is nothing to redo right now " +
+                                  "(resting, calibrating or waiting for Ready) — use Continue.";
+            }
         }
 
         private bool ValidateReason()
