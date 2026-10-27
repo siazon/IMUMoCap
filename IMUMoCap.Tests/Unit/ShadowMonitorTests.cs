@@ -30,6 +30,7 @@ namespace IMUMoCap.Tests.Unit
             CanMark: Markers.ToDictionary(m => m, f.CanMark),
             Attempts: ProtocolFlow.StageNames.ToDictionary(s => s, f.AttemptOf),
             Checklist: f.Checklist(),
+            MissingMarkers: f.MissingExpectedMarkers(),
             ArState: f.ArState);
 
         private static ProtocolFlow AtRest1()
@@ -108,6 +109,20 @@ namespace IMUMoCap.Tests.Unit
 
             var rows = ok.Checklist.Select(c => c.Label == "Training1" ? (c.Label, ChecklistStatus.Pending) : c).ToList();
             Assert.Contains("Checklist[Training1]", Assert.Single(ShadowMonitor.Differences(f, ok with { Checklist = rows })));
+        }
+
+        [Fact]
+        public void Differences_CompareTheListOfMissingMarkers_BecauseItDrivesTheEndRecordingWarning()
+        {
+            var f = AtRest1();                       // MC (Block1) is due and unmarked
+            var ok = SnapshotFrom(f);
+            Assert.Equal(new[] { "Manipulation Check (Block1)" }, ok.MissingMarkers);
+            Assert.Empty(ShadowMonitor.Differences(f, ok));
+
+            var diff = Assert.Single(ShadowMonitor.Differences(f, ok with { MissingMarkers = new List<string>() }));
+
+            Assert.Contains("MissingMarkers", diff);
+            Assert.Contains("Manipulation Check (Block1)", diff);
         }
 
         [Fact]

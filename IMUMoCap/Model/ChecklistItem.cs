@@ -7,7 +7,7 @@ namespace IMUMoCap.Model
 
     /// <summary>
     /// One row of the experiment-flow-at-a-glance checklist (MainWindow "Flow" panel).
-    /// Status is recomputed wholesale from pipeline/session state by MainWindow.RefreshChecklist()
+    /// Status and CanMark are recomputed wholesale from ProtocolFlow by MainWindow.RefreshChecklist()
     /// rather than pushed from scattered call sites, so it can never drift out of sync.
     /// </summary>
     public sealed class ChecklistItem : INotifyPropertyChanged
@@ -39,9 +39,7 @@ namespace IMUMoCap.Model
         }
 
         // Whether the inline Mark button (only rendered when IsMarkable) is currently clickable — mirrors
-        // the window the marker belongs to being open (set by MainWindow's EnterRest/CompleteRetention/
-        // AdvanceStage/BtnStartCondition_Click, the same places that used to enable/disable the old
-        // standalone Mark buttons).
+        // the window the marker belongs to being open (ProtocolFlow.CanMark, applied by MainWindow.RefreshChecklist).
         private bool _canMark = false;
         public bool CanMark
         {

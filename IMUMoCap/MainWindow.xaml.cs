@@ -1364,9 +1364,10 @@ namespace IMUMoCap
                     IsPaused: _content.IsPaused,
                     IsRecording: _recorder.IsRecording,
                     Marked: markers.ToDictionary(m => m, Marked),
-                    CanMark: markers.ToDictionary(m => m, m => FindMarkerItem(m)?.CanMark ?? false),
+                    CanMark: markers.ToDictionary(m => m, m => _legacyCanMark.GetValueOrDefault(m)),
                     Attempts: ConditionStages.ToDictionary(s => s, s => _stageAttempt.GetValueOrDefault(s, 1)),
-                    Checklist: _content.FlowChecklist.Select(i => (i.Label, i.Status)).ToList(),
+                    Checklist: ComputeLegacyChecklist(),
+                    MissingMarkers: LegacyMissingExpectedMarkers(),
                     ArState: _lastState));
             }
             catch { /* never disturb the experiment */ }
@@ -1462,11 +1463,11 @@ namespace IMUMoCap
             _isRetention = false;
             _retentionComplete = false;
             _restBlockJustFinished = 0;
-            if (FindMarkerItem("ManipulationCheck_AfterBlock1") is { } mc1) mc1.CanMark = false;
-            if (FindMarkerItem("ManipulationCheck_AfterBlock3") is { } mc3) mc3.CanMark = false;
-            if (FindMarkerItem("NASA-TLX_Admin1") is { } tlx1) tlx1.CanMark = false;
-            if (FindMarkerItem("IMI-PC") is { } imiPc) imiPc.CanMark = false;
-            if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = false;
+            SetLegacyCanMark("ManipulationCheck_AfterBlock1", false);
+            SetLegacyCanMark("ManipulationCheck_AfterBlock3", false);
+            SetLegacyCanMark("NASA-TLX_Admin1", false);
+            SetLegacyCanMark("IMI-PC", false);
+            SetLegacyCanMark("NASA-TLX_Admin2", false);
             _mc1Marked = false;
             _mc3Marked = false;
             _nasaTlx1Marked = false;
@@ -1558,10 +1559,10 @@ namespace IMUMoCap
             _inRest = true;
             _restBlockJustFinished = blockJustFinished;
             bool isPostBlock3 = blockJustFinished == 3;
-            if (FindMarkerItem("ManipulationCheck_AfterBlock1") is { } mc1) mc1.CanMark = blockJustFinished == 1;
-            if (FindMarkerItem("ManipulationCheck_AfterBlock3") is { } mc3) mc3.CanMark = isPostBlock3;
-            if (FindMarkerItem("NASA-TLX_Admin1") is { } tlx1) tlx1.CanMark = isPostBlock3;
-            if (FindMarkerItem("IMI-PC") is { } imiPc) imiPc.CanMark = isPostBlock3;
+            SetLegacyCanMark("ManipulationCheck_AfterBlock1", blockJustFinished == 1);
+            SetLegacyCanMark("ManipulationCheck_AfterBlock3", isPostBlock3);
+            SetLegacyCanMark("NASA-TLX_Admin1", isPostBlock3);
+            SetLegacyCanMark("IMI-PC", isPostBlock3);
             _content.CurrentStageLabel = $"{_currentStage} (Resting)";
             _stageStopwatch.Restart();
             BroadcastArState("rest", restDurationSec: durationSec, blockOverride: blockJustFinished);
@@ -1604,6 +1605,12 @@ namespace IMUMoCap
         private Model.ChecklistItem? FindMarkerItem(string markerStage) =>
             _content.FlowChecklist.FirstOrDefault(i => i.MarkerStage == markerStage);
 
+        // T7: the Flow panel and the End Recording warning now read ProtocolFlow. The legacy flags and these legacy
+        // "marker window open" values are still maintained, but only so ShadowMonitor can keep checking the new
+        // state machine against an independent computation until the legacy flags are deleted (T8).
+        private readonly Dictionary<string, bool> _legacyCanMark = new();
+        private void SetLegacyCanMark(string marker, bool value) => _legacyCanMark[marker] = value;
+
         // Set while waiting for the pre-stage recalibration (see AdvanceStage/EnterStage) to complete —
         // holds the stage name we're about to enter once CalibrationState.Completed fires again.
         private string? _pendingStageEntry;
@@ -1644,10 +1651,10 @@ namespace IMUMoCap
             if (_pendingStageEntry != null) return; // already awaiting recalibration for the next stage
             if (_inRest) _recorder.RecordEvent("RestEnd", restEndReason);
             _inRest = false; // any stage advance ends a pending rest
-            if (FindMarkerItem("ManipulationCheck_AfterBlock1") is { } mc1) mc1.CanMark = false;
-            if (FindMarkerItem("ManipulationCheck_AfterBlock3") is { } mc3) mc3.CanMark = false;
-            if (FindMarkerItem("NASA-TLX_Admin1") is { } tlx1) tlx1.CanMark = false;
-            if (FindMarkerItem("IMI-PC") is { } imiPc) imiPc.CanMark = false;
+            SetLegacyCanMark("ManipulationCheck_AfterBlock1", false);
+            SetLegacyCanMark("ManipulationCheck_AfterBlock3", false);
+            SetLegacyCanMark("NASA-TLX_Admin1", false);
+            SetLegacyCanMark("IMI-PC", false);
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             if (idx < 0 || idx >= ConditionStages.Length - 1) return;
 
@@ -1714,7 +1721,7 @@ namespace IMUMoCap
                 _isRetention = true;
                 _retentionComplete = false;
                 _retentionStepsL = _retentionStepsR = 0;
-                if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = false;
+                SetLegacyCanMark("NASA-TLX_Admin2", false);
                 _content.StatusLabel = "Retention: AR feedback removed, walk naturally.";
                 BroadcastArState("retention");
             }
@@ -1751,13 +1758,24 @@ namespace IMUMoCap
             EndFlow("operator ended");
         }
 
-        // Recomputes the whole flow checklist from current session state every call (called from the
-        // 60ms timeline timer) rather than being pushed from each individual mutation site — cheap for
-        // 10 rows, and guarantees the panel can never drift out of sync with the state it's reflecting.
+        // Recomputes the whole flow checklist every call (called from the 60ms timeline timer) rather than being
+        // pushed from each individual mutation site — cheap for 10 rows, and guarantees the panel can never drift
+        // out of sync with the state it's reflecting. Since T7 the source is ProtocolFlow (see _flow), not the
+        // scattered legacy flags.
         private void RefreshChecklist()
         {
             if (_content.FlowChecklist.Count == 0) return; // not yet initialized
 
+            foreach (var (label, status) in _flow.Checklist())
+                SetChecklistStatus(label, status);
+            foreach (var item in _content.FlowChecklist)
+                if (item.MarkerStage != null)
+                    item.CanMark = _flow.CanMark(item.MarkerStage);
+        }
+
+        // The pre-T7 computation, kept only as the "legacy side" of the shadow comparison (deleted in T8).
+        private List<(string Label, Model.ChecklistStatus Status)> ComputeLegacyChecklist()
+        {
             int idx = Array.IndexOf(ConditionStages, _currentStage);
             bool baselineDone   = _pipeline.BaselineProfile != null;
             bool training1Done  = _restBlockJustFinished >= 1; // Block1's rest window opens the instant Training1 finishes
@@ -1766,27 +1784,24 @@ namespace IMUMoCap
             bool training3Done  = _restBlockJustFinished == 3; // Block3's rest window opens the instant Training3 finishes
             bool block3WindowDue = _restBlockJustFinished == 3; // MC3/NASA-TLX1/IMI-PC all live in this window
 
-            SetChecklist("Baseline", baselineDone);
-            SetChecklist("Training1", training1Done);
-            SetChecklistMarker("MC (Block1)", mc1Due, _mc1Marked);
-            SetChecklist("Training2", training2Done);
-            SetChecklist("Training3", training3Done);
-            SetChecklistMarker("MC (Block3)", block3WindowDue, _mc3Marked);
-            SetChecklistMarker("NASA-TLX #1", block3WindowDue, _nasaTlx1Marked);
-            SetChecklistMarker("IMI-PC", block3WindowDue, _imiPcMarked);
-            SetChecklist("Retention", _retentionComplete);
-            SetChecklistMarker("NASA-TLX #2", _retentionComplete, _nasaTlx2Marked);
+            static Model.ChecklistStatus Done(bool done) => done ? Model.ChecklistStatus.Done : Model.ChecklistStatus.Pending;
+            static Model.ChecklistStatus Marker(bool due, bool marked) =>
+                marked ? Model.ChecklistStatus.Done : due ? Model.ChecklistStatus.Missing : Model.ChecklistStatus.Pending;
+
+            return new()
+            {
+                ("Baseline", Done(baselineDone)),
+                ("Training1", Done(training1Done)),
+                ("MC (Block1)", Marker(mc1Due, _mc1Marked)),
+                ("Training2", Done(training2Done)),
+                ("Training3", Done(training3Done)),
+                ("MC (Block3)", Marker(block3WindowDue, _mc3Marked)),
+                ("NASA-TLX #1", Marker(block3WindowDue, _nasaTlx1Marked)),
+                ("IMI-PC", Marker(block3WindowDue, _imiPcMarked)),
+                ("Retention", Done(_retentionComplete)),
+                ("NASA-TLX #2", Marker(_retentionComplete, _nasaTlx2Marked)),
+            };
         }
-
-        private void SetChecklist(string label, bool done) =>
-            SetChecklistStatus(label, done ? Model.ChecklistStatus.Done : Model.ChecklistStatus.Pending);
-
-        // For the 3 manual-click audit markers: Done once clicked, Missing once its window is reached but
-        // not yet clicked, Pending before the window is reached (nothing to do yet, not worth flagging).
-        private void SetChecklistMarker(string label, bool due, bool marked) =>
-            SetChecklistStatus(label, marked ? Model.ChecklistStatus.Done
-                                    : due    ? Model.ChecklistStatus.Missing
-                                             : Model.ChecklistStatus.Pending);
 
         private void SetChecklistStatus(string label, Model.ChecklistStatus status)
         {
@@ -1799,7 +1814,10 @@ namespace IMUMoCap
         // Only flags a marker as missing once the stage that's supposed to produce it has actually been
         // reached — an operator ending early (dropout, equipment failure) before Block3's rest window or
         // before Retention finished should NOT be nagged about instruments that were never due yet.
-        private List<string> MissingExpectedMarkers()
+        private List<string> MissingExpectedMarkers() => _flow.MissingExpectedMarkers().ToList();
+
+        // The pre-T7 computation, kept only as the "legacy side" of the shadow comparison (deleted in T8).
+        private List<string> LegacyMissingExpectedMarkers()
         {
             var missing = new List<string>();
             if (_restBlockJustFinished >= 1 && !_mc1Marked)
@@ -1827,7 +1845,7 @@ namespace IMUMoCap
             _shadow.Fire(Protocol.FlowEvent.RetentionTargetReached);
             // Marks where Retention's counted data ends; rows written afterwards (waiting for NASA-TLX #2 / End) keep the Retention tag.
             _recorder.RecordEvent("RetentionDone", $"{reason}; steps L/R={_retentionStepsL}/{_retentionStepsR}");
-            if (FindMarkerItem("NASA-TLX_Admin2") is { } tlx2) tlx2.CanMark = true;
+            SetLegacyCanMark("NASA-TLX_Admin2", true);
             _content.StatusLabel = "Retention complete. Administer NASA-TLX (Admin 2), then click End Recording.";
             log($"Retention complete ({reason}) — awaiting NASA-TLX Admin 2 before ending. Click End Recording when done.");
         }

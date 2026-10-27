@@ -19,6 +19,7 @@ namespace IMUMoCap.Protocol
         IReadOnlyDictionary<string, bool> CanMark,
         IReadOnlyDictionary<string, int> Attempts,
         IReadOnlyList<(string Label, ChecklistStatus Status)> Checklist,
+        IReadOnlyList<string> MissingMarkers,
         string ArState);
 
     /// <summary>
@@ -153,6 +154,7 @@ namespace IMUMoCap.Protocol
                 Cmp($"Checklist[{label}]", legacyStatus, status.ToString());
             }
 
+            Cmp("MissingMarkers", string.Join("|", l.MissingMarkers), string.Join("|", f.MissingExpectedMarkers()));
             Cmp("ArState", l.ArState, f.ArState);
             return d;
         }
