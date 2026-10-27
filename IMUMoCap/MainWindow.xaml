@@ -168,8 +168,8 @@
                         </UniformGrid>
 
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                            <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnScreening_Click" Width="120"
-                                    ToolTip="Show the visual screening pages on the AR glasses (click again to cancel)">
+                            <Button x:Name="BtnScreening" Style="{StaticResource SecondaryButtonStyle}" Click="BtnScreening_Click" Width="120"
+                                    ToolTip="Show the visual screening pages on the AR glasses (click again to cancel). Only available between conditions — disabled while a condition is recording">
                                 <TextBlock Text="Screening" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
                             <StackPanel x:Name="ScreeningPanel" Orientation="Horizontal" Visibility="Collapsed" Margin="8,0,0,0">

@@ -296,6 +296,7 @@ namespace IMUMoCap
             {
                 DrawTimeline();
                 _content.StageElapsedDisplay = _stageStopwatch.Elapsed.ToString(@"mm\:ss");
+                BtnScreening.IsEnabled = !_recorder.IsRecording; // screening is only for between conditions
 
                 var frameQuality = _imuFrameCollector.GenerateReport();
                 _content.PelvisGapCount = frameQuality.PelvisGapFrames;
@@ -1173,6 +1174,7 @@ namespace IMUMoCap
         private void BtnScreening_Click(object sender, RoutedEventArgs e)
         {
             if (_screeningActive) { EndScreening(); log("Visual screening cancelled (no result saved)."); return; }
+            if (_recorder.IsRecording) { log("Screening is only available between conditions — End Recording first."); return; }
 
             string participantId = txtParticipantId.Text.Trim();
             if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
