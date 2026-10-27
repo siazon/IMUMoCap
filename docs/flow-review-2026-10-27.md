@@ -22,7 +22,7 @@
 
 1. **Redo 不重置步数**:Redo 分支(`:1662-1671`)只改 attempt、记录 marker、重启秒表;`SetTrainingBlock` 只在 `EnterStage:1486` 调用,Retention 的 `_retentionStepsL/R` 也只在 `EnterStage` 清零。作废尝试的有效步数可能计入 100 步目标。
 2. **暂停中点 Next Stage**:`BtnNextStage_Click` 不检查 `IsPaused`;`WriteRow` 受 `!IsPaused` 门控,新阶段进入后数据行可能不写入。
-3. **暂停期间 block 完成**:`OnTrainingBlockComplete`(`:289`)不检查 `IsPaused`,pipeline 步数计数也不受暂停影响。
+3. **暂停期间 block 完成**:`OnTrainingBlockComplete`(`:289`)不检查 `IsPaused`,pipeline 步数计数也不受暂停影响。 **更正(2026-10-27 实机数据)**:该前提不成立——`OnXsensData`(`MainWindow.xaml.cs:682`)在暂停时直接丢弃数据包,pipeline 的步数、fpa、CSV 行都会停止前进;实机数据里暂停窗口对应 257 个包的缺口(约 6.4 秒 @40 Hz),与暂停时长吻合。因此暂停期间几乎不会发生 block 完成,仅可能有暂停前已排入 Dispatcher 队列的 `OnTrainingBlockComplete`。T10 的"挂起并重放"只作极小的兜底。
 4. **Rest/重校准期间 Pause → Resume(Continue)**:Resume 调用 `ArStateForStage(_currentStage)`(`:1681`),Rest 时 `_currentStage` 仍是 `Training1`,眼镜被发成 `training`,PC 实际在 Rest。Rest 期间选 Redo 的语义也不成立。
 5. **Next Stage 绕过协议窗口**:直接调 `AdvanceStage`,不经 `EnterRest`;Training1/3 点它会跳过 Rest 与 marker 窗口,且 `MissingExpectedMarkers()` 不会提醒。
 6. **Baseline 阶段点 Next Stage**:未检查 `BaselineProfile`,可能在无 target 的情况下进入 Training1,`StartTraining()`/`SaveBaseline` 被跳过,`_baselineTimer` 不停。
@@ -34,6 +34,8 @@
 12. **漏点的 marker 事后无法补点,而 End 弹窗却建议"回去点 Mark"**:`AdvanceStage` 在离开 Rest 时把 MC1/MC3/NASA-TLX#1/IMI-PC 的 `CanMark` 全部置 false(`:1436-1439`),只有 Rest 窗口内可点。窗口过了,Flow 变橙(due)但标签不可点,`BtnEndCondition_Click` 弹窗里的"go back and click the matching Mark button first"(`:1518`)实际做不到。NASA-TLX#2 的窗口是 `CompleteRetention` 之后至 End,不受此影响。
 13. **`GetScreeningResult` 有隐式回退**:`ExperimentRecorder.cs:71` 在被试目录下只要存在任意 `*_Session.csv` 即返回 "Pass"。归档 Abort 的旧文件时,命名必须避开这个通配符(见 §7.8)。
 14. **暂停状态在 End Recording / Start Condition 之后不会清除**(T1 建模时发现):`IsPaused` 在 `EndFlow` 和 `BtnStartCondition_Click` 里都没有重置,而 `BtnPauseResume_Click` 在没有录制时直接返回,所以暂停中点 End Recording 后,Pause 按钮仍显示 "Resume" 且无法恢复;下一个 condition 开始后 `WriteRow` 受 `!IsPaused` 门控,**整个新 session 的数据行都不会写入**,直到操作员点 Resume。(未复现,依据读代码;`_openPause` 同样不会被重置。)
+15. **实际采样率是 40 Hz,而代码按 100 Hz 假设**(2026-10-27 实机数据):`docs/Diagnostics_20261027_134502.csv` 中相邻包(PacketId 差 1)的墙钟间隔中位数恰为 25.0 ms;原始样本 `ImuSamples_20261027_134500.csv` 的 12703 个包号跨度对应事件日志里约 318 秒,同样是 40 Hz。代码里 `_sampleRateHz = 100` 从未被更新(`MainWindow.xaml.cs:74、204`)。按 `PROJECT_CONTEXT.md` 的描述,以"帧"计数的阈值(静态校准 300 帧、站立防抖 5 帧、转弯确认 10 帧等)是按 100 Hz 写的,实际时长是文档的 2.5 倍。旁证:事件日志里 5 次 `CalibrationStart→Done` 耗时 6.6–7.9 秒,与 300 帧 ÷ 40 Hz ≈ 7.5 秒吻合,而文档说校准采集是 3 秒。历史 Diagnostics 中 2026-07-07 两份间隔为 10 ms,之后多为 25 ms,但该间隔是**处理时的墙钟**,回放会改变它,无法据此区分实机与回放。**待确认**:40 Hz 是否是有意的采集设置,阈值是否按 40 Hz 调过。
+16. **事件日志在第一行诊断数据到来之前的事件 PacketId 为 0**(T2 实机验证发现):`ConditionStart`、`StageStart(Baseline)`、首次 `CalibrationStart/Done` 共 4 条 PacketId=0,因为 `LatestPacketId` 只在 `OnDiagnosticsFrame` 里更新,而首次校准期间 pipeline 在产生诊断行之前就返回了。其余事件实测与时间最近的诊断行 PacketId 一致(差 0,时间偏差 ≤ 30 ms);`StageStart` 与 `PauseEnd` 发生在数据缺口之后,其 PacketId 是缺口前最后一包,与"取事件之后第一个包为参照"的约定吻合。建议 T2.1:改在原始包路径(`OnXsensData`,暂停门控之后)更新 `LatestPacketId`。
 
 ## 3. 待决定(截至本文,尚未回答)
 
@@ -244,7 +246,7 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | # | 操作员的回答 | 记录为 |
 |---|---|---|
 | O1 | "测试时想快速到下一阶段才会使用" / "主要就是为了跳过无用的等待时间" | **已定**:Next Stage 是测试用的硬跳,要能越过 Rest,所以不采用原默认"等同提前完成"。跳过的窗口写进事件与 Meta,避免静默漏标;录制中弹确认防误触 |
-| O2 | "暂停时一般让被试者坐下休息" | **已定**:保留"挂起并重放"作兜底(逻辑很小);被试坐下时 block 基本不会在暂停中完成 |
+| O2 | "暂停时一般让被试者坐下休息" | **已定**:保留"挂起并重放"作兜底(逻辑很小);被试坐下时 block 基本不会在暂停中完成。实机数据证实暂停时数据包在数据源即被丢弃(见 §2-3 更正),此机制更只是兜底 |
 | O3 | "还未发生 redo,为了防止 IMU 安装脱落等意外,要弹窗" | **理解(待确认)**:Redo 前弹窗提示,确认后强制重新校准再重做(IMU 脱落/移位后旧校准必然失效) |
 | O4 | "不要禁用" | **已定**:窗口过后仍可补点,事件标 `late=true` |
 | O5 | "失败时整个 condition 重来";随后更正:"阶段之前的校准失败应该重试直到成功,如果多次不成功由操作员判断重启软件" | **已定**:所有校准失败(首次校准与阶段间重校准)一律回到可点 Ready 的状态重试,不设次数上限;多次不成功由操作员决定重启软件。**只有基线步数不足**进入 `Failed`,只允许 Abort(整个 condition 重来)或 End |
@@ -368,9 +370,10 @@ M6 行为修复,每项单独提交且带"先失败后通过"的测试:
 | ID | 状态 | 提交 | 备注 |
 |---|---|---|---|
 | P0 | 完成(2026-10-27) | — | 见 §8.5 |
-| P1 | 待操作员 | — | 重启测量实测 |
+| P1 | 部分完成(2026-10-27) | — | 实机数据(`docs/ImuSamples_20261027_134500.csv`、`Diagnostics_20261027_134502.csv`、`…_Events.csv`)中**没有 Measure 停止/重启的痕迹**:PacketId 全程单调无回退,唯一的大缺口是暂停窗口(暂停期间测量一直在跑,257 个包 ≈ 暂停时长)。**重启测量后 PacketId 是否归零、FPA 是否突变仍未回答**。同时发现 §2-15、§2-16 |
 | T3 | 完成(2026-10-27) | `9c51de36` | 6 个新单元测试;Retention 的步数结束逻辑在 `MainWindow`,无法单测,留给 T16 演练;ParamsDialog 的 XAML 绑定未启动界面验证,首次打开 Parameters 窗口时请确认滑块显示 |
 | T4 | 完成(2026-10-27) | `c28750f0` | 2 个新单元测试(Meta 顶层字段集合固定为契约);`OrderGroup` 在 `.py/.json` 中无引用,仓库内分析脚本不受影响;仓库外的脚本无法检查。旧 Meta 文件里已有的 `OrderGroup` 字段不会被修改;`docs/*.md` 里的提及留给 T15 |
 | T5 | 完成(2026-10-27) | `git log --grep "(T5)"` | 纯界面门控,无法单元测试:录制中 Screening 按钮禁用(60ms 定时器按 `_recorder.IsRecording` 刷新)并在处理器里再拦一次;只验证了编译与现有测试。**未启动界面确认**,留给 T16 演练 |
 | T2 | 完成(2026-10-27) | `git log --grep "(T2)"` | 9 个新单元测试 + Meta 字段契约测试更新(新增 `Events`、`RunConfig`,旧字段不变)。已接入的事件:ConditionStart、StageStart/End、PauseStart/End、Redo、Marker、RecalPrompt、CalibrationStart/Done/Failed、End;Save Diagnostics 额外导出 `*_Events.csv`(诊断行为空时不导出)。**`MainWindow` 里的接线(PacketId 追踪、校准事件、End 事件、导出、`BuildRunConfig`)只验证了编译,未启动界面**,留给 T16 演练。`OperatorSkips` 字段推迟到 T11(目前没有任何代码会写它) |
+| T2.1 | 未开始 | — | 事件日志的 `LatestPacketId` 改由原始包路径更新,修复 §2-16(首次校准前的事件 PacketId=0) |
 | T1 | 完成(2026-10-27) | `git log --grep "(T1)"` | 新增 `IMUMoCap/Protocol/ProtocolFlow.cs`(纯逻辑,**尚未接入 `MainWindow`**,接入在 T6)与 44 个单元测试(含 12 个 `[KnownIssue]`,固定 §2-1/2/4/5/6/12/14 的现状)。复刻的旧语义见类注释。**有意没有复刻**:(a) 在 Rest 中点 End 后旧代码 marker 窗口仍保持可点的怪异行为;(b) 旧代码在 StartCondition 时向 AR 广播 `armed`,而 `ArState` 对"暂停且正在录制"一律给 `paused`;(c) 未建模 Start Calibration、Screening、Measure、回放。这三处在 T6 影子模式里若出现不一致属预期,需逐条判定 |
