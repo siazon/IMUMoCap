@@ -1,0 +1,30 @@
+﻿Seq,Type,PacketId,TsUtc,Stage,Attempt,Detail
+1,ConditionStart,25208049,2026-10-27T15:41:50.5031706Z,,1,Pa23 IF
+2,StageStart,25208049,2026-10-27T15:41:50.5150517Z,Baseline,1,
+3,CalibrationStart,25208137,2026-10-27T15:41:52.6869272Z,Baseline,1,initial
+4,CalibrationDone,25208367,2026-10-27T15:41:58.4319517Z,Baseline,1,initial
+5,StageEnd,25208930,2026-10-27T15:42:12.5146825Z,Baseline,1,activeSeconds=22.0
+6,RecalPrompt,25208930,2026-10-27T15:42:12.5149246Z,Baseline,1,Training1
+7,CalibrationStart,25208978,2026-10-27T15:42:13.7133810Z,Baseline,1,recalibration before Training1
+8,CalibrationDone,25209209,2026-10-27T15:42:19.4793252Z,Baseline,1,recalibration before Training1
+9,StageStart,25209209,2026-10-27T15:42:19.4853489Z,Training1,1,
+10,Marker,25209697,2026-10-27T15:42:31.6775110Z,Training1,1,ManipulationCheck_AfterBlock1
+11,StageEnd,25209742,2026-10-27T15:42:32.8101985Z,Training1,1,activeSeconds=13.3
+12,RecalPrompt,25209742,2026-10-27T15:42:32.8154196Z,Training1,1,Training2
+13,CalibrationStart,25209828,2026-10-27T15:42:34.9727975Z,Training1,1,recalibration before Training2
+14,CalibrationDone,25210245,2026-10-27T15:42:45.3898110Z,Training1,1,recalibration before Training2
+15,StageStart,25210245,2026-10-27T15:42:45.3966941Z,Training2,1,
+16,StageEnd,25210940,2026-10-27T15:43:02.7580380Z,Training2,1,activeSeconds=17.4
+17,RecalPrompt,25210940,2026-10-27T15:43:02.7629503Z,Training2,1,Training3
+18,CalibrationStart,25211078,2026-10-27T15:43:06.2037701Z,Training2,1,recalibration before Training3
+19,CalibrationDone,25211310,2026-10-27T15:43:12.0028724Z,Training2,1,recalibration before Training3
+20,StageStart,25211310,2026-10-27T15:43:12.0095520Z,Training3,1,
+21,Marker,25211786,2026-10-27T15:43:23.9135465Z,Training3,1,ManipulationCheck_AfterBlock3
+22,Marker,25211827,2026-10-27T15:43:24.9285710Z,Training3,1,IMI-PC
+23,Marker,25211842,2026-10-27T15:43:25.3118497Z,Training3,1,NASA-TLX_Admin1
+24,StageEnd,25211879,2026-10-27T15:43:26.2341925Z,Training3,1,activeSeconds=14.2
+25,RecalPrompt,25211879,2026-10-27T15:43:26.2373555Z,Training3,1,Retention
+26,CalibrationStart,25211955,2026-10-27T15:43:28.1488620Z,Training3,1,recalibration before Retention
+27,CalibrationDone,25212184,2026-10-27T15:43:33.8565864Z,Training3,1,recalibration before Retention
+28,StageStart,25212184,2026-10-27T15:43:33.8617924Z,Retention,1,
+29,Marker,25212595,2026-10-27T15:43:44.1375760Z,Retention,1,NASA-TLX_Admin2

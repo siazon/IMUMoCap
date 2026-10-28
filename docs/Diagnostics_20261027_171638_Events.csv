@@ -1,0 +1,46 @@
+﻿Seq,Type,PacketId,TsUtc,Stage,Attempt,Detail
+1,ConditionStart,25480432,2026-10-27T17:14:03.3003369Z,,1,Pfe1 IF
+2,StageStart,25480432,2026-10-27T17:14:03.3116968Z,Baseline,1,
+3,CalibrationStart,25481848,2026-10-27T17:14:17.4520858Z,Baseline,1,initial
+4,CalibrationDone,25482077,2026-10-27T17:14:19.7408186Z,Baseline,1,initial
+5,PauseStart,25483153,2026-10-27T17:14:30.5013273Z,Baseline,1,
+6,PauseEnd,25483153,2026-10-27T17:14:34.4013600Z,Baseline,1,decision=Continue; reason=34
+7,PauseStart,25483672,2026-10-27T17:14:35.6987662Z,Baseline,1,
+8,PauseEnd,25483672,2026-10-27T17:14:40.5542725Z,Baseline,1,decision=Redo; reason=34
+9,Redo,25483672,2026-10-27T17:14:40.5606728Z,Baseline,2,attempt=2
+10,CalibrationStart,25484350,2026-10-27T17:14:42.4728680Z,Baseline,2,recalibration for redo of Baseline
+11,CalibrationDone,25484629,2026-10-27T17:14:45.2587098Z,Baseline,2,recalibration for redo of Baseline
+12,StageStart,25484629,2026-10-27T17:14:45.2638131Z,Baseline,2,redo attempt=2
+13,StageEnd,25485609,2026-10-27T17:14:55.0672396Z,Baseline,2,activeSeconds=43.0
+14,RecalPrompt,25485609,2026-10-27T17:14:55.0675155Z,Baseline,2,Training1
+15,CalibrationStart,25485979,2026-10-27T17:14:58.7614548Z,Baseline,2,recalibration before Training1
+16,CalibrationFailed,25487029,2026-10-27T17:15:09.2595290Z,Baseline,2,recalibration before Training1
+17,CalibrationStart,25487546,2026-10-27T17:15:14.4364234Z,Baseline,2,recalibration before Training1
+18,CalibrationDone,25487781,2026-10-27T17:15:16.7812362Z,Baseline,2,recalibration before Training1
+19,StageStart,25487781,2026-10-27T17:15:16.7866046Z,Training1,1,
+20,BlockComplete,25489473,2026-10-27T17:15:33.7065425Z,Training1,1,target reached; steps L/R=10/10; rest 120s follows
+21,Marker,25489851,2026-10-27T17:15:37.4853236Z,Training1,1,ManipulationCheck_AfterBlock1
+22,RestEnd,25489901,2026-10-27T17:15:37.9891553Z,Training1,1,skipped by Next Stage
+23,StageEnd,25489901,2026-10-27T17:15:37.9923071Z,Training1,1,activeSeconds=21.2
+24,RecalPrompt,25489901,2026-10-27T17:15:37.9926715Z,Training1,1,Training2
+25,CalibrationStart,25490091,2026-10-27T17:15:39.8865992Z,Training1,1,recalibration before Training2
+26,CalibrationDone,25490320,2026-10-27T17:15:42.1718874Z,Training1,1,recalibration before Training2
+27,StageStart,25490320,2026-10-27T17:15:42.1768223Z,Training2,1,
+28,BlockComplete,25491251,2026-10-27T17:15:51.4869789Z,Training2,1,"target reached; steps L/R=12/10; no rest, recalibration follows"
+29,StageEnd,25491251,2026-10-27T17:15:51.4946815Z,Training2,1,activeSeconds=9.3
+30,RecalPrompt,25491251,2026-10-27T17:15:51.4952023Z,Training2,1,Training3
+31,CalibrationStart,25491886,2026-10-27T17:15:57.8349868Z,Training2,1,recalibration before Training3
+32,CalibrationDone,25492114,2026-10-27T17:16:00.1116010Z,Training2,1,recalibration before Training3
+33,StageStart,25492114,2026-10-27T17:16:00.1165772Z,Training3,1,
+34,BlockComplete,25492923,2026-10-27T17:16:08.2177000Z,Training3,1,target reached; steps L/R=10/11; rest 300s follows
+35,Marker,25493208,2026-10-27T17:16:11.0591775Z,Training3,1,ManipulationCheck_AfterBlock3
+36,Marker,25493246,2026-10-27T17:16:11.4389840Z,Training3,1,NASA-TLX_Admin1
+37,Marker,25493283,2026-10-27T17:16:11.8066749Z,Training3,1,IMI-PC
+38,RestEnd,25493520,2026-10-27T17:16:14.1780028Z,Training3,1,skipped by Next Stage
+39,StageEnd,25493520,2026-10-27T17:16:14.1845292Z,Training3,1,activeSeconds=14.1
+40,RecalPrompt,25493520,2026-10-27T17:16:14.1849158Z,Training3,1,Retention
+41,CalibrationStart,25493719,2026-10-27T17:16:16.1671528Z,Training3,1,recalibration before Retention
+42,CalibrationDone,25493945,2026-10-27T17:16:18.4281038Z,Training3,1,recalibration before Retention
+43,StageStart,25493945,2026-10-27T17:16:18.4377616Z,Retention,1,
+44,RetentionDone,25495310,2026-10-27T17:16:32.0739461Z,Retention,1,retention target reached (10/11 valid steps); steps L/R=10/11
+45,Marker,25495685,2026-10-27T17:16:35.8302949Z,Retention,1,NASA-TLX_Admin2
