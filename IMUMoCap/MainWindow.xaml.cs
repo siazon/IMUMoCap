@@ -1813,6 +1813,15 @@ namespace IMUMoCap
                 }
                 else
                 {
+                    // Continuing without every required IMU would leave the pipeline silent (frame bundles never complete).
+                    var missing = _slotRegistry.Imus.Where(i => i.Role != ImuRole.None && !i.IsConnected).Select(i => i.Role).ToList();
+                    if (missing.Count > 0)
+                    {
+                        log($"Continue refused — IMU not connected: {string.Join(", ", missing)}. Still paused.");
+                        MessageBox.Show($"Cannot continue: IMU not connected ({string.Join(", ", missing)}).\n\nWait for it to reconnect, or choose Redo.",
+                            "IMU missing", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        return;
+                    }
                     _recorder.EndPause("Continue", dlg.Reason);
                     _shadow.Fire(Protocol.FlowEvent.ResumeContinue);
                     _stageStopwatch.Start();
