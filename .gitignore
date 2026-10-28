@@ -303,3 +303,6 @@ __pycache__/
 
 # Unity per-user editor settings
 IMUARFPA/UserSettings/
+
+# Unity standalone build output
+IMUARFPA/FeedBackWin11/
