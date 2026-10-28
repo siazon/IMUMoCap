@@ -1,6 +1,6 @@
 # IMUMoCap 项目背景文档 (for prime-agent)
 
-> 本文档基于 2026-09-04 首次调研整理,并于 2026-09-06 根据后续改动(3-block 训练流程恢复、Rest+MC/问卷审计标记、AR 前端 Unity 工程落地)更新,又于 2026-09-16 根据后续改动(`live` 广播改为自动门控取代 `ChkLiveAngleToAr` 手动开关、EF 新增实际脚印短暂叠加显示、Session 卡片新增 Open Data Folder 按钮)更新。2026-10-20 又对照当前代码整体校对了一遍(标定/站立/结算参数、rest 自动推进 + 赛前重标定、`continueTraining` 移除、IMU 配置外置、AR 反馈渲染三模式等,见各节)。所有结论均来自实际读取源码 / 文档得出,而非猜测。
+> 本文档基于 2026-09-04 首次调研整理,并于 2026-09-06 根据后续改动(3-block 训练流程恢复、Rest+MC/问卷审计标记、AR 前端 Unity 工程落地)更新,又于 2026-09-16 根据后续改动(`live` 广播改为自动门控取代 `ChkLiveAngleToAr` 手动开关、EF 新增实际脚印短暂叠加显示、Session 卡片新增 Open Data Folder 按钮)更新。2026-10-20 又对照当前代码整体校对了一遍(标定/站立/结算参数、rest 自动推进 + 赛前重标定、`continueTraining` 移除、IMU 配置外置、AR 反馈渲染三模式等,见各节)。2026-10-28 又按 2026-10-27 流程梳理(`docs/flow-review-2026-10-27.md`,T1–T16)的落地代码更新了一遍:实验流程改由 `ProtocolFlow` 状态机驱动、统一事件日志、Redo/暂停/校准重试/Restart Condition/迟到问卷标记等新规则、IMU 采样率默认 100 Hz(见 §3.8、§3.9、§3.10)。所有结论均来自实际读取源码 / 文档得出,而非猜测。
 
 ## 1. 项目是什么
 
@@ -16,7 +16,7 @@ IMUMoCap 是一个基于 Xsens MTw Awinda 无线 IMU 传感器的**步态分析�
 
 ```
 IMUMoCap/            # WPF 应用主体
-IMUMoCap.Tests/       # 测试项目(pipeline 回放测试)
+IMUMoCap.Tests/       # 测试项目(pipeline 回放测试 + `Unit/` 下 ProtocolFlow、事件日志、校准重试、归档、倒计时等单元测试)
 IMUMoCap.sln
 docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 ```
@@ -26,7 +26,8 @@ docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 | 目录 | 内容 |
 |---|---|
 | `Pipeline/` | 步态分析核心流水线(见第 3 节) |
-| `Pipeline/Models/` | 流水线用到的数据模型 / DTO |
+| `Pipeline/Models/` | 流水线用到的数据模型 / DTO(含 `ConditionMeta.cs`:Meta JSON 结构、`RecordedEvent`、`RunConfig`) |
+| `Protocol/` | 实验流程状态机:`ProtocolFlow.cs`(阶段/暂停/标记的唯一状态来源)、`ShadowMonitor.cs`(事件转发 + 被拒事件日志)、`PausableCountdown.cs`(可暂停倒计时,用于基线超时) |
 | `VM/` | `MainPageVM.cs` —— 唯一的 ViewModel |
 | `Model/` | `DeviceModel.cs`, `IMUData.cs`, `ImuFrameModels.cs`, `ImuViewModel.cs`, `PipelineConfigModels.cs` |
 | `Methods/` | `CsvUtil.cs`, `ExperimentRecorder.cs`, `ImuFrameCollector.cs`, `Utils.cs`, `WebSocketBroadcastServer.cs` |
@@ -36,7 +37,7 @@ docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 | `wrap_csharp64/` | SWIG 自动生成的 Xsens Device API (XDA) C# 绑定 |
 | `extralibs/` | Xsens 原生 DLL(`xsensdeviceapi64.dll` 等) |
 
-顶层文件:`App.xaml(.cs)`, `MainWindow.xaml(.cs)`(约 2100 行,几乎所有业务逻辑都在这里)、`imu_sensors.json`(IMU 槽位配置,见 §3.1), `ParamsDialog.xaml(.cs)`, `PauseResumeDialog.xaml(.cs)`。
+顶层文件:`App.xaml(.cs)`, `MainWindow.xaml(.cs)`(约 2100 行,几乎所有 UI/设备/AR 接线都在这里;**实验流程的状态判断已移到 `Protocol/ProtocolFlow.cs`**)、`imu_sensors.json`(IMU 槽位配置,见 §3.1), `ParamsDialog.xaml(.cs)`, `PauseResumeDialog.xaml(.cs)`。
 
 **架构特点**:没有用 MVVM 的 ICommand/RelayCommand 模式,`MainPageVM` 只是一个属性包(property bag),按钮点击直接绑定到 `MainWindow.xaml.cs` 的事件处理方法,由 code-behind 直接调用 pipeline / recorder / WebSocket server。
 
@@ -47,7 +48,7 @@ docs/                 # 项目文档 + 示例数据 + Python 原型脚本
 不是自定义网络/串口/蓝牙接收器,而是通过官方 **Xsens Device API (XDA)**:
 - `Device/MyXda.cs` 封装 `XsControl`/`XsScanner`,回调类 `MyMtwCallback`(单传感器数据回调)、`MyWirelessMasterCallback`(设备连接/断开事件)
 - `Services/ImuDeviceManager.cs` 在其上层暴露高层事件:`MtwConnected`、`MtwDisconnected`、`DataPacketReceived`、`BatteryLevelChanged`、`StateChanged`
-- 传感器槽位由 `IMUMoCap/imu_sensors.json` 配置(`ImuSensorConfigEntry`:`SlotName`/`DeviceId`(十六进制字符串)/`Role`),启动时由 `MainWindow.LoadOrCreateImuConfig()` 读入 `ImuSlotRegistry`;文件不存在时自动用旧的 3 个硬编码传感器生成。现有 8 个槽位,`ImuRole` 枚举新增 `None`:Pelvis `0x00B43CAB`、Left `0x10B41913`、Right `0x10B41904` 已绑定角色,其余 5 个为备用(`Role=None`)。**只要求已绑定角色的传感器全部连上就自动开始测量**;在参数对话框里改角色后点 Save Params 会回写该文件(`SaveImuConfig()`)。默认 100Hz
+- 传感器槽位由 `IMUMoCap/imu_sensors.json` 配置(`ImuSensorConfigEntry`:`SlotName`/`DeviceId`(十六进制字符串)/`Role`),启动时由 `MainWindow.LoadOrCreateImuConfig()` 读入 `ImuSlotRegistry`;文件不存在时自动用旧的 3 个硬编码传感器生成。现有 8 个槽位,`ImuRole` 枚举新增 `None`:Pelvis `0x00B43CAB`、Left `0x10B41913`、Right `0x10B41904` 已绑定角色,其余 5 个为备用(`Role=None`)。**只要求已绑定角色的传感器全部连上就自动开始测量**;在参数对话框里改角色后点 Save Params 会回写该文件(`SaveImuConfig()`)。默认 100Hz(2026-10-27 起:`ImuDeviceManager` 列出基站支持的速率后**优先选 100 Hz,没有再选 75 Hz**,并在日志写出支持列表与选中值;该列表另记入 `RunConfig.Constants["SupportedUpdateRatesHz"]`,实际速率记入 `UpdateRateHz`,与流水线假设的 `AssumedSampleRateHz`(100)不一致时 Start Condition 会打警告。此前默认 75 Hz,实机数据曾落在 40 Hz,导致所有按"帧数"定的阈值实际时长被拉长 2.5 倍)
   - 注:以上 IMU 配置外置属于 2026-10-20 的**未提交**改动(`imu_sensors.json`、`ImuSensorConfigEntry.cs`、`ImuRole.None`、`ParamsDialog.xaml` 的角色选择 UI)。
 
 数据流:`OnDataPacket` → `OnXsensData(role, deviceId, packet)` → `ImuFrameCollector.Process(...)` 同步汇总三个传感器 → `GaitPipeline.ProcessPacket(...)`
@@ -181,18 +182,29 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
     → [Rest+MC+NASA-TLX(Admin1)+IMI-PC, 300s 起] → Retention → [NASA-TLX(Admin2) 标记] → Ended
   ```
 
-  由 `MainWindow` 的 `ConditionStages = {Baseline, Training1, Training2, Training3, Retention}`/`AdvanceStage()`/`EndTrainingBlock()`/`EnterRest()`/`CompleteRetention()` 管理。要点:
+  **状态由 `Protocol/ProtocolFlow` 统一管理(2026-10-27 T7/T8 起)**:`MainWindow` 的每个流程转换都经 `ShadowMonitor.Fire(FlowEvent)` 交给 `ProtocolFlow`(纯逻辑、不依赖 WPF/硬件/计时器),被拒绝的事件只记日志(`Data/shadow_flow.log`,前缀 `SHADOW ignored`,condition 结束输出一行汇总)而不执行副作用。旧的 `_inRest`/`_isRetention`/`_pendingStageEntry`/`_retentionComplete`/`_restBlockJustFinished`/`*Marked` 等散落标志位**已删除**,下面凡提到这些名字的要点,语义保留、但现在都是由 `ProtocolFlow` 推导出的值。模型:
+  - `Phase = (PhaseKind, Stage?)`:`Idle / Armed / Calibrating / Baseline / Failed(仅基线步数不足) / RecalPending / Recalibrating / Training / Rest / Retention / RetentionDone / Ended`;Pause 是叠加在 Phase 上的另一个维度(`Paused`)。只存事实(Phase、Paused、已 Mark 集合、各阶段 attempt、少数历史标志),Flow 清单、`CanMark`、缺失 marker、AR state(`ArState`,暂停且录制中为 `paused`)全部推导。
+  - 事件:`StartCondition / CalibrationStarted|Completed|Failed / BaselineCompleted / BlockComplete / RestElapsed / RetentionTargetReached / NextStage / Pause / ResumeContinue / ResumeRedo / Mark / EndRecording`;不合法的事件返回 `Accepted=false`、状态不变。
+  - 新规则(均有 `IMUMoCap.Tests/Unit/` 单元测试):
+    1. **Next Stage**:暂停中拒绝(T10);baseline 尚未完成(无 `BaselineProfile`)时拒绝(T11);已在等待重校准或已是最后阶段时拒绝;其余仍无条件推进到下一阶段(**不经过 Rest、不提示漏标记**,Training1/3 点它会跳过 Rest 窗口)。
+    2. **Redo(重做当前阶段)**:仅 Baseline/Training/Retention 采集中合法(`CanRedo`);Rest、等待/进行校准、Armed、RetentionDone、Failed 里不可用(PauseResumeDialog 里置灰)。确认后 attempt+1 → 回到 `RecalPending`(`_redo=true`)→ 参与者点 Ready 重新校准 → 校准完成后**重置该阶段的步数计数并重新计时**再开始(T9;修复了此前作废尝试的步数混进基线/100 步目标的问题)。`ActiveSeconds` 只统计**最后一次尝试**(`RestartStageTiming`,3250d8e1);此前尝试的起止仍留在 `StageStart/PauseStart/Redo` 事件里。
+    3. **Pause → Resume**:Resume 时原样重发暂停前最近一次非 `paused` 的 AR state(含 reason/休息时长/block),不再按 `_currentStage` 重新推导(T10a,修复了等待 Ready 时暂停 → 眼镜无 Ready 按钮的死锁)。暂停期间 `OnXsensData` 直接丢包,pipeline 步数/CSV 行都停止前进。
+    4. **校准失败可无限重试**(T12a):首次校准失败 → 回到 `Armed`(AR 提示 "Stand still and tap Ready to try again",不再广播 `error`);阶段间重校准失败 → 回到 `RecalPending`;`CalibrationProcessor` 的 `Failed` 态接受再次触发。`Failed` PhaseKind 现在只用于基线步数不足。
+    5. **基线超时随暂停停表**(T12b):`PausableCountdown` 记录剩余时间,暂停时停掉 `DispatcherTimer`,恢复时按剩余时长重新起表。
+    6. **问卷标记可补点**(T14):marker 一旦"到期"(流程走到过它所属窗口)录制中就一直可点;窗口过后**只能补一次**,补点在 `StageMarkers[i].Late=true`、事件 Detail 为 `<名称>; late=true`(时间戳是点击时刻,不是问卷实际发生时刻)。录制结束后一律不可点。
+    7. StartCondition/EndRecording 都会清除 `Paused`(修复了暂停中 End 后下一个 condition 数据行不写入的问题)。
+  由 `MainWindow` 的 `ConditionStages = {Baseline, Training1, Training2, Training3, Retention}`/`AdvanceStage()`/`EndTrainingBlock()`/`EnterRest()`/`CompleteRetention()` 管理(这些方法现在负责副作用,转换合法性由上面的 `ProtocolFlow` 裁决)。要点:
   - **Block2→Block3 之间没有 Rest/MC 窗口**,是刻意设计(`EndTrainingBlock()` 对 `_currentStage=="Training2"` 直接 `AdvanceStage()`);Rest+MC 只出现在 Block1 后和 Block3 后。
   - 两个 Rest 窗口(`_inRest`)由 PC 自己的 stopwatch 计时,**到点自动推进**(`MainWindow` 60ms 定时器里 `_stageStopwatch.Elapsed >= requiredRestSec` 即调用 `AdvanceStage()`),不再需要 AR 端 `continueTraining` 或操作员 Continue 按钮(二者均已移除)。Block1 后窗口 120s(`RestDurationSec`),Block3 后窗口(含 NASA-TLX Admin1 + IMI-PC,纸面/RA 主持)300s(`PostBlock3RestDurationSec`,协议只规定了问卷本身约 5 分钟,窗口整体下限是估算值,需研究者确认)。
   - **赛前重标定门控(每个 training block / Retention 进入前)**:`AdvanceStage()` 只收尾当前 stage,置 `_pendingStageEntry = 下一 stage`、`_pipeline.AwaitingRecalibration = true`(冻结 fpa/训练输出),向 AR 广播 `armed`(`reason` 为 "Quick recheck before continuing. Tap Ready when you are."),并写审计标记 `Recalibrate_Before{stage}`;参与者在 AR 点 `Start`(`ReadyForCalibration`)→ PC 走 `TriggerRecalibration()`(首次校准则走 `TriggerCalibration()`)→ 校准完成后 `EnterStage()` 才真正开始该 stage。该 `armed` 点击同时充当原来 `continueTraining` 的"恢复"信号。目的是约束 IMU yaw 漂移(依据 `docs/task19_calibration_duration_tuning.py`)。
   - **Retention 完成后不会自动结束录制**:达到 100 步/脚或超时后 `CompleteRetention()` 只停止计步、启用"Mark NASA-TLX #2"按钮,真正关闭 session 文件仍需操作员手动点击既有的 "End Recording" 按钮。
-  - **End Recording 前的非阻断完整性检查**(2026-09-08 新增,`MissingExpectedMarkers()`):只检查 3 个**需要操作员手动点击**的标记(`NASA-TLX_Admin1`/`IMI-PC`/`NASA-TLX_Admin2`;两个 `ManipulationCheck_*` 是 `EnterRest()` 自动写入的,不会漏),且只在流程**实际走到过**对应窗口时才视为"应有"——`_restBlockJustFinished==3` 才检查前两者,`_retentionComplete==true` 才检查第三者,避免在提前终止(退出/设备故障)场景里对根本不该存在的标记持续误报。缺失时弹出 Yes/No 确认框而非硬拦截,操作员可选择"仍要结束"覆盖。`_nasaTlx1Marked`/`_imiPcMarked`/`_nasaTlx2Marked` 三个"是否已点击"标志只在 `BtnStartCondition_Click`(开新 condition)时清零,暂停/恢复/Redo 均不影响(纸面量表是否做过是既成事实,不因数据重录而改变)。**`_restBlockJustFinished` 本身也必须在 `BtnStartCondition_Click` 清零到 0**(2026-09-08 补的一处遗漏修复)——否则同一次程序运行里连续跑第二个 condition(比如 EF 跑完接着跑 IF)时,这个字段会带着上一个 condition 结束时的值(如 3)进入新 condition,导致新 condition 明明还没走到 Block3 就被误判"该有 NASA-TLX1/IMI-PC 了",完整性检查和 Flow 面板都会被这个陈旧值污染。
+  - **End Recording 前的非阻断完整性检查**(2026-09-08 新增,`MissingExpectedMarkers()`):只检查 3 个**需要操作员手动点击**的标记(`NASA-TLX_Admin1`/`IMI-PC`/`NASA-TLX_Admin2`;两个 `ManipulationCheck_*` 是 `EnterRest()` 自动写入的,不会漏),且只在流程**实际走到过**对应窗口时才视为"应有"——`_restBlockJustFinished==3` 才检查前两者,`_retentionComplete==true` 才检查第三者,避免在提前终止(退出/设备故障)场景里对根本不该存在的标记持续误报。缺失时弹出 Yes/No 确认框而非硬拦截,操作员可选择"仍要结束"覆盖。`_nasaTlx1Marked`/`_imiPcMarked`/`_nasaTlx2Marked` 三个"是否已点击"标志只在 `BtnStartCondition_Click`(开新 condition)时清零,暂停/恢复/Redo 均不影响(纸面量表是否做过是既成事实,不因数据重录而改变)。**`_restBlockJustFinished`(现为 `ProtocolFlow.RestBlockJustFinished`,随 `StartCondition` 事实重置)本身也必须在 `BtnStartCondition_Click` 清零到 0**(2026-09-08 补的一处遗漏修复)——否则同一次程序运行里连续跑第二个 condition(比如 EF 跑完接着跑 IF)时,这个字段会带着上一个 condition 结束时的值(如 3)进入新 condition,导致新 condition 明明还没走到 Block3 就被误判"该有 NASA-TLX1/IMI-PC 了",完整性检查和 Flow 面板都会被这个陈旧值污染。
   - **审计标记(纯留痕,不渲染问卷内容)**:`ManipulationCheck_AfterBlock1`/`ManipulationCheck_AfterBlock3` 在进入对应 Rest 窗口时自动记录;`NASA-TLX_Admin1`/`IMI-PC`/`NASA-TLX_Admin2` 由操作员点击对应的 3 个小按钮手动记录(RA 在纸面上实际主持这些量表,软件只留时间戳),写入 `ConditionMeta.StageMarkers`(见 §3.10)。
 
 ### 3.9 UI(`MainWindow.xaml` + `.xaml.cs`)
 
 - 顶部深蓝 header:标题 + 已连接 WS/AR 客户端列表(绿点)
-- 左侧面板:Session 卡片(Participant ID、Condition EF/IF、Start Condition/Restart Condition/Pause/Resume/Next Stage/End 按钮;Order Group 与 Continue-Rest 已移除)、左右 FPA 大数字卡(达标/未达标背景变色)
+- 左侧面板:Session 卡片(Participant ID、Condition EF/IF、Start Condition/**Restart Condition**/Pause/Resume/Next Stage/End 按钮;Order Group 与 Continue-Rest 已移除)。**Restart Condition**(原 Start Calibration,2026-10-27 更名,控件 `x:Name` 仍是 `BtnStartCal`)= 测试出现意外、整个 condition 从头来:录制中点击 → 确认弹窗 → 写 `Abort` 事件 → 旧文件移到 `Data/P{id}/Aborted/{UTC 时间戳}/` → 用录制中的被试 ID/condition 走 `BeginCondition` 从 Armed 重新开始;没有 condition 在录制时只写一行日志提示用 Start Condition。**Screening 按钮仅在没有进行中的 condition 时可用**(录制中禁用)。Parameters 对话框里的修改与 Measure 启停都会写入事件日志(见 §3.10)、左右 FPA 大数字卡(达标/未达标背景变色)
 - **Flow 一览面板**(2026-09-08 新增,`FlowChecklist`/`ChecklistItem`,`Model/ChecklistItem.cs`):(2026-10-21 起改为窗口顶部最左侧的**竖向流程图**:圆点 + 竖线(某步已完成,它连向下一步的线段变绿,否则为灰色),不再在 Session 卡片内;Mark 按钮已取消,改为点击带下划线的文字)10 项对应完整协议流程(Baseline/Training1/MC(Block1)/Training2/Training3/MC(Block3)/NASA-TLX#1/IMI-PC/Retention/NASA-TLX#2)。灰=未到、绿=完成、橙=窗口已到但审计标记还没点。**3 个手动审计标记(NASA-TLX#1/IMI-PC/NASA-TLX#2)对应的"Mark"按钮直接内嵌在各自的流程条目里**(2026-09-08 由独立的一排按钮改为内嵌,`ChecklistItem.MarkerStage`/`IsMarkable`/`CanMark` 驱动,`IsMarkable` 为 true 的行才渲染按钮、`CanMark` 控制是否可点),点哪个标记就在流程图上哪个位置点,不用再去别处找对应按钮;其余 7 行是纯状态展示,没有按钮。所有 3 个可点击文字共用一个处理器 `FlowItem_MouseLeftButtonUp`(从被点击行的 `DataContext` 读出 `MarkerStage` 分发,而不是各自独立的 3 个 handler;仅在该行 `CanMark` 为 true、文字带下划线且为青色时可点)。由 `MainWindow.RefreshChecklist()` 每次 60ms 定时器 tick 时整体重算状态圆点(不是在各处散落推送),纯读现有的 `_restBlockJustFinished`/`_retentionComplete`/`_nasaTlx*Marked`/`_pipeline.BaselineProfile` 等信号,保证不会和真实状态漂移;点击标记文字时额外立即调用一次 `RefreshChecklist()`,不用等 60ms。让操作员在点 "End Recording" 之前就能持续看到有没有漏项,而不是只在点击那一刻才通过前面提到的确认弹窗(`MissingExpectedMarkers()`)得知。
 - 状态栏:3 个 IMU 连接指示灯(Pelvis/Left/Right)+ 丢包计数
 - 自绘时间线(`DrawTimeline()`,`DrawingVisual`/`RenderTargetBitmap`,6 条 lane:PD valid / L stance / R stance / IsWalking / motion context / FPA gate reason)
@@ -221,11 +233,16 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 
 按 participant/condition 管理:
 - Session CSV(`P{id}_{EF|IF}_Session.csv`,header = `DiagnosticsRow.CsvHeader`,逐帧写入)
-- Meta JSON(`P{id}_{cond}_Meta.json`,`ConditionMeta` 结构:`BaselineProfile`、暂停事件(`PauseEvents`)、redo/attempt 记录(`FinalAttempt`)、每阶段耗时/有效秒数(`StageTimings`)、步数排除统计(`StageStepStats`)、**审计标记列表**(`StageMarkers: List<{Stage, TimestampUtc}>`,2026-09-06 新增,纯追加字段,记录 Manipulation Check / NASA-TLX / IMI-PC 等纸面量表的发生时刻,由 `ExperimentRecorder.MarkStageEvent(stage)` 写入))
+- Meta JSON(`P{id}_{cond}_Meta.json`,`ConditionMeta` 结构:`BaselineProfile`、暂停事件(`PauseEvents`)、redo/attempt 记录(`FinalAttempt`)、每阶段耗时/有效秒数(`StageTimings`)、步数排除统计(`StageStepStats`)、**审计标记列表**(`StageMarkers: List<{Stage, TimestampUtc, Late}>`,2026-09-06 新增,`Late` 为 2026-10-27 新增,纯追加字段,记录 Manipulation Check / NASA-TLX / IMI-PC 等纸面量表的发生时刻,由 `ExperimentRecorder.MarkStageEvent(stage)` 写入))
+- **统一事件日志**(2026-10-27 T2/T13/T14 起):`ExperimentRecorder.RecordEvent(type, detail, stage)` 把事件追加到 Meta JSON 的 `Events: List<RecordedEvent>`(`Seq, Type, PacketId, TsUtc, Stage, Attempt, Detail`;时间一律 UTC;`PacketId` 取事件发生时最近处理的原始包号(`LatestPacketId` 在 `OnXsensData` 暂停门控之后更新),分析时以"事件之后的第一个包"为参照)。事件类型:`ConditionStart / StageStart / StageEnd / BlockComplete / RestEnd(detail=elapsed 或 skipped by Next Stage) / RetentionDone / CalibrationStart|Done|Failed / PauseStart|PauseEnd / Redo / Marker / MeasureStart|MeasureStop / ParamChange / Abort / End`。Save Diagnostics 导出时在诊断 CSV 旁另写 `*_Events.csv`(`WriteEventsCsv`,列同上),便于按 PacketId 与 Session/ImuSamples CSV 对齐。
+  - `ParamChange`:录制中每次修改 Parameters 记一条(如 `TargetStepsPerFoot=100->5`),滑块拖动做防抖合并(停手约 0.8 秒后每个参数一条"拖动前->拖动后"),结束录制前冲刷;IF 渲染模式切换记 `IfRenderMode=…->…`。
+  - `MeasureStart/MeasureStop`:录制中设备进出 MEASURING 时记录(含 IMU 掉线后自动重连引起的停止),只记录、不自动暂停、不强制重校准;重启后 PacketId 是否归零尚未实测。
+  - `RunConfig`(Meta 里,Start Condition 时快照):`AppVersion`(含 git commit)、`PipelineParams` 全部属性、`Constants`(Rest 时长、超时、容差、`UpdateRateHz`、`SupportedUpdateRatesHz`、`AssumedSampleRateHz` 等)。
+  - 已知缺口:IMU 掉线/重连没有流程处理(不暂停、不通知 AR,flow-review §2-18 待办)。
 - QoE CSV 路径已预留(`CurrentQoeFilePath`)但**目前代码中未见实际写入**
 - `P{id}_VisualScreening.json`(按参与者而非按 condition):`{Result: "Pass"|"Fail", TimestampUtc, Attempts:[{TimestampUtc, Result}]}`,最新结果覆盖 `Result`,每次标注追加进 `Attempts`(审计);Fail 后重新排查并 Pass 即可,无需手改文件
 - `P{id}_{cond}_LiveVsFpaConsistency.csv`(`WriteLiveVsFpaConsistency`):每个脚每次 fpa 结算写一行(`PacketId,TsUtcMs,Foot,LiveAngleDeg,FpaErrorDeg,FpaDeg,TargetDeg`),记录该脚最近一次 `live` 角度与最终 fpa 的对比,供事后一致性分析(Task 15),UI 不显示;EF 条件或 IF 首个 live 帧之前 `LiveAngleDeg` 为 NaN
-- 文件存于 `Data/P{participantId}/`
+- 文件存于 `Data/P{participantId}/`;Restart Condition 归档的旧文件在其子目录 `Aborted/{UTC 时间戳}/`(子文件夹而非改名,避免被 `*_Session.csv` 通配符判为"已通过 Screening"或被分析脚本的 `*.csv` 误捡)。Redo 时 `StageTimings[stage]` 起点重置,只反映最后一次尝试
 
 ### 3.11 `PipelineParams`(可实时调参)
 
@@ -307,6 +324,8 @@ Manipulation Check / NASA-TLX / IMI-PC 等纸面量表**不通过 WebSocket 传�
 
 `docs/summry/AR-FRONTEND.md` —— AR 前端架构详解(2026-10-20 已更新),见第 4 节引用。
 
+`docs/flow-review-2026-10-27.md` —— 实验流程梳理与状态机重构(T1–T16)的问题清单、规则决定(Q1–Q6)、演练验收记录;`ProtocolFlow` 各条规则的来由以它为准。
+
 `docs/modules/`(`README.md`、`00-data-flow.md` ~ `08-ar-frontend.md`)—— 按模块拆分的详细文档,与本文互补。
 
 `docs/task15_live_vs_fpa_consistency_report.md`、`docs/task*.py` —— 各项数据分析脚本及报告(task21 为多次校准 PD 重放)。
@@ -319,6 +338,6 @@ Manipulation Check / NASA-TLX / IMI-PC 等纸面量表**不通过 WebSocket 传�
 
 - 这是单机 WPF 应用(`IMUMoCap/`)+ 独立 Unity/XREAL AR 客户端(`IMUARFPA/`)的两段式架构,两者通过 WebSocket(端口 8765,PC 是服务端)解耦通信,协议双端均已落地并交叉验证一致。
 - 训练流程为 3 个 training block(每 block 100 步/脚为退出标准,容差 α 依次 1.5→1.0→0.5【2026-10-19 起三个 block 共用固定 ±4°,见 §3.7】),Block1 后与 Block3 后各有一个 Rest+问卷窗口(Block3 后还含 NASA-TLX Admin1 + IMI-PC),Block2→Block3 之间无窗口;Rest 到点自动推进,之后每个 stage 进入前都有一次参与者点 Ready 的赛前重标定;Retention 完成后需操作员手动标记 NASA-TLX Admin2 并点击 End Recording 才真正结束(详见 §3.8)。这套时间线和步数目标目前有几处**研究者尚未最终确认的假设值**(停滞保护超时的具体分钟数、Block3 后窗口下限秒数)——继续改动这部分时应提醒用户复核。
-- `MainWindow.xaml.cs` 是事实上的"上帝类",承载了大部分业务逻辑而非分散在 ViewModel/Command 中 —— 这是当前代码的既有风格,不是缺陷。
+- `MainWindow.xaml.cs` 仍是事实上的"上帝类",承载大部分 UI/设备/AR 接线而非分散在 ViewModel/Command 中 —— 这是既有风格,不是缺陷。但**实验流程状态(阶段、Rest、Redo、暂停、标记)已不在这里**,改流程规则应改 `Protocol/ProtocolFlow.cs` 并补 `IMUMoCap.Tests/Unit/ProtocolFlowTests.cs`;事件转发类名 `ShadowMonitor` 是历史遗留,现在只做转发与记录。
 - AR 前端(`IMUARFPA/`)的 `FootHudController`/`FootWebSocketClient` 对协议字段(尤其是 `block`)处理得很通用,PC 端后续再调整阶段编号/窗口位置大概率不需要改 AR 端代码——但改动前仍应对照 `docs/summry/AR-FRONTEND.md` 确认,不要假设。
 - **符号约定**:左右脚统一"正 = toe-out、负 = toe-in"(右脚在 PC 端取反);2026-10-20 之前录制的 Diagnostics 里右脚列是旧符号。分析历史数据时先确认录制日期。
