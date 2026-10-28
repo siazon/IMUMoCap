@@ -470,3 +470,11 @@ T8 之前,影子比对能在旧代码与新状态机不一致时报警;T8 之后
 **仅由操作员报告、数据无法佐证的项**:Retention 中的 Redo、Rest 中 Redo 按钮置灰、漏点 marker 后 End 的警告弹窗、AR 眼镜画面。
 
 **结论**:T8 验收通过,回退标签 `pre-t8-2026-10-27` 可以保留但不再需要。后续任务(T8b、T10–T16)基于 T8 之后的代码。
+
+### 8.11 临时取消阶段间重校准(2026-10-28)
+
+- **开关**:`MainWindow.xaml.cs` 的 `SkipInterStageRecalibration`(`static readonly bool`,当前 **true**,改回 `false` 即恢复原流程),并写入 `RunConfig.Constants`,分析时可区分。
+- **行为**:`EnterRecalPrompt()` 收尾当前阶段后,不再广播 `armed`、不等 Ready、不写 `Recalibrate_Before…` 标记,而是写 `RecalSkipped` 事件(Detail=`before <阶段>`),向 `ProtocolFlow` 补发 `CalibrationStarted/Completed`(它从 `RecalPending` 走到目标阶段),随后直接 `EnterStage`,沿用上一次校准。覆盖 Baseline→Training1、Rest1→Training2、Training2→Training3、Rest3→Retention 和 Next Stage。
+- **不受影响**:首次校准;**Redo 仍然重新校准**(`BeginRedoRecalibration`);校准失败重试逻辑。
+- **代价**:阶段间不再约束 IMU yaw 漂移(见 `task19_calibration_duration_tuning.py`);参与者在 Rest 到点或 block 结束后直接进入下一阶段,AR 上没有 Ready 提示;`TriggerRecalibration` 原本会重置的 PD 历史和 FPA 采样不再被重置。
+- **验证**:只验证了编译与现有 133 个测试(`ProtocolFlow` 未改动);`MainWindow` 接线未启动界面,留给演练。演练请确认:每个阶段切换时 Events 里出现 `RecalSkipped`、没有 `CalibrationStart/Done`,Flow 面板与 AR state 正常前进。

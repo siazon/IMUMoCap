@@ -144,6 +144,10 @@ namespace IMUMoCap
         // turning exclusion) — force-finalize after this long so the flow never hangs. Widened alongside
         // TrainingBlockMaxDuration for the same 100-step-target reason; same assumption applies.
         private static readonly TimeSpan BaselineMaxDuration = TimeSpan.FromMinutes(10);
+        // Temporarily skips the between-stage recalibration (Baseline→Training1, Rest/Training2→next, →Retention): the
+        // next stage starts immediately on the previous calibration, with no Ready tap. Redo still recalibrates, and the
+        // first calibration is unaffected. Recorded in RunConfig.Constants; yaw drift is no longer bounded between stages.
+        private static readonly bool SkipInterStageRecalibration = true;
         private const int RestDurationSec = 120; // Rest+MC window after Training1 (Research Overview §2.5)
         // Rest+MC+NASA-TLX Admin1(~5min)+IMI-PC window after Training3, before Retention.
         // ASSUMPTION: exact floor not specified by the protocol doc (only the ~5min instrument portion is) —
@@ -1373,6 +1377,7 @@ namespace IMUMoCap
                 ["PostBlock3RestDurationSec"] = PostBlock3RestDurationSec,
                 ["TrainingBlockMaxDurationMin"] = TrainingBlockMaxDuration.TotalMinutes,
                 ["BaselineMaxDurationMin"] = BaselineMaxDuration.TotalMinutes,
+                ["SkipInterStageRecalibration"] = SkipInterStageRecalibration,
                 ["ToleranceDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.ToleranceDeg,
                 ["TargetDeltaDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetDeltaDeg,
                 ["TargetMinDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetMinDeg,
@@ -1590,6 +1595,15 @@ namespace IMUMoCap
             if (restEndReason != null) _recorder.RecordEvent("RestEnd", restEndReason);
             string nextStage = _pendingStageEntry ?? "";
             _recorder.EndStage(_currentStage);
+            if (SkipInterStageRecalibration)
+            {
+                // Walk the flow through the calibration events it expects (RecalPending → Recalibrating → next stage)
+                // and start the stage right away on the existing calibration.
+                _recorder.RecordEvent("RecalSkipped", $"before {nextStage}");
+                _shadow.Fire(Protocol.FlowEvent.CalibrationStarted);
+                if (_shadow.Fire(Protocol.FlowEvent.CalibrationCompleted).Accepted) EnterStage(nextStage);
+                return;
+            }
             _pipeline.AwaitingRecalibration = true; // freeze fpa/training output until the participant taps Ready (see GaitPipeline.AwaitingRecalibration)
             _content.CurrentStageLabel = $"{_currentStage} → {nextStage} (Recalibrating)";
             _content.StatusLabel = $"Recalibrating before {nextStage} — waiting for participant to tap Ready.";
