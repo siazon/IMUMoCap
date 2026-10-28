@@ -393,7 +393,14 @@ namespace IMUMoCap
             // start — the rest of imu_sensors.json's 8 entries are spares that may never connect.
             var requiredImus = _slotRegistry.Imus.Where(i => i.Role != ImuRole.None).ToList();
             bool allConnected = requiredImus.Count > 0 && requiredImus.All(i => i.IsConnected);
-            if (allConnected)
+            if (allConnected && _content.DeviceState == States.MEASURING)
+            {
+                // StartMeasurement toggles: while MEASURING it would stop the measurement, so leave it running.
+                _content.StatusLabel = ConnectedCountLabel();
+                log($"IMU {ev.DeviceIdStr} reconnected; measurement already running, not toggling it.");
+                if (_recorder.IsRecording) _recorder.RecordEvent("ImuReconnected", ev.DeviceIdStr);
+            }
+            else if (allConnected)
             {
                 _content.StatusLabel = "All required IMUs connected. Starting measurement...";
                 log("All required IMUs connected. Auto-starting measurement...");
@@ -418,6 +425,15 @@ namespace IMUMoCap
 
             UpdateImuStatusIndicators();
             _content.StatusLabel = ConnectedCountLabel();
+
+            // A required IMU dropping mid-condition silences the pipeline (frame bundles never complete),
+            // so pause and let the operator decide Continue/Redo on resume.
+            if (vm != null && vm.Role != ImuRole.None && _recorder.IsRecording)
+            {
+                _recorder.RecordEvent("ImuDisconnected", $"{vm.Role} {ev.DeviceIdStr}");
+                log($"WARNING: required IMU {vm.Role} ({ev.DeviceIdStr}) disconnected during recording.");
+                if (!_content.IsPaused) PauseRecording();
+            }
         }
 
         private string ConnectedCountLabel()
@@ -1746,20 +1762,25 @@ namespace IMUMoCap
             log($"Recording closed ({reason}): {_content.CurrentSessionFileName}");
         }
 
+        private void PauseRecording()
+        {
+            _content.IsPaused = true;
+            _shadow.Fire(Protocol.FlowEvent.Pause);
+            _stageStopwatch.Stop();
+            PauseBaselineTimer();
+            _recorder.BeginPause(_currentStage);
+            BtnPauseResume.Content = "Resume";
+            BroadcastArState("paused"); // operator emergency pause → AR shows its paused display
+            log($"Paused at {_currentStage}");
+        }
+
         private void BtnPauseResume_Click(object sender, RoutedEventArgs e)
         {
             if (!_recorder.IsRecording) { log("No active recording to pause."); return; }
 
             if (!_content.IsPaused)
             {
-                _content.IsPaused = true;
-                _shadow.Fire(Protocol.FlowEvent.Pause);
-                _stageStopwatch.Stop();
-                PauseBaselineTimer();
-                _recorder.BeginPause(_currentStage);
-                BtnPauseResume.Content = "Resume";
-                BroadcastArState("paused"); // operator emergency pause → AR shows its paused display
-                log($"Paused at {_currentStage}");
+                PauseRecording();
             }
             else
             {
