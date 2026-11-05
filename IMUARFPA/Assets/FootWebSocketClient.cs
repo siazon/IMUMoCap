@@ -23,6 +23,16 @@ public class FootWebSocketClient : MonoBehaviour
     public bool enableHeartbeat = true;
     public float heartbeatIntervalSec = 10f;
 
+    [Header("Wi-Fi")]
+    // Android only: hold a WIFI_MODE_FULL_LOW_LATENCY lock (disables Wi-Fi power save while the app is
+    // foreground + screen on). Without it, sparse PC→AR pushes (fpa/stepProgress/state) arrived ~100ms
+    // late (P90 ~250ms) because the radio dozes between packets; with it P90 dropped to ~40ms.
+    public bool wifiLowLatencyLock = true;
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+    private AndroidJavaObject wifiLock;
+#endif
+
     private ClientWebSocket ws;
     private CancellationTokenSource cts;
     private readonly ConcurrentQueue<Action> mainThreadActions = new();
@@ -32,6 +42,7 @@ public class FootWebSocketClient : MonoBehaviour
     private async void Start()
     {
         stopping = false;
+        if (wifiLowLatencyLock) AcquireWifiLock();
         _ = Task.Run(ConnectionLoop);
         await Task.Yield();
     }
@@ -288,6 +299,44 @@ public class FootWebSocketClient : MonoBehaviour
     // AR→PC commands (spec 2026-07-29-ws-protocol.md)
     public Task SendReadyForCalibrationAsync() => SendTextAsync("{\"cmd\":\"ReadyForCalibration\"}");
 
+    // ── Wi-Fi low-latency lock (Android) ──────────────────────────────────────
+
+    private void AcquireWifiLock()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        try
+        {
+            const int WIFI_MODE_FULL_LOW_LATENCY = 4; // API 29+
+            using var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+            using var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
+            using var ctx = activity.Call<AndroidJavaObject>("getApplicationContext");
+            using var wifi = ctx.Call<AndroidJavaObject>("getSystemService", "wifi");
+            wifiLock = wifi.Call<AndroidJavaObject>("createWifiLock", WIFI_MODE_FULL_LOW_LATENCY, "IMUARFPA-ws");
+            wifiLock.Call("setReferenceCounted", false);
+            wifiLock.Call("acquire");
+            Debug.Log($"[WS] WifiLock FULL_LOW_LATENCY held={wifiLock.Call<bool>("isHeld")}");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[WS] WifiLock acquire failed: {ex.Message}");
+        }
+#endif
+    }
+
+    private void ReleaseWifiLock()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        try
+        {
+            if (wifiLock != null && wifiLock.Call<bool>("isHeld")) wifiLock.Call("release");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[WS] WifiLock release failed: {ex.Message}");
+        }
+#endif
+    }
+
     // ── cleanup ───────────────────────────────────────────────────────────────
 
     private async Task SafeCloseAsync(string reason)
@@ -315,12 +364,14 @@ public class FootWebSocketClient : MonoBehaviour
     private async void OnDestroy()
     {
         stopping = true;
+        ReleaseWifiLock();
         try { await SafeCloseAsync("destroy"); } catch { }
     }
 
     private async void OnApplicationQuit()
     {
         stopping = true;
+        ReleaseWifiLock();
         try { await SafeCloseAsync("quit"); } catch { }
     }
 }
