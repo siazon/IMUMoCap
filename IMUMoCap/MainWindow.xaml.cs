@@ -145,8 +145,8 @@ namespace IMUMoCap
         // TrainingBlockMaxDuration for the same 100-step-target reason; same assumption applies.
         private static readonly TimeSpan BaselineMaxDuration = TimeSpan.FromMinutes(10);
         // Temporarily skips the between-stage recalibration (Baseline→Training1, Rest/Training2→next, →Retention): the
-        // next stage starts immediately on the previous calibration, with no Ready tap. Redo still recalibrates, and the
-        // first calibration is unaffected. Recorded in RunConfig.Constants; yaw drift is no longer bounded between stages.
+        // next stage starts on the previous calibration once the participant taps a plain Ready (no recalibration).
+        // Redo still recalibrates, and the first calibration is unaffected. Recorded in RunConfig.Constants; yaw drift is no longer bounded between stages.
         private static readonly bool SkipInterStageRecalibration = true;
         private const int RestDurationSec = 120; // Rest+MC window after Training1 (Research Overview §2.5)
         // Rest+MC+NASA-TLX Admin1(~5min)+IMI-PC window after Training3, before Retention.
@@ -755,7 +755,15 @@ namespace IMUMoCap
         {
             // While paused no packets reach the pipeline, so a calibration started now would just stall (T10).
             if (_content.IsPaused) { log($"{source} signaled ready while paused — ignored; resume first."); return; }
-            if (_pendingStageEntry != null)
+            if (_pendingStageEntry is { } readyStage && !_redoPending && SkipInterStageRecalibration)
+            {
+                // Plain Ready gate before Block1/Block3 (see EnterRecalPrompt): no calibration, just start the stage.
+                _recorder.RecordEvent("ReadyTapped", $"before {readyStage}");
+                _shadow.Fire(Protocol.FlowEvent.CalibrationStarted);
+                if (_shadow.Fire(Protocol.FlowEvent.CalibrationCompleted).Accepted) EnterStage(readyStage);
+                log($"{source} signaled ready — starting {readyStage}.");
+            }
+            else if (_pendingStageEntry != null)
             {
                 if (_pipeline.TriggerRecalibration())
                     log($"{source} signaled ready — recalibration triggered before {_pendingStageEntry}.");
@@ -1597,11 +1605,14 @@ namespace IMUMoCap
             _recorder.EndStage(_currentStage);
             if (SkipInterStageRecalibration)
             {
-                // Walk the flow through the calibration events it expects (RecalPending → Recalibrating → next stage)
-                // and start the stage right away on the existing calibration.
-                _recorder.RecordEvent("RecalSkipped", $"before {nextStage}");
-                _shadow.Fire(Protocol.FlowEvent.CalibrationStarted);
-                if (_shadow.Fire(Protocol.FlowEvent.CalibrationCompleted).Accepted) EnterStage(nextStage);
+                // Every stage change waits for a plain Ready tap (no recalibration) so the participant notices it —
+                // see HandleReadyForCalibration.
+                _pipeline.AwaitingRecalibration = true; // freeze fpa/step output until Ready
+                _recorder.RecordEvent("ReadyWait", $"before {nextStage}");
+                _content.CurrentStageLabel = $"{_currentStage} → {nextStage} (Waiting for Ready)";
+                _content.StatusLabel = $"Waiting for participant to tap Ready before {nextStage}.";
+                BroadcastArState("armed", reason: $"Next: {nextStage}.\nTap Ready when you are.");
+                log($"Waiting for Ready before {nextStage}.");
                 return;
             }
             _pipeline.AwaitingRecalibration = true; // freeze fpa/training output until the participant taps Ready (see GaitPipeline.AwaitingRecalibration)
@@ -1739,6 +1750,7 @@ namespace IMUMoCap
             // Marks where Retention's counted data ends; rows written afterwards (waiting for NASA-TLX #2 / End) keep the Retention tag.
             _recorder.RecordEvent("RetentionDone", $"{reason}; steps L/R={_retentionStepsL}/{_retentionStepsR}");
             _content.StatusLabel = "Retention complete. Administer NASA-TLX (Admin 2), then click End Recording.";
+            BroadcastArState("ended"); // tell the participant the experiment is over ("Session complete. Thank you!")
             log($"Retention complete ({reason}) — awaiting NASA-TLX Admin 2 before ending. Click End Recording when done.");
         }
 

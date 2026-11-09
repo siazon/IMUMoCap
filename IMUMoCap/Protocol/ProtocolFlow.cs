@@ -221,7 +221,8 @@ namespace IMUMoCap.Protocol
             PhaseKind.Failed => "error",
             PhaseKind.Training => "training",
             PhaseKind.Rest => "rest",
-            PhaseKind.Retention or PhaseKind.RetentionDone => "retention",
+            PhaseKind.Retention => "retention",
+            PhaseKind.RetentionDone => "ended", // the participant is told the experiment is over; the operator still marks NASA-TLX #2 / End
             PhaseKind.Ended => "ended",
             _ => "waiting",
         };

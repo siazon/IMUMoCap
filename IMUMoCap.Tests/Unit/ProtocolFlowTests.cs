@@ -180,7 +180,7 @@ namespace IMUMoCap.Tests.Unit
             Assert.Equal(P(PhaseKind.RetentionDone, Stage.Retention), f.Phase);
             Assert.True(f.IsRetention);
             Assert.True(f.RetentionComplete);
-            Assert.Equal("retention", f.ArState); // AR is not told retention finished
+            Assert.Equal("ended", f.ArState); // the participant is told the experiment is over
 
             Go(f, FlowEvent.EndRecording);
             Assert.Equal(P(PhaseKind.Ended, Stage.Retention), f.Phase);
