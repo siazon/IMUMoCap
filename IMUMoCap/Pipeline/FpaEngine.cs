@@ -28,14 +28,16 @@ namespace IMUMoCap.Pipeline
 
         // ── 结算参数（数据驱动）──────────────────────────────────────────────
         // 落地后至少攒够这么多帧才可能结算，防止单帧抖动/刚过 debounce 边界那一帧被当成"已安静"
-        public int MinStanceFramesFloor { get; set; } = 2;
+        // 回放验证(2026-11-09 数据):floor=2 + 静止检测会让一次摆动里的短暂静止被当成新一步而重复输出;
+        // 恢复为 10 帧下限且不要求连续静止(SettleQuietFrames=0),即 9fc4d57f 之前的"落地满 10 帧"规则。
+        public int MinStanceFramesFloor { get; set; } = 10;
         // 角速度模长连续低于此值达到 SettleQuietFrames 帧，才认为脚真正静止（比 GaitEventDetector
         // 判定"算不算落地"用的 GyroThreshold=1.0 更紧）。0.35 是在两份真实录制（一份转身较多的
         // 测试走动、一份 188s 的 Baseline+Training 正式录制）上验证过的值：0.2 时正常走路(Straight)
         // 下仍有 4-8% 的落地因为一直没连续 3 帧低于阈值而被静默丢弃（docs/task12、task13），
         // 0.3-0.4 基本消除该风险，0.35 取中间留一点余量。
         public float SettleGyroThreshold { get; set; } = 0.35f; // rad/s
-        public int SettleQuietFrames { get; set; } = 3;
+        public int SettleQuietFrames { get; set; } = 0;
         // 硬上限：即使一直不安静也不能无限等（落地冲击大/有回弹的步子），到点强制结算
         public int MaxStanceFramesForSettle { get; set; } = 20; // frames (200ms @ 100Hz)
 

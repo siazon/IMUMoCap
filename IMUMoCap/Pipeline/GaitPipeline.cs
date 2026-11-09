@@ -103,8 +103,20 @@ namespace IMUMoCap.Pipeline
                 Process(bundle);
         }
 
+        /// <summary>IMU 实际更新率。落地防抖 / 结算下限按毫秒定义,据此换算成帧数(其余按帧数写的阈值仍假定 100 Hz)。</summary>
+        public int SampleRateHz { get; set; } = 100;
+        /// <summary>落地防抖:脚需连续静止这么久才算落地(100 Hz = 5 帧)。</summary>
+        public const double StanceDebounceMs = 50;
+        /// <summary>落地后至少过这么久才结算 FPA(100 Hz = 10 帧)。</summary>
+        public const double SettleMinStanceMs = 100;
+
+        private int FramesFor(double ms) => Math.Max(1, (int)Math.Round(ms * SampleRateHz / 1000.0));
+
         private void SyncParams()
         {
+            _gait.MinStanceFrames        = FramesFor(StanceDebounceMs);
+            _fpa.MinStanceFramesFloor    = FramesFor(SettleMinStanceMs);
+
             // CalibrationProcessor
             _calibration.StaticGyroThreshold   = Params.StaticGyroThreshold;
 

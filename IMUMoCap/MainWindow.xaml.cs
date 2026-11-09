@@ -1396,6 +1396,8 @@ namespace IMUMoCap
                 ["UpdateRateHz"] = CurrentUpdateRateHz(),
                 ["SupportedUpdateRatesHz"] = string.Join(",", _content.UpdateRates),
                 ["AssumedSampleRateHz"] = _sampleRateHz,
+                ["StanceDebounceMs"] = GaitPipeline.StanceDebounceMs,
+                ["SettleMinStanceMs"] = GaitPipeline.SettleMinStanceMs,
             },
         };
 
@@ -1451,6 +1453,7 @@ namespace IMUMoCap
             _recorder.SetRunConfig(BuildRunConfig());
             _paramsAtLastRecord = _pipeline.Params.Clone(); // later changes are reported relative to this snapshot
             int updateRateHz = CurrentUpdateRateHz();
+            _pipeline.SampleRateHz = updateRateHz > 0 ? updateRateHz : _sampleRateHz; // ms-defined stance thresholds follow the real rate
             if (updateRateHz > 0 && updateRateHz != _sampleRateHz)
                 log($"WARNING: IMUs are measuring at {updateRateHz} Hz, but the pipeline's frame-count thresholds assume {_sampleRateHz} Hz.");
             // Clears BaselineProfile and all per-module internal state (gait/motion/PD/FPA) left over
