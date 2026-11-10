@@ -246,7 +246,7 @@ namespace IMUMoCap.Pipeline
         /// 在世界系取差，不依赖传感器哪根轴朝上；旧实现取传感器轴上的欧拉角，对 180° 折返会低估约 4°，
         /// 造成往返方向的 FPA 差异（见 docs/task21_multicalib_pd_replay.py）。
         /// </summary>
-        private static float WorldHeading(System.Numerics.Quaternion measured, System.Numerics.Quaternion? reference)
+        internal static float WorldHeading(System.Numerics.Quaternion measured, System.Numerics.Quaternion? reference)
         {
             var dq = reference.HasValue
                 ? System.Numerics.Quaternion.Multiply(measured, System.Numerics.Quaternion.Inverse(reference.Value))

@@ -74,6 +74,8 @@ namespace IMUMoCap
         private int _sampleRateHz = 100; // Default 100 Hz
         private readonly List<ImuSampleFrame> _imuSamples = new();
         private readonly ImuFrameCollector _imuFrameCollector = new();
+        private readonly MagMonitor _magMonitor = new();
+        private DispatcherTimer? _magTimer;
 
         // Experiment session recording (participant/condition/stage → file)
         private static readonly string[] ConditionStages = { "Baseline", "Training1", "Training2", "Training3", "Retention" };
@@ -201,6 +203,9 @@ namespace IMUMoCap
                 .Select(e => new ImuViewModel(e.SlotName) { DeviceId = ParseHexDeviceId(e.DeviceId), Role = e.Role })
                 .ToList();
             _slotRegistry = new ImuSlotRegistry(imuList);
+            _magTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+            _magTimer.Tick += (_, _) => UpdateMagStatusText();
+            _magTimer.Start();
             _content.ImuSlots = _slotRegistry.Imus;
             _content.ImuRoleOptions = (ImuRole[])Enum.GetValues(typeof(ImuRole));
 
@@ -705,6 +710,7 @@ namespace IMUMoCap
             // which don't exist yet during the very first calibration), after the pause gate above.
             _recorder.LatestPacketId = sample.PacketId;
             _imuSamples.Add(sample);
+            _magMonitor.Update(sample);
             _pipeline.ProcessPacket(sensor, deviceId, packet);
         }
 
@@ -907,8 +913,40 @@ namespace IMUMoCap
             });
         }
 
+        // Live mag / heading-consistency text in the status bar (display only).
+        private void UpdateMagStatusText()
+        {
+            var snap = _magMonitor.GetSnapshot();
+            var tb = MagStatusText;
+            tb.Inlines.Clear();
+
+            static Brush Pick(MagLevel l) => l switch
+            {
+                MagLevel.Ok => Brushes.ForestGreen,
+                MagLevel.Warn => Brushes.DarkOrange,
+                MagLevel.Bad => Brushes.Crimson,
+                _ => Brushes.Gray,
+            };
+            void Line(string name, MagSensorSnapshot s)
+            {
+                string text = !s.HasData ? $"{name}: no mag data"
+                    : !s.HasBaseline ? $"{name}: |B| {s.Norm:F2}  dip {s.DipDeg:F0}° (no baseline)"
+                    : $"{name}: |B| {s.Norm:F2} ({s.NormDevPct:+0;-0;0}%)  dip {s.DipDeg:F0}° ({s.DipDevDeg:+0;-0;0}°)";
+                tb.Inlines.Add(new System.Windows.Documents.Run(text) { Foreground = Pick(s.Level) });
+                tb.Inlines.Add(new System.Windows.Documents.LineBreak());
+            }
+            Line("Pel", snap.Pelvis);
+            Line("L", snap.Left);
+            Line("R", snap.Right);
+            string heading = snap.HasHeading ? $"Pel-Feet: {snap.PelvisMinusFeetDeg:+0.0;-0.0;0.0}°" : "Pel-Feet: n/a";
+            tb.Inlines.Add(new System.Windows.Documents.Run(heading) { Foreground = Pick(snap.HeadingLevel) });
+        }
+
         private void OnCalibrationStateChanged(CalibrationState state)
         {
+            if (state == CalibrationState.CollectingStaticPose) _magMonitor.Reset();
+            else if (state == CalibrationState.Completed && _pipeline.CalibrationProfile is { } cp)
+                _magMonitor.StartBaseline(cp.PelvisRef, cp.LeftFootRef, cp.RightFootRef);
             // Read what we were waiting for BEFORE feeding the event: the state machine moves on the moment it is fired.
             string? pending = _pendingStageEntry;
             bool redo = _redoPending;

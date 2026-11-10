@@ -291,6 +291,11 @@
                         </StackPanel>
                     </StackPanel>
 
+                    <!-- Live magnetometer / heading-consistency monitor (display only; see Pipeline/MagMonitor.cs) -->
+                    <TextBlock x:Name="MagStatusText" FontSize="11" Margin="0,0,24,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource Brand.Navy}"
+                               ToolTip="|B| = magnetometer magnitude, dip = magnetic inclination, both vs. each sensor's own baseline (first 3 s after calibration). Pel-Feet = pelvis heading minus mean foot heading, vs. calibration. Yellow/red: |B| &gt;15%/30%, dip &gt;10°/20°, Pel-Feet &gt;10°/20°."/>
+
                     <StackPanel MinWidth="180" Margin="0,0,24,0" VerticalAlignment="Center">
                         <TextBlock Text="{Binding StatusLabel}" FontSize="16" FontWeight="Bold"
                                    Foreground="{StaticResource Brand.Navy}" TextWrapping="Wrap"/>
