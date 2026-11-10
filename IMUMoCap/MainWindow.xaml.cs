@@ -1414,6 +1414,7 @@ namespace IMUMoCap
 
             if (_screeningActive) { log("Finish the visual screening (Pass/Fail) before Start Condition."); return; }
             string? screening = Methods.ExperimentRecorder.GetScreeningResult(participantId);
+                ["UseVruFilterProfile"] = IMUMoCap.Services.ImuDeviceManager.UseVruFilterProfile,
             if (screening != "Pass")
             {
                 string why = screening == "Fail"

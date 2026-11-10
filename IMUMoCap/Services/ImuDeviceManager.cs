@@ -93,6 +93,29 @@ namespace IMUMoCap.Services
             }
         }
 
+        // 实验开关(默认关):测量开始前把所有 MTw 的 XDA 滤波器 profile 切到 "VRU"(我理解为不用磁力计修正航向),
+        // 用于对比排查单个 IMU 航向漂移。profile 名以 [FilterProfile] 日志枚举出的 label 为准。
+        public static readonly bool UseVruFilterProfile = false;
+
+        private void ApplyVruFilterProfile()
+        {
+            foreach (XsDeviceId devId in _callbackHandler.getConnectedMtws())
+            {
+                XsDevice? mtw = _myxda.getDevice(devId);
+                if (mtw == null) continue;
+                string id = devId.toXsString().toString();
+                try
+                {
+                    bool ok = mtw.setXdaFilterProfile(new XsString("VRU"));
+                    Log?.Invoke($"[FilterProfile] {id} switch to VRU: {(ok ? "OK" : "FAILED")}; now {Describe(mtw.xdaFilterProfile())}");
+                }
+                catch (Exception ex)
+                {
+                    Log?.Invoke($"[FilterProfile] {id} switch to VRU failed: {ex.Message}");
+                }
+            }
+        }
+
         public void StartMeasurement(int desiredUpdateRate)
         {
             switch (State)
@@ -114,6 +137,8 @@ namespace IMUMoCap.Services
                                 _wirelessMasterDevice?.deviceId().toXsString().toString(), desiredUpdateRate));
                         }
                     }
+
+                    if (UseVruFilterProfile) ApplyVruFilterProfile();
 
                     States bkpState = State;
                     State = States.AWAIT_MEASUREMENT_START;
