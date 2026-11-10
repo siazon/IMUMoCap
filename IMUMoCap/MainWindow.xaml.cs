@@ -1386,6 +1386,7 @@ namespace IMUMoCap
                 ["TrainingBlockMaxDurationMin"] = TrainingBlockMaxDuration.TotalMinutes,
                 ["BaselineMaxDurationMin"] = BaselineMaxDuration.TotalMinutes,
                 ["SkipInterStageRecalibration"] = SkipInterStageRecalibration,
+                ["UseVruFilterProfile"] = IMUMoCap.Services.ImuDeviceManager.UseVruFilterProfile,
                 ["ToleranceDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.ToleranceDeg,
                 ["TargetDeltaDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetDeltaDeg,
                 ["TargetMinDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetMinDeg,
@@ -1414,7 +1415,6 @@ namespace IMUMoCap
 
             if (_screeningActive) { log("Finish the visual screening (Pass/Fail) before Start Condition."); return; }
             string? screening = Methods.ExperimentRecorder.GetScreeningResult(participantId);
-                ["UseVruFilterProfile"] = IMUMoCap.Services.ImuDeviceManager.UseVruFilterProfile,
             if (screening != "Pass")
             {
                 string why = screening == "Fail"
