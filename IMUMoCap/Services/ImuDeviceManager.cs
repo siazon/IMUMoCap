@@ -352,6 +352,33 @@ namespace IMUMoCap.Services
             }
         }
 
+        // 只读诊断:记录每个 MTw 当前/可选的滤波器 profile,用于排查航向(磁力计)漂移。不改变任何设置。
+        private void LogFilterProfiles(XsDevice mtw)
+        {
+            string id = mtw.deviceId().toXsString().toString();
+            try
+            {
+                Log?.Invoke($"[FilterProfile] {id} xda current: {Describe(mtw.xdaFilterProfile())}");
+                Log?.Invoke($"[FilterProfile] {id} xda available: {DescribeAll(mtw.availableXdaFilterProfiles())}");
+                Log?.Invoke($"[FilterProfile] {id} onboard current: {Describe(mtw.onboardFilterProfile())}");
+                Log?.Invoke($"[FilterProfile] {id} onboard available: {DescribeAll(mtw.availableOnboardFilterProfiles())}");
+            }
+            catch (Exception ex)
+            {
+                Log?.Invoke($"[FilterProfile] {id} query failed: {ex.Message}");
+            }
+        }
+
+        private static string Describe(XsFilterProfile p)
+            => $"{p.label()} (type={p.type()}, ver={p.version()}, kind={p.kind()}, filter={p.filterType()})";
+
+        private static string DescribeAll(XsFilterProfileArray arr)
+        {
+            var parts = new List<string>();
+            for (uint i = 0; i < arr.size(); i++) parts.Add(Describe(arr.at(i)));
+            return parts.Count == 0 ? "(none)" : string.Join("; ", parts);
+        }
+
         private void OnMeasurementStarted(object? sender, DeviceIdArg e)
         {
             Log?.Invoke(string.Format("Measurement Started. ID: {0}", e.DeviceId.toXsString().toString()));
@@ -372,6 +399,7 @@ namespace IMUMoCap.Services
                                 if (mtw != null)
                                 {
                                     mtw.setSyncSettings(new XsSyncSettingArray());
+                                    LogFilterProfiles(mtw);
 
                                     MyMtwCallback callback = new MyMtwCallback();
                                     callback.DataAvailable += OnDataAvailable;

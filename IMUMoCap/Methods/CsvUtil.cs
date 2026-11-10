@@ -101,6 +101,15 @@ namespace IMUMoCap.Methods
                         float.Parse(c[21], CultureInfo.InvariantCulture),
                         float.Parse(c[22], CultureInfo.InvariantCulture));
                 }
+                // MagX/Y/Z 为后加的可选列(旧文件只有 23 列)
+                if (c.Length >= 26 && !string.IsNullOrEmpty(c[23]))
+                {
+                    s.HasMagneticField = true;
+                    s.MagneticField = new Vector3(
+                        float.Parse(c[23], CultureInfo.InvariantCulture),
+                        float.Parse(c[24], CultureInfo.InvariantCulture),
+                        float.Parse(c[25], CultureInfo.InvariantCulture));
+                }
                 samples.Add(s);
             }
             return samples;
@@ -134,7 +143,8 @@ namespace IMUMoCap.Methods
                 "FreeAx,FreeAy,FreeAz," +
                 "Ax,Ay,Az," +
                 "DQx,DQy,DQz,DQw," +
-                "DVx,DVy,DVz");
+                "DVx,DVy,DVz," +
+                "MagX,MagY,MagZ");
 
             foreach (var sample in samples)
             {
@@ -163,6 +173,10 @@ namespace IMUMoCap.Methods
                 csv.Append(',');
 
                 if (sample.HasDeltaV) csv.Append(CsvVector(sample.DeltaV));
+                else csv.Append(",,");
+                csv.Append(',');
+
+                if (sample.HasMagneticField) csv.Append(CsvVector(sample.MagneticField));
                 else csv.Append(",,");
 
                 csv.AppendLine();
