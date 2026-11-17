@@ -105,6 +105,7 @@ namespace IMUMoCap
         private bool _retentionComplete => _flow.RetentionComplete;
         private int _retentionStepsL, _retentionStepsR; // valid steps collected during Retention (auto-end at 100/foot)
         private bool _inRest => _flow.InRest; // resting after Training1/Training3 (_currentStage stays that training stage)
+        private string? _mountingRejection; // set when the calibration that is about to report Failed was rejected for IMU mounting
 
         // Last broadcast AR state, resent as a snapshot when a client (re)connects.
         private string _lastState = "waiting";
@@ -288,6 +289,36 @@ namespace IMUMoCap
                     ? $"Stride FPA zero cross-check: {detail}"
                     : $"WARNING: stride FPA zero cross-check {detail} — over {FpaEngine.ZeroCrossCheckMaxDeg:F0}°: the participant probably wasn't facing the walking path at calibration. FPA stays usable (plan A); for plan B, Restart Condition and calibrate facing the path.");
                 if (_recorder.IsRecording) _recorder.RecordEvent("StrideZeroCheck", detail);
+            });
+            // IMU mounting (MountingMonitor): wrong way up at calibration → the calibration fails (the Failed case below
+            // shows why); tilt shifted while walking → warning, and a big shift pauses so the operator decides
+            // (Continue / Redo with recalibration / End Recording).
+            _pipeline.OnMountingRejected += problem => Dispatcher.BeginInvoke(() =>
+            {
+                if (_isReplaying) return;
+                _mountingRejection = problem;
+                if (_recorder.IsRecording) _recorder.RecordEvent("MountingRejected", problem);
+            });
+            _pipeline.OnMountingAlert += alert => Dispatcher.BeginInvoke(() =>
+            {
+                if (_isReplaying) return;
+                string detail = $"{alert.Role} tilt shifted {alert.ShiftDeg:F0}° from calibration";
+                if (_recorder.IsRecording) _recorder.RecordEvent("MountingShift", $"{alert.Level}: {detail}");
+                if (alert.Level == MountingLevel.Warn)
+                {
+                    log($"WARNING: {detail} (> {MountingMonitor.WarnShiftDeg:F0}°) — check that the {alert.Role} IMU hasn't slipped.");
+                    return;
+                }
+                log($"WARNING: {detail} (> {MountingMonitor.PauseShiftDeg:F0}°) — the {alert.Role} IMU has probably slipped.");
+                bool walkingStage = _recorder.IsRecording && !_content.IsPaused && !_inRest && !_retentionComplete
+                                    && !_pipeline.AwaitingRecalibration && _sessionState is TestState.Baseline or TestState.Step;
+                if (!walkingStage) return;
+                PauseRecording();
+                MessageBox.Show(
+                    $"The {alert.Role} IMU tilt has shifted {alert.ShiftDeg:F0}° since calibration — it has probably slipped. " +
+                    "The recording is paused.\n\n" +
+                    "Check the IMU, then Resume and choose Redo (re-mount and recalibrate) or Continue, or End Recording to stop this condition.",
+                    "IMU slipped", MessageBoxButton.OK, MessageBoxImage.Warning);
             });
             _pipeline.OnTrainingBlockComplete += () => Dispatcher.BeginInvoke(() =>
             {
@@ -1050,6 +1081,17 @@ namespace IMUMoCap
                     }
                     break;
 
+                case CalibrationState.Failed when _mountingRejection is { } problem:
+                    // Rejected because an IMU is mounted the wrong way up (not because the participant moved).
+                    _mountingRejection = null;
+                    if (pending == null) _sessionState = TestState.Launching;
+                    _content.StatusLabel = $"Calibration rejected — IMU mounted wrong: {problem}. Fix it, then tap Ready to retry.";
+                    BroadcastArState("armed", reason: "Please wait — the operator is adjusting a sensor.\nTap Ready when asked.");
+                    MessageBox.Show($"Calibration rejected — IMU mounted the wrong way:\n\n{problem.Replace("; ", "\n")}\n\n" +
+                                    "Pelvis IMU: X axis up. Foot IMUs: Z axis up. Fix the IMU, then tap Ready to calibrate again.",
+                                    "IMU mounting", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    break;
+
                 case CalibrationState.Failed:
                     if (pending != null)
                     {
@@ -1463,6 +1505,10 @@ namespace IMUMoCap
                 ["WarmupRequiredSec"] = WarmupMonitor.RequiredSeconds,
                 ["WarmupGyroThresholdDegS"] = WarmupMonitor.GyroThresholdRadS * 180f / MathF.PI,
                 ["WarmupAccThreshold"] = WarmupMonitor.AccThreshold,
+                ["MountingPelvisMaxTiltDeg"] = MountingMonitor.PelvisMaxTiltDeg,
+                ["MountingFootMaxTiltDeg"] = MountingMonitor.FootMaxTiltDeg,
+                ["MountingWarnShiftDeg"] = MountingMonitor.WarnShiftDeg,
+                ["MountingPauseShiftDeg"] = MountingMonitor.PauseShiftDeg,
                 // Seconds from measurement start to calibration = (CalibrationStart PacketId in Events − this) / rate.
                 ["MeasurementStartPacketId"] = _warmup.GetSnapshot().MeasurementStartPacketId ?? -1,
                 ["WarmupDonePacketId"] = _warmup.GetSnapshot().CompletedPacketId ?? -1,

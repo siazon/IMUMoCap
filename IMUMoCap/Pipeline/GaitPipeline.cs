@@ -29,6 +29,7 @@ namespace IMUMoCap.Pipeline
         private readonly ProgressionDirEstimator _pd             = new();
         private readonly BaselineProcessor       _baseline       = new();
         private readonly FpaEngine               _fpa            = new();
+        private readonly MountingMonitor         _mounting       = new();
 
         // ── 可调参数（UI 实时更新）──────────────────────────────────────────────
         public PipelineParams Params { get; } = new();
@@ -54,6 +55,10 @@ namespace IMUMoCap.Pipeline
         public event Action<string, string>?       OnStrideZeroInvalidated; // (foot, 说明):零点定下前这只脚滤波器重启,需重新校准
         /// <summary>MTw 滤波器重启(StatusWord OrientationValid 1 → 0;开机初始化不算):(role, PacketId)。</summary>
         public event Action<ImuRole, long>?        OnFilterRestart;
+        /// <summary>校准姿态采到了,但有 IMU 佩戴方向不对(说明),校准随即判为 Failed。</summary>
+        public event Action<string>?               OnMountingRejected;
+        /// <summary>行走中某个 IMU 的倾斜偏离校准时 &gt; 10°(Warn)/ &gt; 20°(Pause),每次校准后每级只报一次。</summary>
+        public event Action<MountingAlert>?        OnMountingAlert;
 
         // per role: has the filter been valid since the last restart (for detecting 1 → 0)
         private readonly Dictionary<ImuRole, bool> _filterValid = new();
@@ -205,12 +210,24 @@ namespace IMUMoCap.Pipeline
                 _calibration.State != CalibrationState.Failed)
             {
                 bool stateChanged = _calibration.Process(validFrame);
+                string? mountingProblem = null;
+                if (stateChanged && _calibration.Profile is { } collected)
+                {
+                    mountingProblem = MountingMonitor.CheckCalibration(collected);
+                    if (mountingProblem != null) _calibration.Reject();
+                    else _mounting.Start(collected);
+                }
                 if (stateChanged)
                 {
+                    if (mountingProblem != null)
+                    {
+                        OnLog?.Invoke($"Calibration rejected — IMU mounted wrong: {mountingProblem}. Fix the IMU and tap Ready to retry.");
+                        OnMountingRejected?.Invoke(mountingProblem);
+                    }
                     OnCalibrationStateChanged?.Invoke(_calibration.State);
                     if (_calibration.State == CalibrationState.Completed)
                         OnLog?.Invoke("Calibration completed.");
-                    else if (_calibration.State == CalibrationState.Failed)
+                    else if (_calibration.State == CalibrationState.Failed && mountingProblem == null)
                         OnLog?.Invoke("Calibration failed — stand still and tap Ready to retry.");
                 }
                 // 校准完成前，后续模块不运行
@@ -224,6 +241,8 @@ namespace IMUMoCap.Pipeline
 
             // Step 4: GaitEventDetector
             var gaitEvent = _gait.Detect(validFrame, profile);
+            foreach (var alert in _mounting.Update(validFrame.Pelvis, validFrame.LeftFoot, validFrame.RightFoot))
+                OnMountingAlert?.Invoke(alert);
 
             // Step 5: MotionContextDetector
             var motionCtx = _motion.Detect(validFrame, gaitEvent);
@@ -400,6 +419,7 @@ namespace IMUMoCap.Pipeline
             _pd.Reset();
             _baseline.Reset();
             _fpa.ResetCondition(); // 新 condition:步幅法零点也重估
+            _mounting.Reset();
             BaselineProfile = null;
             InBaseline = InTraining = false;
             _diagnosticsBuffer.Clear();

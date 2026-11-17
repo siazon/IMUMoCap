@@ -59,6 +59,13 @@ namespace IMUMoCap.Pipeline
             };
         }
 
+        /// <summary>The pose was collected but is unusable (e.g. an IMU mounted the wrong way up): Failed, so Ready retries.</summary>
+        public void Reject()
+        {
+            State   = CalibrationState.Failed;
+            Profile = null;
+        }
+
         public void Reset()
         {
             State            = CalibrationState.WaitingForStart;

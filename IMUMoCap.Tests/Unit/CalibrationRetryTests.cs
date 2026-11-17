@@ -11,6 +11,9 @@ namespace IMUMoCap.Tests.Unit
     /// </summary>
     public class CalibrationRetryTests
     {
+        // Worn: pelvis X axis up (feet Z up = identity), so the mounting check passes.
+        private static readonly Quaternion PelvisWorn = Quaternion.CreateFromAxisAngle(Vector3.UnitY, -System.MathF.PI / 2);
+
         private static ImuFrameBundle Bundle(long pid, Vector3 gyro)
         {
             var b = new ImuFrameBundle(pid, pid / 100.0);
@@ -18,7 +21,7 @@ namespace IMUMoCap.Tests.Unit
                 b.AddOrUpdate(new ImuSampleFrame
                 {
                     PacketId = pid, Role = role,
-                    HasQuaternion = true, Quaternion = Quaternion.Identity,
+                    HasQuaternion = true, Quaternion = role == ImuRole.Pelvis ? PelvisWorn : Quaternion.Identity,
                     HasRateOfTurn = true, RateOfTurn = gyro,
                 });
             return b;
