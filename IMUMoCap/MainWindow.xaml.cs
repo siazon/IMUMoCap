@@ -477,6 +477,9 @@ namespace IMUMoCap
 
         protected override void OnClosed(EventArgs e)
         {
+            // Closing the window mid-condition (2026-11-17 13:07 P3d) used to lose the in-memory ImuSamples: end the
+            // recording the same way End Recording does, including the auto-save of the three CSVs.
+            if (_recorder.IsRecording) EndFlow("application closed while recording", autoSaveCsvs: true);
             _imuLoopCts?.Cancel();
             _baselineTimer?.Stop();
             _timelineTimer?.Stop();
