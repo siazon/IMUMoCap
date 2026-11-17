@@ -51,12 +51,19 @@ namespace IMUMoCap.Pipeline
         public event Action?                   OnTrainingBlockComplete; // both feet reached Params.TargetStepsPerFoot
         public event Action<string, float, float>? OnStrideZeroEstimated; // (foot, φ°, sd°),每 condition 每只脚一次
         public event Action<string, float, bool>?  OnStrideZeroCrossCheck; // (foot, φ_A − φ_B °, 采用方案 B),每 condition 每只脚一次
+        public event Action<string, string>?       OnStrideZeroInvalidated; // (foot, 说明):零点定下前这只脚滤波器重启,需重新校准
+        /// <summary>MTw 滤波器重启(StatusWord OrientationValid 1 → 0;开机初始化不算):(role, PacketId)。</summary>
+        public event Action<ImuRole, long>?        OnFilterRestart;
+
+        // per role: has the filter been valid since the last restart (for detecting 1 → 0)
+        private readonly Dictionary<ImuRole, bool> _filterValid = new();
 
         public GaitPipeline()
         {
             _fpa.OnStepOutcome += (foot, emitted, reason) => OnStepOutcome?.Invoke(foot, emitted, reason);
             _fpa.OnStrideZeroEstimated += (foot, offset, sd) => OnStrideZeroEstimated?.Invoke(foot, offset, sd);
             _fpa.OnStrideZeroCrossCheck += (foot, diff, usedB) => OnStrideZeroCrossCheck?.Invoke(foot, diff, usedB);
+            _fpa.OnStrideZeroInvalidated += (foot, why) => OnStrideZeroInvalidated?.Invoke(foot, why);
         }
 
         /// <summary>步幅法 FPA 做反馈(默认关:反馈用当前方法,步幅法只记录)。见 docs/stride_fpa_design.md。</summary>
@@ -187,6 +194,7 @@ namespace IMUMoCap.Pipeline
 
             Recorder?.Record(bundle);
             SyncParams();
+            DetectFilterRestarts(bundle);   // before DataQualityGate, which drops the invalid frames
 
             // Step 2: DataQualityGate
             var validFrame = _gate.Evaluate(bundle);
@@ -295,6 +303,21 @@ namespace IMUMoCap.Pipeline
                 OnFpaResult?.Invoke(fpaResult, true);
 
                 CountTrainingStep(fpaResult);
+            }
+        }
+
+        private void DetectFilterRestarts(ImuFrameBundle bundle)
+        {
+            foreach (var (role, sample) in bundle.Samples)
+            {
+                if (sample.StatusWord is not uint sw) continue;
+                bool valid = (sw & (uint)XsStatusFlag.XSF_OrientationValid) != 0;
+                if (!valid && _filterValid.GetValueOrDefault(role))
+                {
+                    _fpa.NotifyFilterRestart(role);
+                    OnFilterRestart?.Invoke(role, bundle.PacketId);
+                }
+                _filterValid[role] = valid;
             }
         }
 

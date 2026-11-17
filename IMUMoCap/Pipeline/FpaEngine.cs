@@ -76,6 +76,41 @@ namespace IMUMoCap.Pipeline
         /// <summary>每只脚的零点定下时触发一次:(foot, φ_A − φ_B °(超时未做交叉检查时为 NaN), 是否采用了方案 B)。</summary>
         public event Action<string, float, bool>? OnStrideZeroCrossCheck;
 
+        /// <summary>
+        /// 零点定下前这只脚的 MTw 滤波器重启:(foot, 说明)。校准时的航向属于旧滤波器坐标系,零点无法再估对,
+        /// 这只脚停止输出,直到重新校准(其校准参考改变)后重新估计零点。
+        /// </summary>
+        public event Action<string, string>? OnStrideZeroInvalidated;
+
+        /// <summary>
+        /// MTw 滤波器重启(StatusWord OrientationValid 1 → 0,由 GaitPipeline 在 DataQualityGate 之前检测)。
+        /// 零点定下后:无需处理(步幅法 FPA 只比较同一传感器同一步内的量,与坐标系无关)。零点定下前:
+        ///   脚:这只脚零点作废、停止输出,等重新校准;
+        ///   骨盆:PD(当前方法)不再可信 → 不再输出零点前的 PD 结果、不再收集方案 A,方案 B 一估出就直接采用(不做交叉检查)。
+        /// 校准完成前(还没进入零点估计)忽略。
+        /// </summary>
+        public void NotifyFilterRestart(ImuRole role)
+        {
+            if (!_calibrated) return;
+            if (role == ImuRole.Pelvis)
+            {
+                foreach (var (foot, sf) in new[] { ("L", _leftStride), ("R", _rightStride) })
+                {
+                    if (sf.PhiB != null || sf.NeedsRecalibration) continue;
+                    sf.PdUnreliable = true;
+                    DecideZero(foot, sf);
+                }
+                return;
+            }
+            var (f, s) = role == ImuRole.Left ? ("L", _leftStride) : ("R", _rightStride);
+            if (s.PhiB != null || s.NeedsRecalibration) return;
+            s.NeedsRecalibration = true;
+            s.RecalibrationRef = s.LastFootRef;
+            OnStrideZeroInvalidated?.Invoke(f, "filter restarted before the stride FPA zero was decided — recalibration needed");
+        }
+
+        private bool _calibrated;
+
         public int SampleRateHz
         {
             set { _leftStride.Tracker.SampleRateHz = value; _rightStride.Tracker.SampleRateHz = value; }
@@ -91,6 +126,11 @@ namespace IMUMoCap.Pipeline
                                   MotionContext context, PdEstimate pd,
                                   CalibrationProfile? calibration = null)
         {
+            if (calibration != null) _calibrated = true;
+            // a foot waiting for recalibration after a filter restart: a new calibration (changed reference) restarts its zero
+            _leftStride.TrackCalibration(calibration?.LeftFootRef);
+            _rightStride.TrackCalibration(calibration?.RightFootRef);
+
             // ── Step 0: 步幅积分(两只脚先各自给出本帧的着地结果,再更新"上一步方向"历史)──
             var strideL = _leftStride.Tracker.Update(frame.PacketId, gait.LeftStance,
                 frame.LeftFoot.HasFreeAcceleration ? frame.LeftFoot.FreeAcceleration : System.Numerics.Vector3.Zero);
@@ -214,9 +254,17 @@ namespace IMUMoCap.Pipeline
                 strideReason = StrideGate.Check(pending, sf.PrevSameDir, sf.OtherStraight, turning,
                     sf.PhiB != null ? StrideFpaDeg(sign, meanNow + yawRef - pending.DirectionRad, sf) : null);
 
-            bool gateOk = strideFeedback ? strideReason == null : pdGateOk;
+            // Stride mode before the zero is decided: PD FPA is the feedback, but only for steps with a real stride (G1–G4),
+            // so shuffling / tiny foot movements (Pf2 2026-11-17: 1 cm "strides") don't fill the baseline.
+            // After a pelvis filter restart (PdUnreliable) the PD FPA isn't trusted any more; after a foot restart
+            // (NeedsRecalibration) nothing for this foot is, until it's recalibrated.
+            bool preZeroStrideOk = !UseStrideDirection
+                || (sf.Pending is StrideResult p && StrideGate.IsIntegrationValid(p) && !sf.PdUnreliable);
+            bool gateOk = !sf.NeedsRecalibration && (strideFeedback ? strideReason == null : pdGateOk && preZeroStrideOk);
             sampler.NoteGate(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle, gateOk,
-                             strideFeedback ? strideReason ?? pdBlockReason : pdBlockReason);
+                             sf.NeedsRecalibration ? StepExclusionReason.StrideInvalid
+                             : strideFeedback ? strideReason ?? pdBlockReason
+                             : !preZeroStrideOk && pdGateOk ? StepExclusionReason.StrideInvalid : pdBlockReason);
             if (!gateOk) return null;
 
             float? settled = sampler.TrySettle(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle);
@@ -230,7 +278,7 @@ namespace IMUMoCap.Pipeline
             {
                 float strideRaw = NormalizeAngle(rel + yawRef - s.DirectionRad);   // ψ_abs − s
                 // plan A zero (pelvis-referenced), kept only for the cross-check against plan B
-                if (!sf.ZeroA.IsReady && pdGateOk && StrideGate.Check(s, sf.PrevSameDir, sf.OtherStraight, turning, null) == null
+                if (!sf.ZeroA.IsReady && pdGateOk && !sf.PdUnreliable && StrideGate.Check(s, sf.PrevSameDir, sf.OtherStraight, turning, null) == null
                     && sf.ZeroA.Add(NormalizeAngle(strideRaw - pdRaw)))
                     DecideZero(foot, sf);
                 if (sf.PhiB != null)
@@ -252,7 +300,7 @@ namespace IMUMoCap.Pipeline
         private void CollectEarlyDirection(string foot, StrideResult? stride, StrideFoot sf,
                                            System.Numerics.Quaternion? footRef, bool turning)
         {
-            if (sf.PhiB != null || stride is not StrideResult s) return;
+            if (sf.PhiB != null || sf.NeedsRecalibration || stride is not StrideResult s) return;
             if (sf.CandidateB is float b)
             {
                 // waiting for plan A: after the timeout, use B without the cross-check
@@ -276,7 +324,16 @@ namespace IMUMoCap.Pipeline
         /// <summary>两种零点都估出后定下这只脚的零点(见 ZeroCrossCheckMaxDeg),之后步幅法 FPA 才输出。</summary>
         private void DecideZero(string foot, StrideFoot sf)
         {
-            if (sf.PhiB != null || sf.CandidateB is not float b || !sf.ZeroA.IsReady) return;
+            if (sf.PhiB != null || sf.CandidateB is not float b) return;
+            if (sf.PdUnreliable)
+            {
+                // pelvis filter restarted before the zero: plan A can't be trusted, use B without the cross-check
+                sf.PhiB = b;
+                OnStrideZeroEstimated?.Invoke(foot, RadToDeg(b), sf.Early.SdDeg);
+                OnStrideZeroCrossCheck?.Invoke(foot, float.NaN, true);
+                return;
+            }
+            if (!sf.ZeroA.IsReady) return;
             float diff = RadToDeg(NormalizeAngle(sf.ZeroA.OffsetRad - b));
             bool useB = MathF.Abs(diff) <= ZeroCrossCheckMaxDeg;
             sf.PhiB = useB ? b : sf.ZeroA.OffsetRad;
@@ -299,6 +356,7 @@ namespace IMUMoCap.Pipeline
             Reset();
             _leftStride.ResetZero();
             _rightStride.ResetZero();
+            _calibrated = false;
         }
 
         // ── StrideFoot:一只脚的步幅法状态 ────────────────────────────────────
@@ -311,12 +369,24 @@ namespace IMUMoCap.Pipeline
             public float? CandidateB;                             // plan B zero once its N strides are in, rad
             public float? PhiB;                                   // zero in use (B, or A as fallback), rad; null until decided
             public int StridesSinceB;                             // strides since CandidateB, for ZeroCrossCheckTimeoutStrides
+            public bool PdUnreliable;                             // pelvis filter restarted before the zero was decided
+            public bool NeedsRecalibration;                       // this foot's filter restarted before the zero was decided
+            public System.Numerics.Quaternion? RecalibrationRef;  // calibration ref at that moment (a different one = recalibrated)
+            public System.Numerics.Quaternion? LastFootRef;
+
+            public void TrackCalibration(System.Numerics.Quaternion? footRef)
+            {
+                LastFootRef = footRef;
+                if (NeedsRecalibration && footRef is { } r && r != RecalibrationRef) ResetZero();
+            }
 
             public void ResetZero()
             {
                 ZeroA.Reset(); Early.Reset();
                 EarlyAnchor = CandidateB = PhiB = null;
                 StridesSinceB = 0;
+                PdUnreliable = NeedsRecalibration = false;
+                RecalibrationRef = null;
             }
             public StrideResult? Pending;          // 本次着地对应的这一步(着地时给出,抬脚时清除)
             public float? PrevSameDir;             // 着地时快照:本脚上一步的方向(G5)

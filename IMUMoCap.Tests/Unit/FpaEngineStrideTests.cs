@@ -16,8 +16,10 @@ namespace IMUMoCap.Tests.Unit
         /// <summary>Per-cycle walking conditions (all angles in degrees, world frame).</summary>
         /// <param name="RightFrameDeg">Heading of the right sensor's own world frame relative to the left's (each MTw has
         /// its own heading reference; under VRU it is arbitrary). Rotates both its yaw and its free acceleration.</param>
+        /// <param name="Accel">Swing acceleration magnitude, m/s² (10 → ~0.9 m strides; 0.2 → ~2 cm, i.e. shuffling in place).</param>
         private sealed record Walk(float FootYawL = 10f, float FootYawR = -10f, float StrideDir = 0f, float Pd = 0f,
-                                   bool PdValid = true, ContextState Ctx = ContextState.Straight, float RightFrameDeg = 0f);
+                                   bool PdValid = true, ContextState Ctx = ContextState.Straight, float RightFrameDeg = 0f,
+                                   float Accel = 10f);
 
         private sealed class Rig
         {
@@ -45,7 +47,7 @@ namespace IMUMoCap.Tests.Unit
                         Vector3 accL = Vector3.Zero, accR = Vector3.Zero;
                         if (!stance)
                         {
-                            float a = (i - StanceFrames) < SwingFrames / 2 ? 10f : -10f;
+                            float a = (i - StanceFrames) < SwingFrames / 2 ? w.Accel : -w.Accel;
                             accL = new Vector3(MathF.Cos(Rad(w.StrideDir)) * a, MathF.Sin(Rad(w.StrideDir)) * a, 0f);
                             float dirR = w.StrideDir + w.RightFrameDeg;
                             accR = new Vector3(MathF.Cos(Rad(dirR)) * a, MathF.Sin(Rad(dirR)) * a, 0f);
@@ -166,6 +168,80 @@ namespace IMUMoCap.Tests.Unit
             Assert.Equal(5f, rig.Zeros.Find(z => z.Foot == "L").OffsetDeg, 1);   // ψ_cal − s_early = 5 − 0
             Assert.Equal(5f, rig.Results[^1].FpaStride_L, 1);
             Assert.Equal(5f, rig.Results[^1].FpaStride_R, 1);
+        }
+
+        // ── filter restarts (XDA re-initialises an MTw's filter, e.g. near gyro saturation) ──────────────────────
+
+        [Fact]
+        public void FootFilterRestart_BeforeTheZero_StopsThatFoot_UntilANewCalibration()
+        {
+            // the stand heading (old filter frame) can no longer be compared with strides in the new frame
+            var rig = new Rig(useStride: true);
+            var invalidated = new List<string>();
+            rig.Engine.OnStrideZeroInvalidated += (f, why) => invalidated.Add(f);
+            rig.Run(3, new Walk());                               // zero not decided yet
+            rig.Engine.NotifyFilterRestart(ImuRole.Left);
+            int n = rig.Results.Count;
+            rig.Run(10, new Walk());
+            Assert.Equal(new[] { "L" }, invalidated);
+            var after = rig.Results.GetRange(n, rig.Results.Count - n);
+            Assert.NotEmpty(after);
+            Assert.All(after, r => Assert.True(float.IsNaN(r.Fpa_L)));    // left stopped
+            Assert.Contains(after, r => !float.IsNaN(r.FpaStride_R));      // right unaffected
+            Assert.DoesNotContain(rig.Zeros, z => z.Foot == "L");
+
+            rig.Cal = new CalibrationProfile { PelvisRef = Quaternion.Identity, LeftFootRef = Yaw(1f), RightFootRef = Quaternion.Identity };
+            rig.Run(10, new Walk());                              // recalibrated: left zero estimated again
+            Assert.Contains(rig.Zeros, z => z.Foot == "L");
+            Assert.Equal(9f, rig.Results[^1].FpaStride_L, 1);    // ψ − s − (1° stand heading − 0)
+        }
+
+        [Fact]
+        public void FootFilterRestart_AfterTheZero_ChangesNothing()
+        {
+            var rig = new Rig(useStride: true);
+            var invalidated = new List<string>();
+            rig.Engine.OnStrideZeroInvalidated += (f, why) => invalidated.Add(f);
+            rig.Run(15, new Walk());
+            rig.Engine.NotifyFilterRestart(ImuRole.Left);
+            int n = rig.Results.Count;
+            rig.Run(5, new Walk());
+            Assert.Empty(invalidated);
+            var leftAfter = rig.Results.GetRange(n, rig.Results.Count - n).Where(r => !float.IsNaN(r.FpaStride_L)).ToList();
+            Assert.NotEmpty(leftAfter);
+            Assert.All(leftAfter, r => Assert.Equal(10f, r.FpaStride_L, 1));
+        }
+
+        [Fact]
+        public void PelvisFilterRestart_BeforeTheZero_UsesPlanBWithoutCrossCheck_AndNoPdFeedback()
+        {
+            var rig = new Rig(useStride: true);
+            var checks = new List<(string Foot, float DiffDeg, bool UsedB)>();
+            rig.Engine.OnStrideZeroCrossCheck += (f, d, b) => checks.Add((f, d, b));
+            rig.Run(2, new Walk());
+            rig.Engine.NotifyFilterRestart(ImuRole.Pelvis);
+            int n = rig.Results.Count;
+            rig.Run(15, new Walk());
+            Assert.Equal(2, checks.Count);
+            Assert.All(checks, c => { Assert.True(float.IsNaN(c.DiffDeg)); Assert.True(c.UsedB); });
+            Assert.All(rig.Results.GetRange(n, rig.Results.Count - n),
+                       r => Assert.True(!float.IsNaN(r.FpaStride_L) || !float.IsNaN(r.FpaStride_R)));  // no PD-only output
+            Assert.Equal(10f, rig.Results[^1].FpaStride_L, 1);
+        }
+
+        [Fact]
+        public void StrideMode_BeforeTheZero_OnlyCountsStepsWithAValidStride()
+        {
+            // Pf2 2026-11-17: feet barely moving (1 cm "strides", 0.2 s swings) — the PD method counted 35 baseline
+            // steps per foot from that; in stride mode those steps mustn't reach the baseline before the zero is known.
+            var stride = new Rig(useStride: true);
+            stride.Run(10, new Walk(Accel: 0.2f));
+            Assert.Empty(stride.Results);
+            Assert.Contains(stride.Outcomes, o => !o.Emitted && o.Reason == StepExclusionReason.StrideInvalid);
+
+            var pd = new Rig(useStride: false);                  // switch off: old behaviour unchanged
+            pd.Run(10, new Walk(Accel: 0.2f));
+            Assert.NotEmpty(pd.Results);
         }
 
         [Fact]

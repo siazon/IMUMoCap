@@ -52,6 +52,13 @@ FPA_f = sign_f × wrap(ψₖ − sₖ − φ_f),左脚 sign = +1,右脚 sign = �
     Ps2:N = 5 与 10 的 φ_B 相差 0.3°(凑齐用时 8 s 对 17 s);随机误差 3.2°/√N 约 1.4° 对 1.0°。
   - 方案 A:同上文(借当前方法,骨盆参照)。
 - 两个都估出后定下每只脚的零点:|φ_A − φ_B| ≤ 15°(`FpaEngine.ZeroCrossCheckMaxDeg`)用 B,否则退回 A 并报警。
+- 零点定下前(步幅法模式)只把积分有效(G1–G4)的步计入:Pf2(11-17,脚几乎没动,每步 1 cm)时当前方法曾把晃动当成 35 个基线步。
+- MTw 滤波器重启(StatusWord OrientationValid 1 → 0,`GaitPipeline` 在 DataQualityGate 前检测,Events 记 `FilterRestart`):
+  - 原因线索:Po9 两脚同时重启前后角速度达 1748 / 1984 °/s(量程 2000 °/s),即佩戴时被甩、翻、磕碰。
+  - 每次:约 2 s 无数据(整帧被丢),前后再丢 1–2 步(G2 缺帧、G5 方向跳变),之后 10–15 s 精度稍差。
+  - 零点定下后:不处理(FPA 只比较同一传感器同一步内的量,φ 与坐标系无关)。
+  - 零点定下前,脚:校准航向属于旧坐标系,这只脚零点作废、停止输出,Events `StrideZeroInvalidated`,日志提示重新校准;
+    该脚校准参考改变(重新校准)后自动重估。骨盆:不再输出零点前的 PD 结果、不再收集方案 A,方案 B 估出即用(不交叉检查)。
 - 超时:φ_B 估出后再过 10 个步(`FpaEngine.ZeroCrossCheckTimeoutStrides`)方案 A 仍未估出(开头 PD 一直无效 / 卡在
   ReacquiringPd),不做交叉检查直接用 B,日志与 `StrideZeroCheck` 注明 "not cross-checked"。
   Events 记 `StrideZero`(采用的 φ)和 `StrideZeroCheck`(差值与采用哪个)。

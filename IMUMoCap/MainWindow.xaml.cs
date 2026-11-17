@@ -268,6 +268,17 @@ namespace IMUMoCap
                     : $"Stride FPA zero estimated: {detail}");
                 if (_recorder.IsRecording) _recorder.RecordEvent("StrideZero", detail);
             });
+            // Every MTw filter restart goes into the Events (the warm-up monitor only logs it), so the affected seconds can
+            // be excluded afterwards. Restarts seem to come with near-saturated rotation (~2000°/s) while handling the IMUs.
+            _pipeline.OnFilterRestart += (role, packetId) => Dispatcher.BeginInvoke(() =>
+            {
+                if (_recorder.IsRecording) _recorder.RecordEvent("FilterRestart", $"{role} at packet {packetId}");
+            });
+            _pipeline.OnStrideZeroInvalidated += (foot, why) => Dispatcher.BeginInvoke(() =>
+            {
+                log($"WARNING: stride FPA zero for {foot} invalidated: {why}. That foot gets no FPA until it is recalibrated — use Restart Condition (or a redo with recalibration).");
+                if (_recorder.IsRecording) _recorder.RecordEvent("StrideZeroInvalidated", $"{foot}: {why}");
+            });
             _pipeline.OnStrideZeroCrossCheck += (foot, diffDeg, usedB) => Dispatcher.BeginInvoke(() =>
             {
                 string detail = float.IsNaN(diffDeg)

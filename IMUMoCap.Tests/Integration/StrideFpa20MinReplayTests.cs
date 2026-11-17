@@ -33,6 +33,7 @@ namespace IMUMoCap.Tests.Integration
         [Theory]
         [InlineData("20261116_143722")]
         [InlineData("20261117_121715")]
+        [InlineData("20261117_144014")]   // Pf2: IF, 40 s Baseline only
         [InlineData("20261117_130600")]   // Ps2: 1-minute straight-feet test (feet deliberately along the path, stand on parallel tape)
         public void Report(string stamp)
         {
