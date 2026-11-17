@@ -33,8 +33,8 @@ namespace IMUMoCap.Pipeline
         // ── 可调参数（UI 实时更新）──────────────────────────────────────────────
         public PipelineParams Params { get; } = new();
 
-        // ── 诊断数据缓冲区（滑动窗，最长 20 分钟 @100Hz）────────────────────────
-        private const int DiagnosticsCapacity = 120_000;
+        // ── 诊断数据缓冲区（滑动窗，最长 30 分钟 @100Hz）────────────────────────
+        private const int DiagnosticsCapacity = 180_000;
         private readonly Queue<DiagnosticsRow> _diagnosticsBuffer = new();
 
         // TEMP：帧时间戳→AR广播延迟测量，用完删除。

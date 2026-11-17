@@ -1601,6 +1601,7 @@ namespace IMUMoCap
             // A pause must not carry over into the new recording: while IsPaused, no data rows are written.
             _content.IsPaused = false;
             BtnPauseResume.Content = "Pause";
+            _autoSaveStamp = null; // this condition's auto-saved CSVs get a fresh stamp
             _recorder.StartCondition(participantId, condition);
             if (_warmupSkipped && !_warmup.IsComplete)
                 _recorder.RecordEvent("WarmupSkipped", $"{_warmup.GetSnapshot().StillSeconds:F1}s still of {WarmupMonitor.RequiredSeconds:F0}s");
@@ -1866,7 +1867,33 @@ namespace IMUMoCap
                 }
                 log($"End Recording confirmed despite missing markers: {string.Join(", ", missing)}");
             }
-            EndFlow("operator ended");
+            EndFlow("operator ended", autoSaveCsvs: true);
+        }
+
+        // Stamp shared by the Retention-done and End Recording saves of one condition, so the second save overwrites the
+        // first instead of leaving two sets of files. Cleared when a condition starts.
+        private string? _autoSaveStamp;
+
+        /// <summary>
+        /// Saves ImuSamples / Diagnostics / Events CSVs into the condition's data folder (the "Open Data Folder" one),
+        /// same format as the manual Save buttons. Must run before EndFlow's _pipeline.Reset(), which empties the
+        /// diagnostics buffer.
+        /// </summary>
+        private void AutoSaveRecordingCsvs(bool clearSamples)
+        {
+            try
+            {
+                string? dir = Path.GetDirectoryName(_recorder.CurrentSessionFilePath ?? "");
+                if (string.IsNullOrEmpty(dir)) { log("Auto-save skipped: no condition data folder."); return; }
+                _autoSaveStamp ??= DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                var paths = RecordingCsvExporter.Save(dir, _autoSaveStamp, _imuSamples, _pipeline.GetDiagnosticsSnapshot(), _recorder);
+                log($"Auto-saved {_imuSamples.Count} IMU samples, diagnostics and events → {dir} (*_{_autoSaveStamp}*.csv)");
+                if (clearSamples) _imuSamples.Clear(); // same as the manual Save IMU Data button
+            }
+            catch (Exception ex)
+            {
+                log($"Auto-save failed: {ex.Message} — use the manual Save buttons.");
+            }
         }
 
         // Recomputes the whole flow checklist every call (called from the 60ms timeline timer) rather than being
@@ -1907,6 +1934,7 @@ namespace IMUMoCap
             if (!_shadow.Fire(Protocol.FlowEvent.RetentionTargetReached).Accepted) return; // not in Retention, or already complete
             // Marks where Retention's counted data ends; rows written afterwards (waiting for NASA-TLX #2 / End) keep the Retention tag.
             _recorder.RecordEvent("RetentionDone", $"{reason}; steps L/R={_retentionStepsL}/{_retentionStepsR}");
+            AutoSaveRecordingCsvs(clearSamples: false); // End Recording saves again (same names) with everything up to End
             _content.StatusLabel = "Retention complete. Administer NASA-TLX (Admin 2), then click End Recording.";
             BroadcastArState("ended"); // tell the participant the experiment is over ("Session complete. Thank you!")
             log($"Retention complete ({reason}) — awaiting NASA-TLX Admin 2 before ending. Click End Recording when done.");
@@ -1917,7 +1945,7 @@ namespace IMUMoCap
         /// button and automatically when Retention hits 100 valid steps/foot or the stall-prevention timeout.
         /// Idempotent (no-op once the recording is closed).
         /// </summary>
-        private void EndFlow(string reason)
+        private void EndFlow(string reason, bool autoSaveCsvs = false)
         {
             if (!_recorder.IsRecording) return;
             FlushParamChanges(); // don't lose a change made in the last moments
@@ -1936,6 +1964,7 @@ namespace IMUMoCap
             _recorder.RecordEvent("End", reason);
             _recorder.FlushMeta();
             _recorder.Close();
+            if (autoSaveCsvs) AutoSaveRecordingCsvs(clearSamples: true); // before _pipeline.Reset() empties the diagnostics buffer
             _pipeline.CalibrationArmed = false;
             // Belt-and-suspenders alongside BtnStartCondition_Click's own _pipeline.Reset() — leaves
             // no stale BaselineProfile/module state lingering in the UI between End Recording and
