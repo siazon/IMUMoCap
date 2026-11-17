@@ -596,13 +596,23 @@ namespace IMUMoCap
             });
         }
 
+        // The operator log panel is also written to logs/app_<start time>.log, so a session can be analysed afterwards.
+        private readonly string _appLogPath = Path.Combine(AppContext.BaseDirectory, "logs", $"app_{DateTime.Now:yyyyMMdd_HHmmss}.log");
+
         private void log(string log)
         {
 
             this.Dispatcher.BeginInvoke(() =>
             {
-                _content.LogList += $"[{DateTime.Now:HH:mm:ss.fff}] {log}";
+                string line = $"[{DateTime.Now:HH:mm:ss.fff}] {log}";
+                _content.LogList += line;
                 _content.LogList += (Environment.NewLine);
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(_appLogPath)!);
+                    File.AppendAllText(_appLogPath, line + Environment.NewLine);
+                }
+                catch { /* logging must never disturb the experiment */ }
 
                 if (_content.IsScrollerToEnd)
                 {
