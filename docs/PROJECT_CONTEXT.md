@@ -196,8 +196,8 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 - **步幅法零点**(2026-11-17):方案 B(校准时脚的航向 − 最初 5 个直线步方向,返程按 180° 折回)与方案 A(骨盆参照)交叉检查,差 ≤ 15° 用 B,否则退回 A 并报警。操作要求:校准时面朝行走路线、双脚平行,校准后直接往前走。详见 `docs/stride_fpa_design.md` 一
 - **滤波器重启处理**(2026-11-17):Events 记 `FilterRestart`;零点定下前某只脚重启 → 该脚零点作废、停止输出直到重新校准(`StrideZeroInvalidated`);骨盆重启 → 零点直接用方案 B。关闭窗口时若仍在录制,先按 End Recording 流程结束并自动保存
 - **自动保存分析用 CSV**(`Methods/RecordingCsvExporter.cs`,2026-11-16):Retention 结束时与按 End Recording 时,把 `ImuSamples_{stamp}.csv`、`Diagnostics_{stamp}.csv`、`Diagnostics_{stamp}_Events.csv` 存入该 condition 的数据文件夹(Open Data Folder);同一 condition 两次保存用同一 stamp,后一次覆盖。End 后清空内存中的 IMU 样本(同手动 Save IMU Data)。Restart Condition 不自动保存(数据进 Aborted 归档)。Diagnostics 内存缓冲上限 30 分钟
-- **滤波器预热门控**(`Pipeline/WarmupMonitor.cs`,2026-11-13):测量开始后每个 IMU 各自连续低运动 15 s(|gyro| < 3 °/s、||acc| − g| < 0.3 m/s²)即锁定完成,三个都完成才允许 Start Condition;某个 IMU 滤波器重新初始化时只有它重新预热;状态栏显示 "Warm-up n/15 s" / "Warm-up done"。操作流程:IMU 连上后先平放在桌上,显示 Warm-up done 再佩戴。测量重新开始即重置;condition 中途预热未完成就校准时只记 `WarmupIncomplete` 事件,不拦截。设计见 `docs/stride_fpa_design.md` 第六节。
-  2026-11-16 起:状态栏按传感器显示 `Warm-up P x · L y · R z /15 s`(– = 该 IMU 还没有滤波器有效的数据),不在测量中时显示设备状态;
+- **滤波器预热门控**(`Pipeline/WarmupMonitor.cs`,2026-11-13):测量开始后每个 IMU 各自连续低运动 10 s(2026-11-17 由 15 s 改为 10 s;|gyro| < 3 °/s、||acc| − g| < 0.3 m/s²)即锁定完成,三个都完成才允许 Start Condition;某个 IMU 滤波器重新初始化时只有它重新预热;状态栏显示 "Warm-up n/10 s" / "Warm-up done"。操作流程:IMU 连上后先平放在桌上,显示 Warm-up done 再佩戴。测量重新开始即重置;condition 中途预热未完成就校准时只记 `WarmupIncomplete` 事件,不拦截。设计见 `docs/stride_fpa_design.md` 第六节。
+  2026-11-16 起:状态栏按传感器显示 `Warm-up P x · L y · R z /10 s`(– = 该 IMU 还没有滤波器有效的数据),不在测量中时显示设备状态;
   预热完成、被作废(写明哪个 IMU、哪个包)和设备状态变化都写日志,等待期间每 5 s 记一次进度;
   **Skip Warm-up** 按钮(确认后)允许 Start Condition 继续,记 Events `WarmupSkipped` 和 RunConfig `WarmupSkipped`。
 - **日志文件**:操作日志面板同时写入 `logs/app_<启动时间>.log`(exe 目录下)

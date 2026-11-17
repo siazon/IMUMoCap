@@ -24,28 +24,28 @@ namespace IMUMoCap.Tests.Unit
         }
 
         [Fact]
-        public void Still15s_Completes()
+        public void Still10s_Completes()
         {
             var m = new WarmupMonitor();
-            Feed(m, 1000, 1400);                       // 14 s
+            Feed(m, 1000, 900);                        // 9 s
             Assert.False(m.IsComplete);
-            Feed(m, 2400, 200);                        // 16 s total
+            Feed(m, 1900, 200);                        // 11 s total
             var s = m.GetSnapshot();
             Assert.True(s.IsComplete);
             Assert.Equal(1000, s.MeasurementStartPacketId);
-            Assert.Equal(2500, s.CompletedPacketId);   // 15 s after the first valid packet
+            Assert.Equal(2000, s.CompletedPacketId);   // 10 s after the first valid packet
         }
 
         [Fact]
         public void Motion_RestartsTheCount()
         {
             var m = new WarmupMonitor();
-            Feed(m, 0, 1000);                          // 10 s still
-            m.Update(Sample(ImuRole.Left, 1000, Valid, new Vector3(0f, 0f, 0.2f))); // ~11 °/s on one foot
-            Feed(m, 1001, 1000);                       // 10 s still again
+            Feed(m, 0, 800);                           // 8 s still
+            m.Update(Sample(ImuRole.Left, 800, Valid, new Vector3(0f, 0f, 0.2f))); // ~11 °/s on one foot
+            Feed(m, 801, 800);                         // 8 s still again
             Assert.False(m.IsComplete);
-            Assert.InRange(m.GetSnapshot().StillSeconds, 9.9, 10.0);
-            Feed(m, 2001, 600);
+            Assert.InRange(m.GetSnapshot().StillSeconds, 7.9, 8.0);
+            Feed(m, 1601, 300);
             Assert.True(m.IsComplete);
         }
 
@@ -54,10 +54,10 @@ namespace IMUMoCap.Tests.Unit
         {
             var m = new WarmupMonitor();
             Feed(m, 0, 200, status: 0u);               // filter not yet valid (first ~2 s)
-            Feed(m, 200, 1450);
+            Feed(m, 200, 950);
             Assert.False(m.IsComplete);
             Assert.Equal(200, m.GetSnapshot().MeasurementStartPacketId);
-            Feed(m, 1650, 100);
+            Feed(m, 1150, 100);
             Assert.True(m.IsComplete);
         }
 
@@ -136,8 +136,8 @@ namespace IMUMoCap.Tests.Unit
             }
             var s = m.GetSnapshot();
             Assert.True(s.IsComplete);
-            Assert.Equal(15.0, s.PelvisSec);   // latched: shown as done although it's moving
-            Assert.Equal(3401, s.CompletedPacketId);
+            Assert.Equal(10.0, s.PelvisSec);   // latched: shown as done although it's moving
+            Assert.Equal(2901, s.CompletedPacketId);
         }
 
         [Fact]

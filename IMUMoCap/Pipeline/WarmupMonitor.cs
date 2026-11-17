@@ -22,7 +22,9 @@ namespace IMUMoCap.Pipeline
     /// </summary>
     public sealed class WarmupMonitor
     {
-        public const double RequiredSeconds = 15.0;
+        // 10 s = lower end of the whitepaper's 10–15 s (2026-11-17, was 15): on the table the outputs are already
+        // stable once the filter is valid (tilt < 0.1°, heading ≈ 0°/s, free acc constant over the next 15 s).
+        public const double RequiredSeconds = 10.0;
         public const float GyroThresholdRadS = 3f * MathF.PI / 180f; // 3 °/s
         public const float AccThreshold = 0.3f;                      // m/s²,||acc| − g|
         private const float Gravity = 9.81f;
