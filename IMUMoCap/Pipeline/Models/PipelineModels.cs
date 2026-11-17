@@ -53,6 +53,11 @@ namespace IMUMoCap.Pipeline.Models
         public long  PacketId    { get; set; }
         public float Fpa_L       { get; set; }  // 度，正值=toe-out（Fpa_R 已在 FpaEngine 取反，左右脚同一约定）
         public float Fpa_R       { get; set; }
+        // Fpa_L/R 是用于反馈的值;下面两组分别是两种方法各自的结果(NaN = 该方法这一步没有结果),供记录对比。
+        public float FpaPd_L     { get; set; } = float.NaN;  // 当前方法:脚偏航 − PD
+        public float FpaPd_R     { get; set; } = float.NaN;
+        public float FpaStride_L { get; set; } = float.NaN;  // 步幅法:脚偏航 − 本脚步幅方向 − φ
+        public float FpaStride_R { get; set; } = float.NaN;
         public bool  OnTarget_L  { get; set; }
         public bool  OnTarget_R  { get; set; }
         public float Error_L     { get; set; }  // FPA - Target，带符号，供AR反馈
@@ -68,7 +73,8 @@ namespace IMUMoCap.Pipeline.Models
 
     // ── StepExclusionReason ───────────────────────────────────────────────────
     // 一个已完成的 stance 周期（真实落地）因门控未通过而没有输出 FpaResult 的原因
-    public enum StepExclusionReason { Turning, ReacquiringPd, LowConfidence, PdInvalid }
+    // StrideInvalid / StrideNotStraight:步幅法门控(StrideGate G1–G4、G8 / G5–G6)
+    public enum StepExclusionReason { Turning, ReacquiringPd, LowConfidence, PdInvalid, StrideInvalid, StrideNotStraight }
 
     // ── FrameQualityReport ────────────────────────────────────────────────────
     // 实验结束后的帧质量报告，由 ImuFrameCollector 生成

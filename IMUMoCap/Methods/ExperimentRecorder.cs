@@ -300,6 +300,8 @@ namespace IMUMoCap.Methods
                 case StepExclusionReason.ReacquiringPd: stats.ExcludedReacquiring++; break;
                 case StepExclusionReason.LowConfidence: stats.ExcludedLowConfidence++; break;
                 case StepExclusionReason.PdInvalid:     stats.ExcludedPdInvalid++; break;
+                case StepExclusionReason.StrideInvalid:     stats.ExcludedStrideInvalid++; break;
+                case StepExclusionReason.StrideNotStraight: stats.ExcludedStrideNotStraight++; break;
             }
         }
 

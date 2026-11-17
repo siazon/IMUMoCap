@@ -47,6 +47,11 @@ namespace IMUMoCap.Pipeline.Models
         public float FpaRight_Error    { get; init; }
         public bool  FpaRight_OnTarget { get; init; }
         public string FpaQuality       { get; init; } = ""; // "High" | "Marginal" | "" (无 FPA 输出)
+        // 两种方法各自的结果(FpaLeft_Deg/FpaRight_Deg 是用于反馈的那一个),NaN = 该方法这一帧没有结果
+        public float FpaLeft_PdDeg      { get; init; } = float.NaN;
+        public float FpaLeft_StrideDeg  { get; init; } = float.NaN;
+        public float FpaRight_PdDeg     { get; init; } = float.NaN;
+        public float FpaRight_StrideDeg { get; init; } = float.NaN;
 
         // ── Experiment tagging (set by ExperimentRecorder when persisting, not by pipeline) ──
         public string Stage   { get; set; } = "";
@@ -69,6 +74,7 @@ namespace IMUMoCap.Pipeline.Models
             "PD_DirectionDeg,PD_Stability,PD_IsValid," +
             "FPA_Left_Deg,FPA_Left_Error,FPA_Left_OnTarget," +
             "FPA_Right_Deg,FPA_Right_Error,FPA_Right_OnTarget,FPA_Quality," +
+            "FPA_Left_PdDeg,FPA_Left_StrideDeg,FPA_Right_PdDeg,FPA_Right_StrideDeg," +
             "Stage,Attempt";
 
         public string ToCsvRow() =>
@@ -91,6 +97,9 @@ namespace IMUMoCap.Pipeline.Models
             $"{(float.IsNaN(FpaRight_Deg)  ? "" : FpaRight_Deg.ToString("F2"))}," +
             $"{(float.IsNaN(FpaRight_Error) ? "" : FpaRight_Error.ToString("F2"))}," +
             $"{FpaRight_OnTarget},{FpaQuality}," +
+            $"{F2(FpaLeft_PdDeg)},{F2(FpaLeft_StrideDeg)},{F2(FpaRight_PdDeg)},{F2(FpaRight_StrideDeg)}," +
             $"{Stage},{Attempt}";
+
+        private static string F2(float v) => float.IsNaN(v) ? "" : v.ToString("F2");
     }
 }

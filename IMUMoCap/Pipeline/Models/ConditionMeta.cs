@@ -27,9 +27,12 @@ namespace IMUMoCap.Pipeline.Models
         public int ExcludedReacquiring   { get; set; }
         public int ExcludedLowConfidence { get; set; }
         public int ExcludedPdInvalid     { get; set; }
+        public int ExcludedStrideInvalid     { get; set; }  // 步幅法 G1–G4、G8
+        public int ExcludedStrideNotStraight { get; set; }  // 步幅法 G5–G6
 
         public int TotalAttempted =>
-            Emitted + ExcludedTurning + ExcludedReacquiring + ExcludedLowConfidence + ExcludedPdInvalid;
+            Emitted + ExcludedTurning + ExcludedReacquiring + ExcludedLowConfidence + ExcludedPdInvalid
+            + ExcludedStrideInvalid + ExcludedStrideNotStraight;
 
         // Turning + ReacquiringPd 合并为"转身相关排除率"（ReacquiringPd 是转身后的方向重稳定期）
         public float TurningExclusionRate =>

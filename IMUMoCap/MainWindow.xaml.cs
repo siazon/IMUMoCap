@@ -150,6 +150,10 @@ namespace IMUMoCap
         // next stage starts on the previous calibration once the participant taps a plain Ready (no recalibration).
         // Redo still recalibrates, and the first calibration is unaffected. Recorded in RunConfig.Constants; yaw drift is no longer bounded between stages.
         private static readonly bool SkipInterStageRecalibration = true;
+        // Stride-direction FPA (docs/stride_fpa_design.md): true = feedback uses each foot's own stride direction instead
+        // of the pelvis-based PD (which drifted 6–10°/min under VRU, 2026-11-16 Pl89). Both FPAs are recorded either way.
+        // Recorded in RunConfig.Constants.
+        private static readonly bool UseStrideFpa = true;
         private const int RestDurationSec = 120; // Rest+MC window after Training1 (Research Overview §2.5)
         // Rest+MC+NASA-TLX Admin1(~5min)+IMI-PC window after Training3, before Retention.
         // ASSUMPTION: exact floor not specified by the protocol doc (only the ~5min instrument portion is) —
@@ -262,6 +266,10 @@ namespace IMUMoCap
                 // independent of _ifRenderMode, which only tells the AR client which rendering mode
                 // to use. Keeps `live` flowing even in placeholder mode so OnFpaResult's
                 // live-vs-fpa consistency log always has a recent value to compare against.
+                //
+                // NOTE(2026-11-12) 暂时停用(待改,代码暂未改动):这里的角度 = 脚偏航 − 当前骨盆偏航,
+                // 骨盆航向一漂移(实测几分钟内可达 25–35°),IF 的实时角度就跟着错,结果不可信。
+                // 计划在步幅法 FPA(每只脚只用自己的传感器)接入后,改为"脚偏航 − 该脚上一步的步幅方向"再启用。
                 bool inTrainingForLive = _sessionState == TestState.Step;
                 if (_wsServer != null && ConditionForAr() == "IF" && inTrainingForLive && !_isRetention && !_inRest)
                 {
@@ -304,6 +312,25 @@ namespace IMUMoCap
                 if (stats != null && stats.TotalAttempted > 0)
                     _content.TurningExclusionDisplay =
                         $"Turning excluded: {stats.ExcludedTurning + stats.ExcludedReacquiring}/{stats.TotalAttempted} ({stats.TurningExclusionRate:P0})";
+            });
+            _pipeline.UseStrideDirection = UseStrideFpa;
+            _pipeline.OnStrideZeroEstimated += (foot, offsetDeg, sdDeg) => Dispatcher.BeginInvoke(() =>
+            {
+                string detail = $"{foot} phi={offsetDeg:F1}deg sd={sdDeg:F1}deg";
+                log(sdDeg > StrideZeroEstimator.WarnSdDeg
+                    ? $"WARNING: stride FPA zero {detail} — spread > {StrideZeroEstimator.WarnSdDeg:F0}° in the first strides (not walking straight, or outliers)."
+                    : $"Stride FPA zero estimated: {detail}");
+                if (_recorder.IsRecording) _recorder.RecordEvent("StrideZero", detail);
+            });
+            _pipeline.OnStrideZeroCrossCheck += (foot, diffDeg, usedB) => Dispatcher.BeginInvoke(() =>
+            {
+                string detail = float.IsNaN(diffDeg)
+                    ? $"{foot} not cross-checked (pelvis-referenced zero unavailable after {FpaEngine.ZeroCrossCheckTimeoutStrides} strides), using B (stand vs walking path)"
+                    : $"{foot} pelvisZero-standZero={diffDeg:F1}deg, using {(usedB ? "B (stand vs walking path)" : "A (pelvis-referenced, fallback)")}";
+                log(usedB
+                    ? $"Stride FPA zero cross-check: {detail}"
+                    : $"WARNING: stride FPA zero cross-check {detail} — over {FpaEngine.ZeroCrossCheckMaxDeg:F0}°: the participant probably wasn't facing the walking path at calibration. FPA stays usable (plan A); for plan B, Restart Condition and calibrate facing the path.");
+                if (_recorder.IsRecording) _recorder.RecordEvent("StrideZeroCheck", detail);
             });
             _pipeline.OnTrainingBlockComplete += () => Dispatcher.BeginInvoke(() =>
             {
@@ -1437,6 +1464,10 @@ namespace IMUMoCap
                 ["AssumedSampleRateHz"] = _sampleRateHz,
                 ["StanceDebounceMs"] = GaitPipeline.StanceDebounceMs,
                 ["SettleMinStanceMs"] = GaitPipeline.SettleMinStanceMs,
+                ["UseStrideFpa"] = UseStrideFpa,
+                ["StrideZeroMethod"] = "B (stand heading - first straight strides) if within ZeroCrossCheckMaxDeg of A, else A",
+                ["StrideZeroCrossCheckMaxDeg"] = FpaEngine.ZeroCrossCheckMaxDeg,
+                ["StrideZeroCrossCheckTimeoutStrides"] = FpaEngine.ZeroCrossCheckTimeoutStrides,
             },
         };
 

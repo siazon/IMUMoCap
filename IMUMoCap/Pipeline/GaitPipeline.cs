@@ -49,10 +49,21 @@ namespace IMUMoCap.Pipeline
         public event Action<DiagnosticsRow>?   OnDiagnosticsFrame;
         public event Action<string, bool, StepExclusionReason?>? OnStepOutcome;
         public event Action?                   OnTrainingBlockComplete; // both feet reached Params.TargetStepsPerFoot
+        public event Action<string, float, float>? OnStrideZeroEstimated; // (foot, φ°, sd°),每 condition 每只脚一次
+        public event Action<string, float, bool>?  OnStrideZeroCrossCheck; // (foot, φ_A − φ_B °, 采用方案 B),每 condition 每只脚一次
 
         public GaitPipeline()
         {
             _fpa.OnStepOutcome += (foot, emitted, reason) => OnStepOutcome?.Invoke(foot, emitted, reason);
+            _fpa.OnStrideZeroEstimated += (foot, offset, sd) => OnStrideZeroEstimated?.Invoke(foot, offset, sd);
+            _fpa.OnStrideZeroCrossCheck += (foot, diff, usedB) => OnStrideZeroCrossCheck?.Invoke(foot, diff, usedB);
+        }
+
+        /// <summary>步幅法 FPA 做反馈(默认关:反馈用当前方法,步幅法只记录)。见 docs/stride_fpa_design.md。</summary>
+        public bool UseStrideDirection
+        {
+            get => _fpa.UseStrideDirection;
+            set => _fpa.UseStrideDirection = value;
         }
 
         // ── 状态 ──────────────────────────────────────────────────────────────
@@ -116,6 +127,7 @@ namespace IMUMoCap.Pipeline
         {
             _gait.MinStanceFrames        = FramesFor(StanceDebounceMs);
             _fpa.MinStanceFramesFloor    = FramesFor(SettleMinStanceMs);
+            _fpa.SampleRateHz            = SampleRateHz;
 
             // CalibrationProcessor
             _calibration.StaticGyroThreshold   = Params.StaticGyroThreshold;
@@ -243,6 +255,10 @@ namespace IMUMoCap.Pipeline
                 FpaRight_Error    = fpaResult?.Error_R    ?? float.NaN,
                 FpaRight_OnTarget = fpaResult?.OnTarget_R ?? false,
                 FpaQuality        = fpaResult?.Quality ?? "",
+                FpaLeft_PdDeg      = fpaResult?.FpaPd_L     ?? float.NaN,
+                FpaLeft_StrideDeg  = fpaResult?.FpaStride_L ?? float.NaN,
+                FpaRight_PdDeg     = fpaResult?.FpaPd_R     ?? float.NaN,
+                FpaRight_StrideDeg = fpaResult?.FpaStride_R ?? float.NaN,
             };
             _diagnosticsBuffer.Enqueue(diagRow);
             if (_diagnosticsBuffer.Count > DiagnosticsCapacity) _diagnosticsBuffer.Dequeue();
@@ -360,7 +376,7 @@ namespace IMUMoCap.Pipeline
             _motion.Reset();
             _pd.Reset();
             _baseline.Reset();
-            _fpa.Reset();
+            _fpa.ResetCondition(); // 新 condition:步幅法零点也重估
             BaselineProfile = null;
             InBaseline = InTraining = false;
             _diagnosticsBuffer.Clear();

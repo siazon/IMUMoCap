@@ -49,14 +49,61 @@ namespace IMUMoCap.Pipeline
         // （用于统计 Turning 等排除比例，供 QoE 分析用，不影响 FpaResult 本身的输出逻辑）
         public event Action<string, bool, StepExclusionReason?>? OnStepOutcome;
 
+        // ── 步幅法(docs/stride_fpa_design.md)──────────────────────────────────
+        /// <summary>
+        /// true:反馈用步幅法 FPA(零点估出前仍用当前方法);false:反馈用当前方法,步幅法只记录。
+        /// 两种方法的结果都写入 FpaResult.FpaPd_* / FpaStride_*。
+        /// </summary>
+        public bool UseStrideDirection { get; set; } = false;
+
+        /// <summary>
+        /// 零点(docs/stride_fpa_design.md 一):零点估计阶段(反馈仍用当前方法)同时估两种,都估出后每只脚定一次:
+        ///   方案 B:φ_B = 校准时脚的航向 − 最初 N 个直线步的平均方向(返程按 180° 折回),只用脚自己的传感器;
+        ///   方案 A:φ_A = 前 N 步"步幅法 raw − 当前方法 raw"的均值(骨盆参照)。
+        /// |φ_A − φ_B| ≤ ZeroCrossCheckMaxDeg 用 B;否则说明校准时没有面朝行走路线(B 会整体偏几十度),退回 A。
+        /// </summary>
+        public const float ZeroCrossCheckMaxDeg = 15f;
+
+        /// <summary>
+        /// φ_B 估出后,方案 A 再过这么多个(积分可信的)步仍未估出(如开头 PD 一直无效 / 卡在 ReacquiringPd),
+        /// 就不做交叉检查直接用 B,免得步幅法反馈一直等下去。
+        /// </summary>
+        public const int ZeroCrossCheckTimeoutStrides = 10;
+
+        /// <summary>每只脚的零点定下时触发一次:(foot, 采用的 φ°, 该方案的圆周标准差°)。</summary>
+        public event Action<string, float, float>? OnStrideZeroEstimated;
+
+        /// <summary>每只脚的零点定下时触发一次:(foot, φ_A − φ_B °(超时未做交叉检查时为 NaN), 是否采用了方案 B)。</summary>
+        public event Action<string, float, bool>? OnStrideZeroCrossCheck;
+
+        public int SampleRateHz
+        {
+            set { _leftStride.Tracker.SampleRateHz = value; _rightStride.Tracker.SampleRateHz = value; }
+        }
+
         // ── 内部 stance 追踪（per foot）───────────────────────────────────────
         private readonly StanceSampler _leftSampler = new();
         private readonly StanceSampler _rightSampler = new();
+        private readonly StrideFoot _leftStride = new();
+        private readonly StrideFoot _rightStride = new();
 
         public FpaResult? Process(ValidFrame frame, GaitEvent gait,
                                   MotionContext context, PdEstimate pd,
                                   CalibrationProfile? calibration = null)
         {
+            // ── Step 0: 步幅积分(两只脚先各自给出本帧的着地结果,再更新"上一步方向"历史)──
+            var strideL = _leftStride.Tracker.Update(frame.PacketId, gait.LeftStance,
+                frame.LeftFoot.HasFreeAcceleration ? frame.LeftFoot.FreeAcceleration : System.Numerics.Vector3.Zero);
+            var strideR = _rightStride.Tracker.Update(frame.PacketId, gait.RightStance,
+                frame.RightFoot.HasFreeAcceleration ? frame.RightFoot.FreeAcceleration : System.Numerics.Vector3.Zero);
+            _leftStride.OnLanding(strideL, _rightStride.LastStraight);
+            _rightStride.OnLanding(strideR, _leftStride.LastStraight);
+            if (!gait.LeftStance) _leftStride.Pending = null;
+            if (!gait.RightStance) _rightStride.Pending = null;
+            bool turningNow = context.State == ContextState.Turning;
+            CollectEarlyDirection("L", strideL, _leftStride, calibration?.LeftFootRef, turningNow);
+            CollectEarlyDirection("R", strideR, _rightStride, calibration?.RightFootRef, turningNow);
+
             // ── Step 1: 无条件更新 stance 状态（采集与 gate 无关）────────────────
             // stance→swing 的转换帧上，如果这一步从未成功输出过 FPA，视为一次排除。
             if (gait.LeftStance)
@@ -94,34 +141,23 @@ namespace IMUMoCap.Pipeline
                 _ /* Straight 但 confidence 不够，或 pd 不合格 */ =>
                     contextOk ? StepExclusionReason.PdInvalid : StepExclusionReason.LowConfidence,
             };
-            _leftSampler.NoteGate(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle, contextOk && pdOk, blockReason);
-            _rightSampler.NoteGate(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle, contextOk && pdOk, blockReason);
+            bool pdGateOk = contextOk && pdOk;
+            bool turning = context.State == ContextState.Turning;
+            // ── Step 3: 每只脚各自门控 + 结算(脚已安静或触发硬上限)──────────────
+            // 右脚取反：yaw 以逆时针为正，左脚外八 = 逆时针（+），右脚外八 = 顺时针（−）；
+            // 取反后左右脚统一为"正 = toe-out，负 = toe-in"，使同一个 target 规则对两只脚含义一致。
+            var footL = SettleFoot("L", +1f, _leftSampler, _leftStride, calibration?.LeftFootRef, pdGateOk, blockReason, turning, pd);
+            var footR = SettleFoot("R", -1f, _rightSampler, _rightStride, calibration?.RightFootRef, pdGateOk, blockReason, turning, pd);
 
-            if (!contextOk || !pdOk) return null;
-            // 两脚都在 swing（双悬空）时无意义，不输出
-            if (!gait.LeftStance && !gait.RightStance) return null;
+            if (footL == null && footR == null) return null;
 
-            // ── Step 3: 尝试结算：脚已安静（或触发硬上限）+ gate 通过 → 输出 ──────
-            float? fpaL = _leftSampler.TrySettle(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle);
-            if (fpaL.HasValue) OnStepOutcome?.Invoke("L", true, null);
-            float? fpaR = _rightSampler.TrySettle(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle);
-            if (fpaR.HasValue) OnStepOutcome?.Invoke("R", true, null);
-
-            if (fpaL == null && fpaR == null) return null;
-
-            // 通过 gate 才能走到这里，此时的 confidence/stability 即决定本次输出的原始质量
+            // 此时的 confidence/stability 即决定本次输出的原始质量
             bool marginal = (context.Confidence - ContextConfidenceThreshold < 0.1f)
                          || (pd.Stability - PdStabilityThreshold < 0.1f);
             string quality = marginal ? "Marginal" : "High";
 
-            float fpaLDeg = fpaL.HasValue
-                ? RadToDeg(NormalizeAngle(fpaL.Value - pd.DirectionRad))
-                : float.NaN;
-            // 右脚取反：yaw 以逆时针为正，左脚外八 = 逆时针（+），右脚外八 = 顺时针（−）；
-            // 取反后左右脚统一为"正 = toe-out，负 = toe-in"，使同一个 target 规则对两只脚含义一致。
-            float fpaRDeg = fpaR.HasValue
-                ? -RadToDeg(NormalizeAngle(fpaR.Value - pd.DirectionRad))
-                : float.NaN;
+            float fpaLDeg = footL?.Feedback ?? float.NaN;
+            float fpaRDeg = footR?.Feedback ?? float.NaN;
 
             bool onTargetL = false, onTargetR = false;
             float errorL = float.NaN, errorR = float.NaN;
@@ -145,6 +181,10 @@ namespace IMUMoCap.Pipeline
                 PacketId = frame.PacketId,
                 Fpa_L = fpaLDeg,
                 Fpa_R = fpaRDeg,
+                FpaPd_L = footL?.Pd ?? float.NaN,
+                FpaPd_R = footR?.Pd ?? float.NaN,
+                FpaStride_L = footL?.Stride ?? float.NaN,
+                FpaStride_R = footR?.Stride ?? float.NaN,
                 OnTarget_L = onTargetL,
                 OnTarget_R = onTargetR,
                 Error_L = errorL,
@@ -157,10 +197,150 @@ namespace IMUMoCap.Pipeline
             };
         }
 
+        /// <summary>
+        /// 一只脚本帧的门控与结算。门控:步幅法模式且零点已知 → StrideGate;否则 → 当前方法的 PD 门控。
+        /// 结算时两种方法各自算一次(各自门控不过则为 NaN),并在两者都可信时为零点估计提供一个样本。
+        /// 返回 null 表示这只脚本帧没有结算。
+        /// </summary>
+        private (float Feedback, float Pd, float Stride)? SettleFoot(
+            string foot, float sign, StanceSampler sampler, StrideFoot sf, System.Numerics.Quaternion? footRef,
+            bool pdGateOk, StepExclusionReason pdBlockReason, bool turning, PdEstimate pd)
+        {
+            float yawRef = ExtractYaw(footRef ?? System.Numerics.Quaternion.Identity);
+            bool strideFeedback = UseStrideDirection && sf.PhiB != null;
+
+            StepExclusionReason? strideReason = StepExclusionReason.StrideInvalid;
+            if (sf.Pending is StrideResult pending && sampler.PeekMean() is float meanNow)
+                strideReason = StrideGate.Check(pending, sf.PrevSameDir, sf.OtherStraight, turning,
+                    sf.PhiB != null ? StrideFpaDeg(sign, meanNow + yawRef - pending.DirectionRad, sf) : null);
+
+            bool gateOk = strideFeedback ? strideReason == null : pdGateOk;
+            sampler.NoteGate(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle, gateOk,
+                             strideFeedback ? strideReason ?? pdBlockReason : pdBlockReason);
+            if (!gateOk) return null;
+
+            float? settled = sampler.TrySettle(MinStanceFramesFloor, SettleQuietFrames, MaxStanceFramesForSettle);
+            if (settled is not float rel) return null;
+            OnStepOutcome?.Invoke(foot, true, null);
+
+            float pdRaw = NormalizeAngle(rel - pd.DirectionRad);
+            float fpaPd = pdGateOk ? sign * RadToDeg(pdRaw) : float.NaN;
+            float fpaStride = float.NaN;
+            if (sf.Pending is StrideResult s)
+            {
+                float strideRaw = NormalizeAngle(rel + yawRef - s.DirectionRad);   // ψ_abs − s
+                // plan A zero (pelvis-referenced), kept only for the cross-check against plan B
+                if (!sf.ZeroA.IsReady && pdGateOk && StrideGate.Check(s, sf.PrevSameDir, sf.OtherStraight, turning, null) == null
+                    && sf.ZeroA.Add(NormalizeAngle(strideRaw - pdRaw)))
+                    DecideZero(foot, sf);
+                if (sf.PhiB != null)
+                {
+                    float f = StrideFpaDeg(sign, strideRaw, sf);
+                    if (StrideGate.Check(s, sf.PrevSameDir, sf.OtherStraight, turning, f) == null) fpaStride = f;
+                }
+            }
+            return (strideFeedback ? fpaStride : fpaPd, fpaPd, fpaStride);
+        }
+
+        private static float StrideFpaDeg(float sign, float strideRaw, StrideFoot sf)
+            => sign * RadToDeg(NormalizeAngle(strideRaw - sf.PhiB!.Value));
+
+        /// <summary>
+        /// 方案 B 候选:着地时收集最初 N 个直线步(G1–G7)的方向,返程(与第一个相差 &gt; 90°)按 180° 折回;
+        /// 满 N 个后 φ_B = 校准时脚的航向 − 平均方向。是否采用由 DecideZero 决定。
+        /// </summary>
+        private void CollectEarlyDirection(string foot, StrideResult? stride, StrideFoot sf,
+                                           System.Numerics.Quaternion? footRef, bool turning)
+        {
+            if (sf.PhiB != null || stride is not StrideResult s) return;
+            if (sf.CandidateB is float b)
+            {
+                // waiting for plan A: after the timeout, use B without the cross-check
+                if (StrideGate.IsIntegrationValid(s) && ++sf.StridesSinceB >= ZeroCrossCheckTimeoutStrides)
+                {
+                    sf.PhiB = b;
+                    OnStrideZeroEstimated?.Invoke(foot, RadToDeg(b), sf.Early.SdDeg);
+                    OnStrideZeroCrossCheck?.Invoke(foot, float.NaN, true);
+                }
+                return;
+            }
+            if (StrideGate.Check(s, sf.PrevSameDir, sf.OtherStraight, turning, null) != null) return;
+            sf.EarlyAnchor ??= s.DirectionRad;
+            float dir = MathF.Abs(NormalizeAngle(s.DirectionRad - sf.EarlyAnchor.Value)) > MathF.PI / 2
+                ? NormalizeAngle(s.DirectionRad + MathF.PI) : s.DirectionRad;
+            if (!sf.Early.Add(dir)) return;
+            sf.CandidateB = NormalizeAngle(ExtractYaw(footRef ?? System.Numerics.Quaternion.Identity) - sf.Early.OffsetRad);
+            DecideZero(foot, sf);
+        }
+
+        /// <summary>两种零点都估出后定下这只脚的零点(见 ZeroCrossCheckMaxDeg),之后步幅法 FPA 才输出。</summary>
+        private void DecideZero(string foot, StrideFoot sf)
+        {
+            if (sf.PhiB != null || sf.CandidateB is not float b || !sf.ZeroA.IsReady) return;
+            float diff = RadToDeg(NormalizeAngle(sf.ZeroA.OffsetRad - b));
+            bool useB = MathF.Abs(diff) <= ZeroCrossCheckMaxDeg;
+            sf.PhiB = useB ? b : sf.ZeroA.OffsetRad;
+            OnStrideZeroEstimated?.Invoke(foot, RadToDeg(sf.PhiB.Value), useB ? sf.Early.SdDeg : sf.ZeroA.SdDeg);
+            OnStrideZeroCrossCheck?.Invoke(foot, diff, useB);
+        }
+
+        /// <summary>重校准 / 训练开始:清 stance 与步幅状态,零点 φ 保留(只在新 condition 时重估)。</summary>
         public void Reset()
         {
             _leftSampler.Reset();
             _rightSampler.Reset();
+            _leftStride.Reset();
+            _rightStride.Reset();
+        }
+
+        /// <summary>新 condition:除 Reset() 外,零点 φ 也重新估计。</summary>
+        public void ResetCondition()
+        {
+            Reset();
+            _leftStride.ResetZero();
+            _rightStride.ResetZero();
+        }
+
+        // ── StrideFoot:一只脚的步幅法状态 ────────────────────────────────────
+        private sealed class StrideFoot
+        {
+            public readonly StrideDirectionTracker Tracker = new();
+            public readonly StrideZeroEstimator ZeroA = new();   // plan A (pelvis-referenced), cross-check only
+            public readonly StrideZeroEstimator Early = new();   // plan B: mean of the first N straight stride directions
+            public float? EarlyAnchor;                            // first collected direction (return trips folded to it)
+            public float? CandidateB;                             // plan B zero once its N strides are in, rad
+            public float? PhiB;                                   // zero in use (B, or A as fallback), rad; null until decided
+            public int StridesSinceB;                             // strides since CandidateB, for ZeroCrossCheckTimeoutStrides
+
+            public void ResetZero()
+            {
+                ZeroA.Reset(); Early.Reset();
+                EarlyAnchor = CandidateB = PhiB = null;
+                StridesSinceB = 0;
+            }
+            public StrideResult? Pending;          // 本次着地对应的这一步(着地时给出,抬脚时清除)
+            public float? PrevSameDir;             // 着地时快照:本脚上一步的方向(G5)
+            public bool OtherStraight;             // 着地时快照:另一只脚最近一步是否直走(G6)
+            public float? LastDir;                 // 本脚最近一个积分可信(G1–G4)的步幅方向
+            public bool LastStraight;              // 本脚最近一步是否直走(G5),供另一只脚的 G6
+
+            public void OnLanding(StrideResult? stride, bool otherLastStraight)
+            {
+                if (stride is not StrideResult s) return;
+                Pending = s;
+                PrevSameDir = LastDir;
+                OtherStraight = otherLastStraight;
+                LastStraight = StrideGate.IsStraight(s, LastDir);
+                if (StrideGate.IsIntegrationValid(s)) LastDir = s.DirectionRad;
+            }
+
+            public void Reset()
+            {
+                Tracker.Reset();
+                Pending = null;
+                PrevSameDir = LastDir = null;
+                OtherStraight = LastStraight = false;
+            }
         }
 
         // ── 工具方法 ──────────────────────────────────────────────────────────
@@ -244,6 +424,9 @@ namespace IMUMoCap.Pipeline
                 _pendingReason = null;
                 return excludedReason;
             }
+
+            /// <summary>当前 stance 已采集部分的圆周均值(未结算也可查看);不在 stance 或无数据时为 null。</summary>
+            public float? PeekMean() => _inStance && _count > 0 ? MathF.Atan2(_sinSum, _cosSum) : null;
 
             public float? TrySettle(int minFramesFloor, int settleQuietFrames, int maxFrames)
             {
