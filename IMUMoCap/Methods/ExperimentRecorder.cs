@@ -10,9 +10,9 @@ namespace IMUMoCap.Methods
     /// <summary>
     /// 按 Participant/Condition 管理实验数据落盘。
     /// 一个 condition（EF/IF）对应一个连续写入的 Session CSV，
-    /// 各自额外对应一个 Meta JSON（BaselineProfile + 暂停记录 + Redo标记），
-    /// 以及一个 LiveVsFpaConsistency CSV（live 角度 vs 落地确认 fpa 值，供离线一致性分析）。
-    /// Session/LiveVsFpaConsistency CSV 均采用流式写入（每帧/每次事件直接 append），不在内存里攒整段再导出。
+    /// 各自额外对应一个 Meta JSON（BaselineProfile + 暂停记录 + Redo标记）。
+    /// Session CSV 采用流式写入（每帧直接 append），不在内存里攒整段再导出。
+    /// (原 LiveVsFpaConsistency CSV 随 IF live 角度流一起于 2026-11-17 移除。)
     /// </summary>
     public sealed class ExperimentRecorder : IDisposable
     {
@@ -22,12 +22,10 @@ namespace IMUMoCap.Methods
         public string? CurrentSessionFilePath { get; private set; }
         public string? CurrentMetaFilePath { get; private set; }
         public string? CurrentQoeFilePath { get; private set; }
-        public string? CurrentLiveConsistencyFilePath { get; private set; }
 
         public bool IsRecording => _sessionWriter != null;
 
         private StreamWriter? _sessionWriter;
-        private StreamWriter? _liveConsistencyWriter;
         private ConditionMeta? _meta;
         private PauseEvent? _openPause;
         private string _eventStage = ""; // 事件日志里 Stage 列的默认值:最近一次 BeginStage 的阶段
@@ -109,15 +107,10 @@ namespace IMUMoCap.Methods
             CurrentSessionFilePath = Path.Combine(dir, $"P{participantId}_{condition}_Session.csv");
             CurrentMetaFilePath = Path.Combine(dir, $"P{participantId}_{condition}_Meta.json");
             CurrentQoeFilePath = Path.Combine(dir, $"P{participantId}_{condition}_QoE.csv");
-            CurrentLiveConsistencyFilePath = Path.Combine(dir, $"P{participantId}_{condition}_LiveVsFpaConsistency.csv");
 
             _sessionWriter = new StreamWriter(CurrentSessionFilePath, append: false, Encoding.UTF8);
             _sessionWriter.WriteLine(DiagnosticsRow.CsvHeader);
             _sessionWriter.Flush();
-
-            _liveConsistencyWriter = new StreamWriter(CurrentLiveConsistencyFilePath, append: false, Encoding.UTF8);
-            _liveConsistencyWriter.WriteLine("PacketId,TsUtcMs,Foot,LiveAngleDeg,FpaErrorDeg,FpaDeg,TargetDeg");
-            _liveConsistencyWriter.Flush();
 
             _meta = new ConditionMeta { ParticipantId = participantId, Condition = condition };
             RecordEvent("ConditionStart", $"P{participantId} {condition}");
@@ -184,21 +177,6 @@ namespace IMUMoCap.Methods
             row.Stage = stage;
             row.Attempt = attempt;
             _sessionWriter.WriteLine(row.ToCsvRow());
-        }
-
-        /// <summary>
-        /// One row per foot per fpa settlement event: that foot's most recently received `live`
-        /// angle vs this event's final confirmed fpa value — offline input
-        /// for a live-vs-fpa consistency analysis, not shown live in the UI. LiveAngleDeg is NaN
-        /// whenever no `live` frame has been received yet (e.g. EF condition, or IF before the
-        /// first throttled live frame of the block).
-        /// </summary>
-        public void WriteLiveVsFpaConsistency(long packetId, long tsUtcMs, string foot,
-            float liveAngleDeg, float fpaErrorDeg, float fpaDeg, float targetDeg)
-        {
-            if (_liveConsistencyWriter == null) return;
-            _liveConsistencyWriter.WriteLine(
-                $"{packetId},{tsUtcMs},{foot},{liveAngleDeg:F3},{fpaErrorDeg:F3},{fpaDeg:F3},{targetDeg:F3}");
         }
 
         public void SaveBaseline(BaselineProfile profile)
@@ -331,11 +309,11 @@ namespace IMUMoCap.Methods
             var dest = Path.Combine(Path.GetDirectoryName(CurrentSessionFilePath)!, "Aborted",
                 DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmssfff'Z'"));
             Directory.CreateDirectory(dest);
-            foreach (var path in new[] { CurrentSessionFilePath, CurrentMetaFilePath, CurrentQoeFilePath, CurrentLiveConsistencyFilePath })
+            foreach (var path in new[] { CurrentSessionFilePath, CurrentMetaFilePath, CurrentQoeFilePath })
                 if (path != null && File.Exists(path))
                     File.Move(path, Path.Combine(dest, Path.GetFileName(path)));
 
-            CurrentSessionFilePath = CurrentMetaFilePath = CurrentQoeFilePath = CurrentLiveConsistencyFilePath = null;
+            CurrentSessionFilePath = CurrentMetaFilePath = CurrentQoeFilePath = null;
             _meta = null;
             _openPause = null;
             return dest;
@@ -346,10 +324,6 @@ namespace IMUMoCap.Methods
             _sessionWriter?.Flush();
             _sessionWriter?.Dispose();
             _sessionWriter = null;
-
-            _liveConsistencyWriter?.Flush();
-            _liveConsistencyWriter?.Dispose();
-            _liveConsistencyWriter = null;
         }
 
         public void Dispose() => Close();

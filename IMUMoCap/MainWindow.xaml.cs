@@ -118,25 +118,12 @@ namespace IMUMoCap
         // operator's Ready (AR) button disabled — a deadlock.
         private (string State, string Reason, int RestSec, int Block) _arStateBeforePause = ("waiting", "", 0, 0);
 
-        // IF render-mode toggle (ParamsDialog checkboxes bound to MainPageVM.IsIfLiveMode /
-        // IsIfLastResultMode, mutually exclusive): tells the AR client which rendering mode to
-        // use for IF — "placeholder" (current shipped behavior, idle pose + terminal flash that
-        // reverts), "live" (continuous rotation driven by the `live` stream below), or
-        // "lastResult" (terminal flash that never reverts — the AR client just keeps showing the
-        // previous step's result until the next one). Does NOT gate whether `live` is broadcast —
-        // see OnDiagnosticsFrame — only which mode the AR client renders in. Default
-        // "lastResult", matching MainPageVM.IsIfLastResultMode's default value.
+        // IF render-mode toggle (ParamsDialog checkbox bound to MainPageVM.IsIfLastResultMode): tells the AR client
+        // which rendering mode to use for IF — "lastResult" (default: the step's fpa result stays shown until the next
+        // one) or "placeholder" (idle pose + terminal flash that reverts). Both are driven only by the per-step `fpa`
+        // messages, i.e. the stride-direction FPA. The former "live" mode (continuous angle = foot yaw − current pelvis
+        // yaw, which drifted with the pelvis heading) and its `live` stream were removed on 2026-11-17.
         private string _ifRenderMode = "lastResult";
-
-        // Throttle-independent: most recently broadcast `live` angle per foot, kept so
-        // OnFpaResult's live-vs-fpa consistency log always has the latest value to compare
-        // against, even while rendering in placeholder mode.
-        private float _lastLiveAngleL = float.NaN;
-        private float _lastLiveAngleR = float.NaN;
-
-        // The `live` stream's throttle: source frames are 100Hz, but we only forward at 10Hz.
-        private const long LiveAngleIntervalMs = 100;
-        private long _lastLiveAngleSentTicks = 0;
         // Pure stall-prevention safety net, not a co-equal exit criterion — every step-count-gated stage's
         // real exit criterion is a fixed 100 valid steps/foot. Widened from 5min (which was tuned for the
         // old 150-steps/foot target) to give a 100-step block enough headroom.
@@ -261,48 +248,6 @@ namespace IMUMoCap
 
                 if (_recorder.IsRecording && !_content.IsPaused)
                     _recorder.WriteRow(row, _currentStage, _flow.AttemptOf(_currentStage));
-
-                // IF-only real-time angle stream for AR ("live"), throttled to 10Hz (source
-                // is 100Hz). Sent unconditionally whenever IF/training/not-retention/not-rest —
-                // independent of _ifRenderMode, which only tells the AR client which rendering mode
-                // to use. Keeps `live` flowing even in placeholder mode so OnFpaResult's
-                // live-vs-fpa consistency log always has a recent value to compare against.
-                //
-                // NOTE(2026-11-12) 暂时停用(待改,代码暂未改动):这里的角度 = 脚偏航 − 当前骨盆偏航,
-                // 骨盆航向一漂移(实测几分钟内可达 25–35°),IF 的实时角度就跟着错,结果不可信。
-                // 计划在步幅法 FPA(每只脚只用自己的传感器)接入后,改为"脚偏航 − 该脚上一步的步幅方向"再启用。
-                bool inTrainingForLive = _sessionState == TestState.Step;
-                if (_wsServer != null && ConditionForAr() == "IF" && inTrainingForLive && !_isRetention && !_inRest)
-                {
-                    long nowTicks = Environment.TickCount64;
-                    if (nowTicks - _lastLiveAngleSentTicks >= LiveAngleIntervalMs)
-                    {
-                        _lastLiveAngleSentTicks = nowTicks;
-                        // Foot yaw relative to the *current* pelvis heading (not a fixed calibration foot
-                        // ref) — pelvis rotates with a turn, so this stays correct instead of flipping sign
-                        // when the participant turns around. The calibration-time foot/pelvis offset is
-                        // subtracted out (RawFootYawDeg) so it still reads ~0 at calibration.
-                        var calib = _pipeline.CalibrationProfile;
-                        float rawYawL = calib != null
-                            ? RawFootYawDeg(row.LeftQuat, row.PelvisQuat, calib.LeftFootRef, calib.PelvisRef) : float.NaN;
-                        // Right foot negated, same as FpaEngine: positive = toe-out for both feet.
-                        float rawYawR = calib != null
-                            ? -RawFootYawDeg(row.RightQuat, row.PelvisQuat, calib.RightFootRef, calib.PelvisRef) : float.NaN;
-                        _lastLiveAngleL = rawYawL;
-                        _lastLiveAngleR = rawYawR;
-
-                        _ = _wsServer.BroadcastJsonAsync(new
-                        {
-                            type = "live",
-                            packetId = row.PacketId,
-                            angleL = rawYawL,
-                            angleR = rawYawR,
-                            confidence = row.MotionConfidence,
-                            stability = row.PdStability,
-                            ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                        });
-                    }
-                }
             });
             _pipeline.OnStepOutcome += (foot, emitted, reason) => Dispatcher.BeginInvoke(() =>
             {
@@ -903,22 +848,6 @@ namespace IMUMoCap
 
         private static string SideForAr(float signedTarget) => signedTarget < 0f ? "toe-in" : "toe-out";
 
-        // Foot yaw relative to pelvis yaw, in degrees, with the calibration-time foot/pelvis mounting
-        // offset removed (reads ~0 at calibration; pelvis is the moving reference so it stays correct
-        // through a turn). No gait-event gating — used only by the `live` stream;
-        // NOT the true FPA (see FpaEngine).
-        private static float RawFootYawDeg(System.Numerics.Quaternion footNow, System.Numerics.Quaternion pelvisNow,
-            System.Numerics.Quaternion footRef, System.Numerics.Quaternion pelvisRef)
-        {
-            float yaw = (ExtractYaw(footNow) - ExtractYaw(pelvisNow)) - (ExtractYaw(footRef) - ExtractYaw(pelvisRef));
-            while (yaw > MathF.PI) yaw -= 2f * MathF.PI;
-            while (yaw < -MathF.PI) yaw += 2f * MathF.PI;
-            return yaw * (180f / MathF.PI);
-        }
-
-        private static float ExtractYaw(System.Numerics.Quaternion q)
-            => MathF.Atan2(2f * (q.W * q.Z + q.X * q.Y), 1f - 2f * (q.Y * q.Y + q.Z * q.Z));
-
         // WS `condition` field: "" before Start Condition is clicked.
         private string ConditionForAr() => _recorder.Condition is "EF" or "IF" ? _recorder.Condition : "";
 
@@ -1376,35 +1305,16 @@ namespace IMUMoCap
             System.Diagnostics.Process.Start("explorer.exe", dir);
         }
 
-        // Guards SyncIfRenderModeFromVm's own IsIfLiveMode/IsIfLastResultMode writes (enforcing
-        // mutual exclusivity below) from re-entering itself via the _content.PropertyChanged
-        // subscription.
-        private bool _suppressIfRenderModeSync = false;
-
-        // Reacts to the ParamsDialog checkboxes (bound to MainPageVM.IsIfLiveMode/
-        // IsIfLastResultMode) via _content.PropertyChanged — switches which rendering mode the AR
-        // client uses for IF (placeholder / live-angle / last-result-sticky). Takes effect
-        // immediately, no pause/reconnect needed: updates _ifRenderMode and re-broadcasts the
-        // current state right away so a connected client picks it up without waiting for the next
-        // natural state transition. The two VM properties are mutually exclusive (setting one
-        // clears the other) since the AR client only supports one IF render mode at a time.
+        // Reacts to the ParamsDialog checkbox (bound to MainPageVM.IsIfLastResultMode) via _content.PropertyChanged —
+        // switches the AR client's IF rendering between last-result-sticky and placeholder. Takes effect immediately,
+        // no pause/reconnect needed: updates _ifRenderMode and re-broadcasts the current state right away so a connected
+        // client picks it up without waiting for the next natural state transition.
         private void SyncIfRenderModeFromVm(string? propName)
         {
-            if (propName != nameof(MainPageVM.IsIfLiveMode) && propName != nameof(MainPageVM.IsIfLastResultMode))
-                return;
-            if (_suppressIfRenderModeSync) return;
-
-            _suppressIfRenderModeSync = true;
-            if (propName == nameof(MainPageVM.IsIfLiveMode) && _content.IsIfLiveMode)
-                _content.IsIfLastResultMode = false;
-            else if (propName == nameof(MainPageVM.IsIfLastResultMode) && _content.IsIfLastResultMode)
-                _content.IsIfLiveMode = false;
-            _suppressIfRenderModeSync = false;
+            if (propName != nameof(MainPageVM.IsIfLastResultMode)) return;
 
             var previousIfRenderMode = _ifRenderMode;
-            _ifRenderMode = _content.IsIfLiveMode ? "live"
-                          : _content.IsIfLastResultMode ? "lastResult"
-                          : "placeholder";
+            _ifRenderMode = _content.IsIfLastResultMode ? "lastResult" : "placeholder";
             log($"[IF] Render mode switched to '{_ifRenderMode}'.");
             if (_ifRenderMode != previousIfRenderMode)
                 _recorder.RecordEvent("ParamChange", new ParamChange("IfRenderMode", previousIfRenderMode, _ifRenderMode).Describe());
@@ -1525,7 +1435,6 @@ namespace IMUMoCap
                 ["TargetDeltaDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetDeltaDeg,
                 ["TargetMinDeg"] = IMUMoCap.Pipeline.Models.BaselineProfile.TargetMinDeg,
                 ["IfRenderMode"] = _ifRenderMode,
-                ["LiveAngleIntervalMs"] = LiveAngleIntervalMs,
                 // The pipeline's frame-count thresholds are written for AssumedSampleRateHz; if the IMUs actually run at
                 // a different UpdateRateHz, every "N frames" threshold lasts a different amount of time (flow-review §2-15).
                 ["UpdateRateHz"] = CurrentUpdateRateHz(),
@@ -1790,8 +1699,8 @@ namespace IMUMoCap
         {
             _pipeline.AwaitingRecalibration = false;
             // OnCalibrationStateChanged's CollectingStaticPose case set _sessionState = Calibrating for
-            // the recalibration we just finished; restore it to Step so inTraining/inTrainingForLive
-            // checks (BlockStepsDisplay, on-target backgrounds, the IF live-angle broadcast) resume —
+            // the recalibration we just finished; restore it to Step so inTraining
+            // checks (BlockStepsDisplay, on-target backgrounds) resume —
             // otherwise they stay stuck off for the rest of the condition after the very first
             // recalibration gate (Baseline→Training1 included).
             _sessionState = TestState.Step;
@@ -2607,20 +2516,6 @@ namespace IMUMoCap
 
                 LogArEvent($"type=fpa  stage={stageTag}  packetId={result.PacketId}  " +
                     $"L={result.Fpa_L:F1}°({(result.OnTarget_L ? "OK" : "ERR")})  R={result.Fpa_R:F1}°({(result.OnTarget_R ? "OK" : "ERR")})  quality={result.Quality}");
-
-                // Live-vs-fpa consistency log: pairs each settled foot's final fpa value with the
-                // most recent `live` angle received for that foot — offline input only, not shown
-                // in the UI. See ExperimentRecorder.WriteLiveVsFpaConsistency.
-                if (_recorder.IsRecording)
-                {
-                    long tsNow = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    float targetL = _pipeline.BaselineProfile?.Target_L ?? 0f;   // signed FPA target (TargetForAr sends |target| to AR)
-                    float targetR = _pipeline.BaselineProfile?.Target_R ?? 0f;
-                    if (!float.IsNaN(result.Fpa_L))
-                        _recorder.WriteLiveVsFpaConsistency(result.PacketId, tsNow, "L", _lastLiveAngleL, result.Error_L, result.Fpa_L, targetL);
-                    if (!float.IsNaN(result.Fpa_R))
-                        _recorder.WriteLiveVsFpaConsistency(result.PacketId, tsNow, "R", _lastLiveAngleR, result.Error_R, result.Fpa_R, targetR);
-                }
             }
         }
 

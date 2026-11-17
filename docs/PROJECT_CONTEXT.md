@@ -202,7 +202,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 - **日志文件**:操作日志面板同时写入 `logs/app_<启动时间>.log`(exe 目录下)
 - 自绘时间线(`DrawTimeline()`,`DrawingVisual`/`RenderTargetBitmap`,6 条 lane:PD valid / L stance / R stance / IsWalking / motion context / FPA gate reason)
 - 底部分栏日志:操作日志 + 独立的 **AR event log**(`ArEventLogBox`,记录每条广播给 AR 的事件,供事后审计)
-- `live` 消息广播不再有手动开关(原 `ChkLiveAngleToAr` 复选框已移除);现自动门控为仅 IF 条件 + 训练 block 阶段(`_pipeline.InTraining && !_isRetention && !_inRest`)才发送,EF 不再消费连续 `live` 流(见 §4.1、`docs/AR-FRONTEND.md`)
+- **`live` 消息与 IF Live 渲染模式已移除(2026-11-17)**:`live` 角度是"脚偏航 − 当前骨盆偏航",随骨盆航向漂移;IF 现在只用每步的 `fpa`(步幅法 FPA),渲染模式只剩 `lastResult`(默认)/`placeholder`(ParamsDialog 一个复选框)。`LiveVsFpaConsistency.csv` 随之移除。AR 端的 live 代码路径保留但不会再被触发
 - Session 卡片内新增 **Open Data Folder** 按钮(`BtnOpenDataFolder_Click`),打开当前 participant/condition 的数据文件夹;原先显示 Session/Meta/QoE 文件名的三行文本已被上面的 Flow 一览面板取代
 - 支持 CSV 回放(`BtnLoadData_Click`,0.2x/1x/5x/Max 速度)
 
@@ -230,7 +230,7 @@ ImuFrameCollector          (3 IMU 按 PacketId 打包同步为 ImuFrameBundle,�
 
 **PC → AR 广播消息类型**:
 - `state`:统一承载所有阶段转换(`waiting/armed/calibrating/baseline/training/rest/retention/paused/ended/error`),含 `condition`(EF/IF)、`block`(1-3)、`restDurationSec`、`reason`、个性化 `targetL/directionL/targetR/directionR`。`rest` 现在会在 block=1(Training1 后)和 block=3(Training3 后)两个时机各广播一次(2026-09-06 起,原先只有 block=2 一次),AR 端对 `block` 字段完全通用处理(仅用于显示文案),**无需为此改动**。
-- `live`:10Hz 连续每脚 yaw 角。**仅 IF 条件、且处于训练 block 阶段(非 baseline/rest/retention)时发送**(`MainWindow.xaml.cs` 内自动门控,原 `ChkLiveAngleToAr` 手动开关已移除);驱动 IF 脚印在两次 `fpa` 步进之间的连续旋转。EF 不使用该流,其光标固定,仅由 `fpa` 事件驱动一次性短暂叠加实际脚印(见 §4.2)
+- ~~`live`~~:**2026-11-17 起 PC 端不再发送**(原为 IF 训练 block 内 10Hz 的"脚偏航 − 当前骨盆偏航",随骨盆航向漂移)。IF 只由 `fpa` 驱动
 - `fpa`:逐步反馈(仅 training 阶段),含 `fpaL/R`、`onTargetL/R`、`errorL/R`、`confidence`、`stability`、`quality`、`stage`、`block`
 - `stepProgress`:baseline/retention 阶段步数进度条
 - `redo`:操作员重做某阶段的通知
@@ -258,7 +258,7 @@ Manipulation Check / NASA-TLX / IMI-PC 等纸面量表**不通过 WebSocket 传�
 
 **状态机**(`FootHudController.OnStateChange`,与 §4.1 的 `state` 值完全对应):`waiting → armed → calibrating → baseline → training ⇄ rest ⇄ retention → ended`,`paused`/`error` 可从多数状态进入;`armed`(首次校准与每次赛前重标定)需要显式的 Ready 点击才会通知服务端推进;`rest` 由 PC 到点自动推进,不再需要 Continue——**客户端从不自动前进**,这与 PC 端的门控设计(§3.8)完全对称,已在两端交叉验证一致。
 
-**训练条件差异**(`condition` 字段 `EF`/`IF`):EF(stepping stones)只在 `state.targetL/R`+`directionL/R` 到达时设置一次固定目标朝向,不消费 `live` 流;每次收到 `fpa` 消息时额外把实际脚印(`footOutL/R`)短暂叠加在石头上做对比(按 `fpa.errorL/R`+`fpa.onTargetL/R` 旋转变色),`FootOutDisplaySec`(0.2s)后自动隐藏。IF(footprint)每步根据 `fpa.errorL/R`+`fpa.onTargetL/R` 变色旋转,并在两步之间由 `live` 流驱动连续旋转。`FootHudController.OnLiveUpdate` 本身不区分 condition(收到 `live` 就强制显示 footprint 组、隐藏 stone 组),EF 下的固定视图完全依赖 PC 端的发送侧门控,而非客户端判断。
+**训练条件差异**(`condition` 字段 `EF`/`IF`):EF(stepping stones)只在 `state.targetL/R`+`directionL/R` 到达时设置一次固定目标朝向,不消费 `live` 流;每次收到 `fpa` 消息时额外把实际脚印(`footOutL/R`)短暂叠加在石头上做对比(按 `fpa.errorL/R`+`fpa.onTargetL/R` 旋转变色),`FootOutDisplaySec`(0.2s)后自动隐藏。IF(footprint)每步根据 `fpa.errorL/R`+`fpa.onTargetL/R` 变色旋转(2026-11-17 起不再有两步之间的 `live` 连续旋转)。`FootHudController.OnLiveUpdate` 本身不区分 condition(收到 `live` 就强制显示 footprint 组、隐藏 stone 组),EF 下的固定视图完全依赖 PC 端的发送侧门控,而非客户端判断。
 
 **场景结构**(`FPATraining.unity`,单场景单 Canvas):`FootprintRoot`(IF,含 `FootL/FootOutlineL`、`FootR/FootOutlineR`)、`StoneRoot`(EF,含 `StoneL`、`StoneR`)、`CalibOverlay`(文案 + 复用的 Button + 步数进度 Slider),三者互斥显示。
 

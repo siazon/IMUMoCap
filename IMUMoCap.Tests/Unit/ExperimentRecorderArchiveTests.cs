@@ -31,7 +31,15 @@ namespace IMUMoCap.Tests.Unit
             _recorder.StartCondition(_pid, "EF");
             _recorder.BeginStage("Baseline");
             _recorder.WriteRow(new DiagnosticsRow { PacketId = 42 }, "Baseline", 1);
-            _recorder.WriteLiveVsFpaConsistency(42, 1, "L", 1f, 1f, 1f, 1f);
+        }
+
+        // The IF `live` angle stream (pelvis-referenced, drifted with the pelvis heading) was removed on 2026-11-17,
+        // and with it the live-vs-fpa consistency CSV that compared it with the settled fpa.
+        [Fact]
+        public void StartCondition_NoLongerCreatesALiveVsFpaConsistencyFile()
+        {
+            StartWithSomeData();
+            Assert.Empty(Directory.GetFiles(DataDir, "*LiveVsFpaConsistency*"));
         }
 
         [Fact]
@@ -40,7 +48,6 @@ namespace IMUMoCap.Tests.Unit
             StartWithSomeData();
             var session = _recorder.CurrentSessionFilePath!;
             var meta = _recorder.CurrentMetaFilePath!;
-            var live = _recorder.CurrentLiveConsistencyFilePath!;
             _recorder.RecordEvent("Abort", "test");
 
             var dest = _recorder.ArchiveCurrentFiles();
@@ -49,7 +56,6 @@ namespace IMUMoCap.Tests.Unit
             Assert.StartsWith(Path.Combine(DataDir, "Aborted"), dest);
             Assert.False(File.Exists(session));
             Assert.False(File.Exists(meta));
-            Assert.False(File.Exists(live));
             Assert.Contains(",42,", File.ReadAllText(Path.Combine(dest!, Path.GetFileName(session))));
             using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(dest, Path.GetFileName(meta))));
             Assert.Contains(doc.RootElement.GetProperty("Events").EnumerateArray(), e => e.GetProperty("Type").GetString() == "Abort");

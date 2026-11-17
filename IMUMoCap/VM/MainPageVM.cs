@@ -427,16 +427,9 @@ namespace IMUMoCap
             set { _baselineImbalanceRatioThreshold = value; OnPropertyChanged(nameof(BaselineImbalanceRatioThreshold)); }
         }
 
-        // ── IF render mode (bound to ParamsDialog checkboxes; mutual exclusivity and the
-        // actual state.ifRenderMode broadcast are handled in MainWindow.xaml.cs's
-        // SyncIfRenderModeFromVm, same pattern as the pipeline sliders above) ─────────────────
-
-        private bool _isIfLiveMode = false;
-        public bool IsIfLiveMode
-        {
-            get { return _isIfLiveMode; }
-            set { _isIfLiveMode = value; OnPropertyChanged(nameof(IsIfLiveMode)); }
-        }
+        // ── IF render mode (bound to the ParamsDialog checkbox; the actual state.ifRenderMode broadcast is handled
+        // in MainWindow.xaml.cs's SyncIfRenderModeFromVm, same pattern as the pipeline sliders above).
+        // Checked = "lastResult", unchecked = "placeholder"; the "live" mode was removed on 2026-11-17. ────────────
 
         private bool _isIfLastResultMode = true;
         public bool IsIfLastResultMode

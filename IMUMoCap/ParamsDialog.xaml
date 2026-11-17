@@ -45,19 +45,13 @@
         <Slider Minimum="0.3" Maximum="1.0" SmallChange="0.01" LargeChange="0.1"
                 Value="{Binding BaselineImbalanceRatioThreshold, Mode=TwoWay}" Margin="0,0,0,12"/>
 
-        <!-- 8. IF render mode (mutually exclusive — enforced in MainWindow's VM-property-changed
-             handler, not here; see MainWindow.xaml.cs SyncIfRenderModeFromVm) -->
+        <!-- 8. IF render mode (broadcast handled in MainWindow.xaml.cs SyncIfRenderModeFromVm) -->
         <TextBlock Text="IF Render Mode" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
-        <CheckBox Content="IF: Live Angle Mode" FontSize="11"
-                  Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
-                  Margin="0,0,0,4" VerticalAlignment="Center"
-                  IsChecked="{Binding IsIfLiveMode, Mode=TwoWay}"
-                  ToolTip="IF render mode, can be switched at any time while running: checked = live mode (continuous rotation, for side-by-side pilot comparison); neither box checked = placeholder mode (static icon + terminal flash on foot contact, then reverts); mutually exclusive with Last-Result mode below. The change is broadcast to the AR client immediately - no pause/reconnect needed."/>
         <CheckBox Content="IF: Last-Result Sticky Mode" FontSize="11"
                   Foreground="{StaticResource Brand.Navy}" Opacity="0.8"
                   Margin="0,0,0,12" VerticalAlignment="Center"
                   IsChecked="{Binding IsIfLastResultMode, Mode=TwoWay}"
-                  ToolTip="Checked by default: after the footprint's foot-contact pulse (rotation + hit/miss color) the icon does not revert to the neutral pose; it keeps showing the previous step's result until the next fpa update overwrites it (the scale-up still reverts on its normal timing). Mutually exclusive with Live Angle Mode above."/>
+                  ToolTip="Checked by default: after the footprint's foot-contact pulse (rotation + hit/miss color) the icon does not revert to the neutral pose; it keeps showing the previous step's result until the next fpa update overwrites it (the scale-up still reverts on its normal timing). Unchecked = placeholder mode (static icon + terminal flash on foot contact, then reverts). Both use the per-step stride-direction FPA. Can be switched at any time; broadcast to the AR client immediately."/>
 
         <!-- 9. IMU sensor -> role binding -->
         <TextBlock Text="IMU Role Binding" FontSize="12" FontWeight="Bold" Foreground="{StaticResource Brand.Navy}" Margin="0,0,0,4"/>
