@@ -149,6 +149,10 @@
                             <Button Style="{StaticResource PrimaryButtonStyle}" Click="BtnStartCondition_Click" Width="120" Margin="0,0,0,0">
                                 <TextBlock Text="Start Condition" TextWrapping="Wrap" TextAlignment="Center"/>
                             </Button>
+                            <Button Style="{StaticResource SecondaryButtonStyle}" Click="BtnSkipWarmup_Click" Width="110" Margin="8,0,0,0"
+                                    ToolTip="Let Start Condition proceed although the IMU filter warm-up hasn't completed (recorded as WarmupSkipped)">
+                                <TextBlock Text="Skip Warm-up" TextWrapping="Wrap" TextAlignment="Center"/>
+                            </Button>
                         </StackPanel>
 
                         <UniformGrid Columns="4" Rows="1" Margin="0,0,0,8">

@@ -75,6 +75,7 @@ namespace IMUMoCap
         private readonly List<ImuSampleFrame> _imuSamples = new();
         private readonly ImuFrameCollector _imuFrameCollector = new();
         private readonly MagMonitor _magMonitor = new();
+        private readonly WarmupMonitor _warmup = new(); // MTw filter warm-up gate for Start Condition
         private DispatcherTimer? _magTimer;
 
         // Experiment session recording (participant/condition/stage → file)
@@ -395,6 +396,14 @@ namespace IMUMoCap
         {
             var previous = _content.DeviceState;
             _content.DeviceState = s;
+            // XKF3-hm restarts with every measurement, so the warm-up starts over too.
+            if (s != States.MEASURING || previous != States.MEASURING)
+            {
+                if (_warmup.IsComplete || _warmupSkipped) log($"Warm-up reset: device state {previous} → {s}");
+                _warmup.Reset();
+                _warmupSkipped = false;
+            }
+            if (s != previous) log($"Device state {previous} → {s}");
             _recorder.RecordMeasurementTransition(previous, s); // MeasureStart / MeasureStop while a condition is recording
             setWidgetsStates();
         }
@@ -737,6 +746,7 @@ namespace IMUMoCap
             // which don't exist yet during the very first calibration), after the pause gate above.
             _recorder.LatestPacketId = sample.PacketId;
             _imuSamples.Add(sample);
+            _warmup.Update(sample);
             _magMonitor.Update(sample);
             _pipeline.ProcessPacket(sensor, deviceId, packet);
         }
@@ -940,12 +950,56 @@ namespace IMUMoCap
             });
         }
 
+        private bool _warmupSkipped;          // operator pressed Skip Warm-up for this measurement
+        private bool _warmupWasComplete;      // for logging the done transition
+        private DateTime _warmupProgressLoggedAt;
+
+        // First status-bar line: per-sensor warm-up progress, plus log lines for done / voided and every 5 s while waiting.
+        private void UpdateWarmupStatus(TextBlock tb)
+        {
+            var w = _warmup.GetSnapshot();
+            static string Sec(double? s) => s is double v ? $"{System.Math.Min(v, WarmupMonitor.RequiredSeconds):F0}" : "–";
+            string perSensor = $"P {Sec(w.PelvisSec)} · L {Sec(w.LeftSec)} · R {Sec(w.RightSec)} /{WarmupMonitor.RequiredSeconds:F0} s";
+
+            string text; Brush color;
+            if (_content.DeviceState != States.MEASURING) { text = $"Warm-up: not measuring ({_content.DeviceState})"; color = Brushes.Gray; }
+            else if (w.IsComplete) { text = "Warm-up done"; color = Brushes.ForestGreen; }
+            else if (_warmupSkipped) { text = $"Warm-up SKIPPED by operator ({perSensor})"; color = Brushes.Crimson; }
+            else { text = $"Warm-up {perSensor} — keep IMUs still (– = no valid filter data)"; color = Brushes.DarkOrange; }
+            tb.Inlines.Add(new System.Windows.Documents.Run(text) { Foreground = color });
+            tb.Inlines.Add(new System.Windows.Documents.LineBreak());
+
+            if (w.IsComplete && !_warmupWasComplete) log($"Warm-up done (packet {w.CompletedPacketId}).");
+            foreach (var note in _warmup.TakeRestartNotes()) log($"Warm-up reset: {note}");
+            _warmupWasComplete = w.IsComplete;
+            if (_content.DeviceState == States.MEASURING && !w.IsComplete && DateTime.Now - _warmupProgressLoggedAt > TimeSpan.FromSeconds(5))
+            {
+                _warmupProgressLoggedAt = DateTime.Now;
+                log($"Warm-up progress: {perSensor}");
+            }
+        }
+
+        private void BtnSkipWarmup_Click(object sender, RoutedEventArgs e)
+        {
+            if (_content.DeviceState != States.MEASURING) { log("Skip Warm-up: IMUs are not measuring."); return; }
+            if (_warmup.IsComplete) { log("Skip Warm-up: warm-up is already done."); return; }
+            var ok = MessageBox.Show(
+                "Skip the IMU filter warm-up?\n\nThe calibration may then use a filter that hasn't settled yet. " +
+                "This is recorded in the Events (WarmupSkipped) and RunConfig.",
+                "Skip warm-up", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (ok != MessageBoxResult.Yes) return;
+            _warmupSkipped = true;
+            log($"Warm-up skipped by operator ({_warmup.GetSnapshot().StillSeconds:F1} s still of {WarmupMonitor.RequiredSeconds:F0} s).");
+        }
+
         // Live mag / heading-consistency text in the status bar (display only).
         private void UpdateMagStatusText()
         {
             var snap = _magMonitor.GetSnapshot();
             var tb = MagStatusText;
             tb.Inlines.Clear();
+
+            UpdateWarmupStatus(tb);
 
             static Brush Pick(MagLevel l) => l switch
             {
@@ -974,6 +1028,7 @@ namespace IMUMoCap
             if (state == CalibrationState.CollectingStaticPose) _magMonitor.Reset();
             else if (state == CalibrationState.Completed && _pipeline.CalibrationProfile is { } cp)
                 _magMonitor.StartBaseline(cp.PelvisRef, cp.LeftFootRef, cp.RightFootRef);
+
             // Read what we were waiting for BEFORE feeding the event: the state machine moves on the moment it is fired.
             string? pending = _pendingStageEntry;
             bool redo = _redoPending;
@@ -998,6 +1053,10 @@ namespace IMUMoCap
                     CalibrationState.Completed => "CalibrationDone",
                     _ => "CalibrationFailed",
                 }, calDetail);
+                // Normally impossible (Start Condition waits for warm-up), but a measurement restarted mid-condition
+                // resets it; don't block the experiment, just mark the calibration for later review.
+                if (state == CalibrationState.CollectingStaticPose && !_warmup.IsComplete)
+                    _recorder.RecordEvent("WarmupIncomplete", $"{_warmup.GetSnapshot().StillSeconds:F1}s still of {WarmupMonitor.RequiredSeconds:F0}s");
             }
 
             switch (state)
@@ -1468,6 +1527,13 @@ namespace IMUMoCap
                 ["StrideZeroMethod"] = "B (stand heading - first straight strides) if within ZeroCrossCheckMaxDeg of A, else A",
                 ["StrideZeroCrossCheckMaxDeg"] = FpaEngine.ZeroCrossCheckMaxDeg,
                 ["StrideZeroCrossCheckTimeoutStrides"] = FpaEngine.ZeroCrossCheckTimeoutStrides,
+                ["WarmupRequiredSec"] = WarmupMonitor.RequiredSeconds,
+                ["WarmupGyroThresholdDegS"] = WarmupMonitor.GyroThresholdRadS * 180f / MathF.PI,
+                ["WarmupAccThreshold"] = WarmupMonitor.AccThreshold,
+                // Seconds from measurement start to calibration = (CalibrationStart PacketId in Events − this) / rate.
+                ["MeasurementStartPacketId"] = _warmup.GetSnapshot().MeasurementStartPacketId ?? -1,
+                ["WarmupDonePacketId"] = _warmup.GetSnapshot().CompletedPacketId ?? -1,
+                ["WarmupSkipped"] = _warmupSkipped && !_warmup.IsComplete,
             },
         };
 
@@ -1481,6 +1547,13 @@ namespace IMUMoCap
             string participantId = txtParticipantId.Text.Trim();
             if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
             if (_content.DeviceState != States.MEASURING) { log("Start Condition blocked: IMUs are not measuring. Click Measure first."); return; }
+            if (!_warmup.IsComplete && !_warmupSkipped)
+            {
+                var w = _warmup.GetSnapshot();
+                log($"Start Condition blocked: IMU filter warm-up {w.StillSeconds:F0}/{WarmupMonitor.RequiredSeconds:F0} s. " +
+                    "Leave all IMUs still on the table until the status bar shows \"Warm-up done\" (or use Skip Warm-up).");
+                return;
+            }
 
             if (_screeningActive) { log("Finish the visual screening (Pass/Fail) before Start Condition."); return; }
             string? screening = Methods.ExperimentRecorder.GetScreeningResult(participantId);
@@ -1519,6 +1592,8 @@ namespace IMUMoCap
             _content.IsPaused = false;
             BtnPauseResume.Content = "Pause";
             _recorder.StartCondition(participantId, condition);
+            if (_warmupSkipped && !_warmup.IsComplete)
+                _recorder.RecordEvent("WarmupSkipped", $"{_warmup.GetSnapshot().StillSeconds:F1}s still of {WarmupMonitor.RequiredSeconds:F0}s");
             _shadow.Fire(Protocol.FlowEvent.StartCondition);
             _recorder.SetRunConfig(BuildRunConfig());
             _paramsAtLastRecord = _pipeline.Params.Clone(); // later changes are reported relative to this snapshot
