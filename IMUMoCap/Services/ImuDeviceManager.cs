@@ -93,9 +93,9 @@ namespace IMUMoCap.Services
             }
         }
 
-        // 实验开关(默认关):测量开始前把所有 MTw 的 XDA 滤波器 profile 切到 "VRU"(我理解为不用磁力计修正航向),
+        // 开关(2026-11-13 起默认开):测量开始前把所有 MTw 的 XDA 滤波器 profile 切到 "VRU"(我理解为不用磁力计修正航向),
         // 用于对比排查单个 IMU 航向漂移。profile 名以 [FilterProfile] 日志枚举出的 label 为准。
-        public static readonly bool UseVruFilterProfile = false;
+        public static readonly bool UseVruFilterProfile = true;
 
         private void ApplyVruFilterProfile()
         {
