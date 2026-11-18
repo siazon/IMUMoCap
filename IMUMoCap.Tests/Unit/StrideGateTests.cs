@@ -25,12 +25,13 @@ namespace IMUMoCap.Tests.Unit
             => Assert.Equal(StepExclusionReason.StrideInvalid, Check(Stride(swing: swing)));
 
         [Fact]
-        // G2 tuned on the 11-12 16:38 replay: most gaps are frames dropped by DataQualityGate's spike check during swing;
-        // strides with 3–5 missing frames had the same direction noise as 0–2 (median 2.9° vs 2.8°, p90 8.1° vs 8.3°).
-        public void MoreThanFiveMissingPackets_IsInvalid()
+        // G2 (2026-11-18, was 5): the gaps are wireless drops of any of the three sensors (frames are processed only
+        // when all three arrive), short and scattered (longest gap per stride median 2–3 frames); strides with 6–12
+        // missing frames had the same direction noise as 0–2 in the P3 / Pl89 / Po9 recordings.
+        public void MoreThanTwelveMissingPackets_IsInvalid()
         {
-            Assert.Null(Check(Stride(missing: 5)));
-            Assert.Equal(StepExclusionReason.StrideInvalid, Check(Stride(missing: 6)));   // G2
+            Assert.Null(Check(Stride(missing: 12)));
+            Assert.Equal(StepExclusionReason.StrideInvalid, Check(Stride(missing: 13)));   // G2
         }
 
         [Theory]

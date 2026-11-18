@@ -1502,6 +1502,7 @@ namespace IMUMoCap
                 ["StrideZeroMethod"] = "B (stand heading - first straight strides) if within ZeroCrossCheckMaxDeg of A, else A",
                 ["StrideZeroCrossCheckMaxDeg"] = FpaEngine.ZeroCrossCheckMaxDeg,
                 ["StrideZeroCrossCheckTimeoutStrides"] = FpaEngine.ZeroCrossCheckTimeoutStrides,
+                ["StrideMaxMissingPackets"] = StrideGate.MaxMissingPackets,
                 ["WarmupRequiredSec"] = WarmupMonitor.RequiredSeconds,
                 ["WarmupGyroThresholdDegS"] = WarmupMonitor.GyroThresholdRadS * 180f / MathF.PI,
                 ["WarmupAccThreshold"] = WarmupMonitor.AccThreshold,

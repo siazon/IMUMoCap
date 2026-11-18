@@ -11,7 +11,7 @@ namespace IMUMoCap.Pipeline
     public static class StrideGate
     {
         public const float MinSwingSec = 0.25f, MaxSwingSec = 1.5f;   // G1
-        public const int   MaxMissingPackets = 5;                     // G2(回放 11-12 16:38 调整:缺 3–5 帧的步方向噪声与 0–2 帧相同)
+        public const int   MaxMissingPackets = 12;                    // G2(2026-11-18 由 5 放宽:缺 6–12 帧的步方向噪声与 0–2 帧相同)
         public const float MinLengthM = 0.3f, MaxLengthM = 2.5f;      // G3
         public const float MaxResidualSpeed = 1.0f;                   // G4,m/s
         public const float MaxDirectionChangeDeg = 15f;               // G5 / G6
