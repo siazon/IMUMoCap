@@ -35,6 +35,8 @@ namespace IMUMoCap.Methods
 
             var sample = new ImuSampleFrame
             {
+                // UtcNow is GetSystemTimePreciseAsFileTime on Windows (~0.1 µs), the clock of the Diagnostics Timestamp
+                ReceivedUtcMs = (DateTime.UtcNow - DateTime.UnixEpoch).TotalMilliseconds,
                 PacketId = packetId,
                 PacketCounter = packet.containsPacketCounter() ? packet.packetCounter() : null,
                 TimeSec = (packetId - _firstPacketId.Value) / (double)SampleRateHz,

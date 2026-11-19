@@ -53,7 +53,7 @@ Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data")
 
 与 `ExperimentRecorder` 相互独立，服务于原始 IMU 样本层面的 CSV 读写：
 
-- `ReadImuSamplesCsv(filePath)`：解析一份 `ImuSampleFrame` CSV（固定 23 列，`PacketId,Role,StatusWord,Qx..Qw,Gx..Gz,FreeAx..Az,Ax..Az,DQx..DQw,DVx..DVz`），每个可选字段组（四元数/角速度/加速度等）用是否为空字符串来判断该样本是否携带该数据（对应 `ImuSampleFrame` 上的 `HasXxx` 标志位）。用于 UI 层的 CSV 回放功能加载历史数据。
+- `ReadImuSamplesCsv(filePath)`：解析一份 `ImuSampleFrame` CSV（前 23 列固定，`PacketId,Role,StatusWord,Qx..Qw,Gx..Gz,FreeAx..Az,Ax..Az,DQx..DQw,DVx..DVz`；之后是后加的可选列 `MagX..MagZ`、`RecvUtcMs`(PC 收到该包的 Unix 毫秒,3 位小数,与 Diagnostics 的 Timestamp 同一时钟),旧文件没有这些列也能读），每个可选字段组（四元数/角速度/加速度等）用是否为空字符串来判断该样本是否携带该数据（对应 `ImuSampleFrame` 上的 `HasXxx` 标志位）。用于 UI 层的 CSV 回放功能加载历史数据。
 - `WriteImuSamplesCsv(filePath, samples)`：反向写出同样格式的 CSV，一次性用 `StringBuilder` 拼好再 `File.WriteAllText`（与 `ExperimentRecorder` 的逐行流式写入不同，这里是全量重写）。
 - `GroupIntoBundles(samples)`：静态方法，按 `PacketId` 把展开的样本重新分组回 `ImuFrameBundle` 列表（含未集齐三个 IMU 的不完整 bundle），供回放时重建帧序列、交给 `DataQualityGate` 等下游组件处理。
 

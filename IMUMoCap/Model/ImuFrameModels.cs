@@ -34,6 +34,10 @@ namespace IMUMoCap
 
         public bool HasDeltaV { get; set; }
         public Vector3 DeltaV { get; set; }
+
+        /// <summary>PC 收到这个包的时刻(Unix 毫秒,带小数;与 Diagnostics 的 Timestamp 同一时钟),供分析三个 IMU 的到达间隔与延迟。
+        /// null = 旧录制没有这一列。</summary>
+        public double? ReceivedUtcMs { get; set; }
     }
 
     public sealed class ImuFrameBundle

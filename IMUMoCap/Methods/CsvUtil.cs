@@ -110,6 +110,9 @@ namespace IMUMoCap.Methods
                         float.Parse(c[24], CultureInfo.InvariantCulture),
                         float.Parse(c[25], CultureInfo.InvariantCulture));
                 }
+                // RecvUtcMs 为后加的可选列(之前的文件只有 26 列)
+                if (c.Length >= 27 && !string.IsNullOrEmpty(c[26]))
+                    s.ReceivedUtcMs = double.Parse(c[26], CultureInfo.InvariantCulture);
                 samples.Add(s);
             }
             return samples;
@@ -144,7 +147,8 @@ namespace IMUMoCap.Methods
                 "Ax,Ay,Az," +
                 "DQx,DQy,DQz,DQw," +
                 "DVx,DVy,DVz," +
-                "MagX,MagY,MagZ");
+                "MagX,MagY,MagZ," +
+                "RecvUtcMs");
 
             foreach (var sample in samples)
             {
@@ -178,6 +182,9 @@ namespace IMUMoCap.Methods
 
                 if (sample.HasMagneticField) csv.Append(CsvVector(sample.MagneticField));
                 else csv.Append(",,");
+                csv.Append(',');
+
+                if (sample.ReceivedUtcMs is double recv) csv.Append(recv.ToString("F3", CultureInfo.InvariantCulture));
 
                 csv.AppendLine();
             }
