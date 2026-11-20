@@ -225,6 +225,8 @@ namespace IMUMoCap.Pipeline
                 FpaPd_R = footR?.Pd ?? float.NaN,
                 FpaStride_L = footL?.Stride ?? float.NaN,
                 FpaStride_R = footR?.Stride ?? float.NaN,
+                PreZero_L = footL?.PreZero ?? false,
+                PreZero_R = footR?.PreZero ?? false,
                 OnTarget_L = onTargetL,
                 OnTarget_R = onTargetR,
                 Error_L = errorL,
@@ -242,7 +244,7 @@ namespace IMUMoCap.Pipeline
         /// 结算时两种方法各自算一次(各自门控不过则为 NaN),并在两者都可信时为零点估计提供一个样本。
         /// 返回 null 表示这只脚本帧没有结算。
         /// </summary>
-        private (float Feedback, float Pd, float Stride)? SettleFoot(
+        private (float Feedback, float Pd, float Stride, bool PreZero)? SettleFoot(
             string foot, float sign, StanceSampler sampler, StrideFoot sf, System.Numerics.Quaternion? footRef,
             bool pdGateOk, StepExclusionReason pdBlockReason, bool turning, PdEstimate pd)
         {
@@ -287,7 +289,7 @@ namespace IMUMoCap.Pipeline
                     if (StrideGate.Check(s, sf.PrevSameDir, sf.OtherStraight, turning, f) == null) fpaStride = f;
                 }
             }
-            return (strideFeedback ? fpaStride : fpaPd, fpaPd, fpaStride);
+            return (strideFeedback ? fpaStride : fpaPd, fpaPd, fpaStride, UseStrideDirection && !strideFeedback);
         }
 
         private static float StrideFpaDeg(float sign, float strideRaw, StrideFoot sf)

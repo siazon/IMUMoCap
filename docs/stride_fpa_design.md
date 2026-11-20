@@ -52,7 +52,10 @@ FPA_f = sign_f × wrap(ψₖ − sₖ − φ_f),左脚 sign = +1,右脚 sign = �
     Ps2:N = 5 与 10 的 φ_B 相差 0.3°(凑齐用时 8 s 对 17 s);随机误差 3.2°/√N 约 1.4° 对 1.0°。
   - 方案 A:同上文(借当前方法,骨盆参照)。
 - 两个都估出后定下每只脚的零点:|φ_A − φ_B| ≤ 15°(`FpaEngine.ZeroCrossCheckMaxDeg`)用 B,否则退回 A 并报警。
-- 零点定下前(步幅法模式)只把积分有效(G1–G4)的步计入:Pf2(11-17,脚几乎没动,每步 1 cm)时当前方法曾把晃动当成 35 个基线步。
+- 零点定下前(步幅法模式)的 PD 反馈步不计入 Baseline(2026-11-20,`FpaResult.PreZero_L/R`):Pk12 两法在这几步差约 ±8°,
+  混入后 Baseline 均值偏 2.3°,上文"对 Baseline 均值无差别"的前提(方案 A、两法均值一致)对方案 B 不成立。
+  Baseline 改为只数零点后的步,每脚 `BaselineStepsPerFoot` = 50 步。
+- 零点定下前(步幅法模式)只把积分有效(G1–G4)的步当作反馈:Pf2(11-17,脚几乎没动,每步 1 cm)时当前方法曾把晃动当成 35 个基线步。
 - MTw 滤波器重启(StatusWord OrientationValid 1 → 0,`GaitPipeline` 在 DataQualityGate 前检测,Events 记 `FilterRestart`):
   - 原因线索:Po9 两脚同时重启前后角速度达 1748 / 1984 °/s(量程 2000 °/s),即佩戴时被甩、翻、磕碰。
   - 每次:约 2 s 无数据(整帧被丢),前后再丢 1–2 步(G2 缺帧、G5 方向跳变),之后 10–15 s 精度稍差。

@@ -58,6 +58,9 @@ namespace IMUMoCap.Pipeline.Models
         public float FpaPd_R     { get; set; } = float.NaN;
         public float FpaStride_L { get; set; } = float.NaN;  // 步幅法:脚偏航 − 本脚步幅方向 − φ
         public float FpaStride_R { get; set; } = float.NaN;
+        // 步幅法模式下这只脚零点还没定下,Fpa_L/R 是 PD FPA(只做反馈,不计入 Baseline)
+        public bool  PreZero_L   { get; set; }
+        public bool  PreZero_R   { get; set; }
         public bool  OnTarget_L  { get; set; }
         public bool  OnTarget_R  { get; set; }
         public float Error_L     { get; set; }  // FPA - Target，带符号，供AR反馈

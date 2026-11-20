@@ -108,8 +108,8 @@ XsDataPacket (每个 IMU 逐包)
 
 ### `BaselineProcessor` + `BaselineProfile`（基线统计与个性化目标）
 
-- `AddStep(FpaResult)`：`Fpa_L`/`Fpa_R` 为 `NaN` 表示该脚本次无效，单脚无效时另一脚仍记录。
-- `IsReady`：两脚累积步数都 `>= MinValidSteps`（默认 100）。
+- `AddStep(FpaResult)`：`Fpa_L`/`Fpa_R` 为 `NaN` 表示该脚本次无效，单脚无效时另一脚仍记录；`PreZero_L/R`（步幅法模式下该脚零点未定、反馈是 PD FPA）的步不计入（2026-11-20：Pk12 零点前的 PD 步与步幅法差约 ±8°，使 Baseline 均值偏 2.3°）。
+- `IsReady`：两脚累积步数都 `>= MinValidSteps`（= `PipelineParams.BaselineStepsPerFoot`，默认 50，与 Training / Retention 的 `TargetStepsPerFoot` 分开；依据见 `StepCountEvalTests.P3_P4_Baseline_Step_Count`）。
 - `IsStalled`（提前止损）：领先脚已达 `MinValidSteps`，但落后脚不到 `MinValidSteps / 2` —— 判定为该脚采集异常（走廊太短/转弯排除过多/传感器问题），直接触发失败上报交给操作员决定是否重来，而不是让领先脚被迫走到 2× 阈值、用严重失衡数据凑目标。
 - `TryFinalize()`：对每只脚样本求均值 `μ`、标准差 `SD`（`Sd` 用 n-1 无偏估计，样本数 <2 时返回 0），调用 `BaselineProfile.Create` 生成结果。
 - **目标角规则**（`BaselineProfile.Create`，2026-10-19 起）：默认训练方向 `ToeIn`，`Target = max(μ − TargetDeltaDeg, TargetMinDeg)`（`TargetDeltaDeg = 10°`，`TargetMinDeg = −25°`）；`μ < −25°`（过度内八）→ 训练方向 `ToeOut`，`Target = μ + TargetDeltaDeg`。不再使用 SD，也不再用 `μ > 10°` 判方向。设计理由与已接受的代价见 `docs/PROJECT_CONTEXT.md` §3.7。

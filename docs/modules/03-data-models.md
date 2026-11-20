@@ -74,7 +74,8 @@ Condition（EF/IF）级别的元数据，落盘为 Meta JSON：
 | `StanceFootPitchThreshold` | 0.35f (rad) | GaitEventDetector |
 | `PdConfidenceThreshold` | 0.7f | FpaEngine 门控 |
 | `PdStabilityThreshold` | 0.7f | FpaEngine 门控 |
-| `MinBaselineSteps` | 100 | BaselineProcessor |
+| `TargetStepsPerFoot` | 100 | Training / Retention 每脚步数 |
+| `BaselineStepsPerFoot` | 50 | BaselineProcessor(只数步幅法零点之后的步,2026-11-20) |
 | `BaselineImbalanceRatioThreshold` | 0.7f | BaselineProcessor |
 
 （各阈值的算法含义见 [Gait Pipeline 模块](02-gait-pipeline.md) 对应小节；这里只列出数据结构层面的默认值。）此文件当前有未提交改动（`git status`），以上数值为读取时的当前代码状态。

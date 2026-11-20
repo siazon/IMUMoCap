@@ -235,7 +235,7 @@ namespace IMUMoCap
                 log($"Baseline: L={l} steps, R={r} steps");
                 _content.BlockStepsDisplay = $"L {l} · R {r}";
                 if (!_isReplaying)
-                    BroadcastStepProgress("baseline", l, r, _pipeline.Params.TargetStepsPerFoot);
+                    BroadcastStepProgress("baseline", l, r, _pipeline.Params.BaselineStepsPerFoot);
             });
             _pipeline.OnBaselineCompleted += profile =>
             {
@@ -1076,7 +1076,7 @@ namespace IMUMoCap
                         _pipeline.StartBaseline();
                         BroadcastArState("baseline");
                         _sessionState = TestState.Baseline;
-                        _content.StatusLabel = $"Baseline: Walk until both feet reach {_pipeline.Params.TargetStepsPerFoot} steps.";
+                        _content.StatusLabel = $"Baseline: Walk until both feet reach {_pipeline.Params.BaselineStepsPerFoot} steps.";
                         StartBaselineTimeoutTimer();
                     }
                     break;
@@ -1813,7 +1813,7 @@ namespace IMUMoCap
                 // the collected steps), with a fresh timeout.
                 _pipeline.StartBaseline();
                 _sessionState = TestState.Baseline;
-                _content.StatusLabel = $"Baseline: Walk until both feet reach {_pipeline.Params.TargetStepsPerFoot} steps.";
+                _content.StatusLabel = $"Baseline: Walk until both feet reach {_pipeline.Params.BaselineStepsPerFoot} steps.";
                 BroadcastArState("baseline");
                 StartBaselineTimeoutTimer();
             }
@@ -2158,7 +2158,7 @@ namespace IMUMoCap
                 bundles,
                 _pipeline.GetDiagnosticsSnapshot(),
                 LegacyStompThreshold_ms2, // live calibration no longer uses stomp; this is only for interpreting old recordings
-                _pipeline.Params.TargetStepsPerFoot));
+                _pipeline.Params.BaselineStepsPerFoot));
             log("Replay done. Save diagnostics to inspect results.");
             _content.StatusLabel = "Replay done. Save diagnostics to inspect results.";
         }
@@ -2329,7 +2329,7 @@ namespace IMUMoCap
             string conclusion = fpaL >= minBaselineSteps && fpaR >= minBaselineSteps
                 ? "Baseline done"
                 : "Insufficient steps → Baseline incomplete → Training not started";
-            events.Add(("Total", $"FPA: L={fpaL} steps / R={fpaR} steps, TargetStepsPerFoot={minBaselineSteps} → {conclusion}"));
+            events.Add(("Total", $"FPA: L={fpaL} steps / R={fpaR} steps, BaselineStepsPerFoot={minBaselineSteps} → {conclusion}"));
 
             if (trainOkL + trainMissL + trainOkR + trainMissR > 0)
                 events.Add(($"{trainFirstPid}–{trainLastPid}",

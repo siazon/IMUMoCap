@@ -255,6 +255,21 @@ namespace IMUMoCap.Tests.Unit
         }
 
         [Fact]
+        public void StrideMode_MarksPdFeedbackStepsBeforeTheZero_AsPreZero()
+        {
+            var rig = new Rig(useStride: true);
+            rig.Run(15, new Walk());
+            Assert.True(rig.Results[0].PreZero_L);
+            Assert.True(rig.Results[0].PreZero_R);
+            Assert.False(rig.Results[^1].PreZero_L);
+            Assert.False(rig.Results[^1].PreZero_R);
+
+            var pd = new Rig(useStride: false);                  // PD mode: no zero needed, nothing is pre-zero
+            pd.Run(15, new Walk());
+            Assert.All(pd.Results, r => Assert.False(r.PreZero_L || r.PreZero_R));
+        }
+
+        [Fact]
         public void StrideMode_IgnoresPelvisPdDrift()
         {
             var rig = new Rig(useStride: true);

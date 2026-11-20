@@ -37,9 +37,10 @@ namespace IMUMoCap.Pipeline
         /// <summary>每次 FpaEngine 输出一个 FpaResult 时调用。</summary>
         public void AddStep(FpaResult result)
         {
-            // float.NaN 表示该脚本次无效（单脚无效时另一脚仍记录）
-            if (!float.IsNaN(result.Fpa_L)) _fpaL.Add(result.Fpa_L);
-            if (!float.IsNaN(result.Fpa_R)) _fpaR.Add(result.Fpa_R);
+            // float.NaN 表示该脚本次无效（单脚无效时另一脚仍记录）；
+            // PreZero = 步幅法零点还没定下、这一步是 PD FPA(与步幅法可差约 ±8°,Pk12),只做反馈不计入
+            if (!float.IsNaN(result.Fpa_L) && !result.PreZero_L) _fpaL.Add(result.Fpa_L);
+            if (!float.IsNaN(result.Fpa_R) && !result.PreZero_R) _fpaR.Add(result.Fpa_R);
         }
 
         /// <summary>

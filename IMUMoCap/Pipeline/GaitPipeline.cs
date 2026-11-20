@@ -154,7 +154,7 @@ namespace IMUMoCap.Pipeline
             _fpa.PdStabilityThreshold       = Params.PdStabilityThreshold;
 
             // BaselineProcessor
-            _baseline.MinValidSteps = Params.TargetStepsPerFoot;
+            _baseline.MinValidSteps = Params.BaselineStepsPerFoot;
             _baseline.ImbalanceRatioThreshold = Params.BaselineImbalanceRatioThreshold;
         }
 
