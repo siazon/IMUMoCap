@@ -32,7 +32,7 @@
 
 这是 MainWindow 最核心的职责类别，围绕静态字段 `ConditionStages = {Baseline, Training1, Training2, Training3, Retention}` 展开：
 
-- **`BtnStartCondition_Click`**：校验 Participant ID / 设备测量中，调用 `_recorder.StartCondition(...)` 开新的 session 文件，重置所有阶段/标记状态（`_stageAttempt`、5 个"是否已点击"标记 `_mc1Marked`/`_mc3Marked`/`_nasaTlx1Marked`/`_imiPcMarked`/`_nasaTlx2Marked`、`_restBlockJustFinished`），把 `_currentStage` 设为 `"Baseline"`，广播 `state=armed` 通知 AR 端可以显示"准备标定"按钮。
+- **`BtnStartCondition_Click`**：录制中禁用（按钮由 `_timelineTimer` 按 `!_recorder.IsRecording` 刷新，点击处理里也拒绝；2026-11-20，录制中点 Start Condition 曾使 IF 文件混入 EF 数据），需先 End Recording，重来当前 condition 用 Restart Condition。校验 Participant ID / 设备测量中，调用 `_recorder.StartCondition(...)` 开新的 session 文件，重置所有阶段/标记状态（`_stageAttempt`、5 个"是否已点击"标记 `_mc1Marked`/`_mc3Marked`/`_nasaTlx1Marked`/`_imiPcMarked`/`_nasaTlx2Marked`、`_restBlockJustFinished`），把 `_currentStage` 设为 `"Baseline"`，广播 `state=armed` 通知 AR 端可以显示"准备标定"按钮。
   - **视觉排查门控**：校验之后，`ExperimentRecorder.GetScreeningResult(id)` 不是 `"Pass"`（从未排查或 Fail）则拒绝启动并弹出提示；排查进行中也拒绝。
 - **视觉排查（`BtnScreening_Click` 等）**：Session 卡片里的 Screening 按钮随时可用。开启后显示 ◀ 页码 ▶ 与 Pass/Fail，每次翻页广播 `screening` 消息（页面列表 `ScreeningPages` 在 PC 端，AR 只渲染）；点 Pass/Fail 写 `P{id}_VisualScreening.json`（`SaveScreeningResult`）并用 `BroadcastArState(_last*)` 恢复 AR 之前的 state；再点 Screening = 取消，不写结果。排查不暂停计时、不重置 pipeline。
 - **`BtnStartCal_Click`**：重置 pipeline/缓冲区，调用 `_pipeline.TriggerCalibration()`。

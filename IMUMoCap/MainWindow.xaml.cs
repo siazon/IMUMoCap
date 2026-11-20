@@ -332,6 +332,7 @@ namespace IMUMoCap
                 DrawTimeline();
                 _content.StageElapsedDisplay = _stageStopwatch.Elapsed.ToString(@"mm\:ss");
                 BtnScreening.IsEnabled = !_recorder.IsRecording; // screening is only for between conditions
+                BtnStartCondition.IsEnabled = !_recorder.IsRecording; // End Recording first; Restart Condition restarts the current one
 
                 var frameQuality = _imuFrameCollector.GenerateReport();
                 _content.PelvisGapCount = frameQuality.PelvisGapFrames;
@@ -1524,6 +1525,8 @@ namespace IMUMoCap
 
         private void BtnStartCondition_Click(object sender, RoutedEventArgs e)
         {
+            // A new condition while one is recording would mix the two conditions in one recording (an IF file held EF data).
+            if (_recorder.IsRecording) { log("Start Condition blocked: a condition is still recording. End Recording first (or Restart Condition)."); return; }
             string participantId = txtParticipantId.Text.Trim();
             if (string.IsNullOrEmpty(participantId)) { log("Enter Participant ID first."); return; }
             if (_content.DeviceState != States.MEASURING) { log("Start Condition blocked: IMUs are not measuring. Click Measure first."); return; }
