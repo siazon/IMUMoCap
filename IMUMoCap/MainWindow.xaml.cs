@@ -1176,6 +1176,8 @@ namespace IMUMoCap
                     _pipeline.Params.PdStabilityThreshold = _content.PdStabilityThreshold; break;
                 case nameof(MainPageVM.TargetStepsPerFoot):
                     _pipeline.Params.TargetStepsPerFoot = _content.TargetStepsPerFoot; break;
+                case nameof(MainPageVM.BaselineStepsPerFoot):
+                    _pipeline.Params.BaselineStepsPerFoot = _content.BaselineStepsPerFoot; break;
                 case nameof(MainPageVM.BaselineImbalanceRatioThreshold):
                     _pipeline.Params.BaselineImbalanceRatioThreshold = _content.BaselineImbalanceRatioThreshold; break;
             }
@@ -1197,6 +1199,7 @@ namespace IMUMoCap
             _content.PdConfidenceThreshold = p.PdConfidenceThreshold;
             _content.PdStabilityThreshold = p.PdStabilityThreshold;
             _content.TargetStepsPerFoot = p.TargetStepsPerFoot;
+            _content.BaselineStepsPerFoot = p.BaselineStepsPerFoot;
             _content.BaselineImbalanceRatioThreshold = p.BaselineImbalanceRatioThreshold;
             _pipeline.Params.StanceFootPitchThreshold = p.StanceFootPitchThreshold;
         }

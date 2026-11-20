@@ -420,6 +420,13 @@ namespace IMUMoCap
             set { _targetStepsPerFoot = value; OnPropertyChanged(nameof(TargetStepsPerFoot)); }
         }
 
+        private int _baselineStepsPerFoot = 50;
+        public int BaselineStepsPerFoot
+        {
+            get { return _baselineStepsPerFoot; }
+            set { _baselineStepsPerFoot = value; OnPropertyChanged(nameof(BaselineStepsPerFoot)); }
+        }
+
         private float _baselineImbalanceRatioThreshold = 0.7f;
         public float BaselineImbalanceRatioThreshold
         {

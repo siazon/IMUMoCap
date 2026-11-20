@@ -27,6 +27,13 @@ namespace IMUMoCap.Tests.Unit
         }
 
         [Fact]
+        public void ParamsDialogDefault_MatchesThePipelineDefault()
+        {
+            // the dialog's VM value is pushed into Params on change / load, so the two defaults must agree
+            Assert.Equal(new PipelineParams().BaselineStepsPerFoot, new IMUMoCap.MainPageVM().BaselineStepsPerFoot);
+        }
+
+        [Fact]
         public void OldParamsFileWithoutTheKey_FallsBackTo50()
         {
             var p = JsonSerializer.Deserialize<PipelineParams>("{\"TargetStepsPerFoot\":100}")!;
