@@ -151,8 +151,8 @@ namespace IMUMoCap
         private readonly System.Diagnostics.Stopwatch _stageStopwatch = new();
 
         // Operator-driven visual screening (Screening button): every stone/footprint state a participant
-        // will meet — angle × neutral/blue/orange. Angles use the wire convention "positive = toe-out" for
-        // both feet; the AR client negates the right foot when rotating. Colors: neutral | on (blue) | off (orange).
+        // will meet — angle × neutral/green/red. Angles use the wire convention "positive = toe-out" for
+        // both feet; the AR client negates the right foot when rotating. Colors: neutral | on (green) | off (red).
         // Hint is operator-only (shown on the PC panel, never sent to AR): what the page shows + what to ask,
         // so the participant answers from what they see and every operator asks the same thing.
         private sealed record ScreeningPage(string Kind, float AngleL, float AngleR, string ColorL, string ColorR, string Hint);
@@ -160,12 +160,12 @@ namespace IMUMoCap
         {
             new("EF", -10, -10, "neutral", "neutral", "EF stones · toe-in 10° · neutral color\nAsk: Do the toes of both stones point in or out?"),
             new("EF",  10,  10, "neutral", "neutral", "EF stones · toe-out 10° · neutral color\nAsk: Do the toes of both stones point in or out?"),
-            new("EF", -15, -15, "on",  "off",         "EF stones · 15° · left blue / right orange\nAsk: What color is each stone (left, right)? Which way does each point?"),
-            new("EF", -25, -25, "off", "on",          "EF stones · 25° · left orange / right blue\nAsk: What color is each stone (left, right)? Which way does each point? "),
+            new("EF", -15, -15, "on",  "off",         "EF stones · 15° · left green / right red\nAsk: What color is each stone (left, right)? Which way does each point?"),
+            new("EF", -25, -25, "off", "on",          "EF stones · 25° · left red / right green\nAsk: What color is each stone (left, right)? Which way does each point? "),
             new("IF",   0,   0, "neutral", "neutral", "IF footprints · 0° · neutral color\nAsk: Are the footprints pointing straight ahead?"),
-            new("IF",  15,  15, "on",  "on",          "IF footprints · +15° toe-out · blue/blue\nAsk: Pointing in or out? What color?"),
-            new("IF", -15, -15, "off", "off",         "IF footprints · -15° toe-in · orange/orange\nAsk: Pointing in or out? What color?"),
-            new("IF", -10,  10, "on",  "off",         "IF footprints · left -10° blue / right +10° orange\nAsk: Which way does each footprint point, and what color?"),
+            new("IF",  15,  15, "on",  "on",          "IF footprints · +15° toe-out · green/green\nAsk: Pointing in or out? What color?"),
+            new("IF", -15, -15, "off", "off",         "IF footprints · -15° toe-in · red/red\nAsk: Pointing in or out? What color?"),
+            new("IF", -10,  10, "on",  "off",         "IF footprints · left -10° green / right +10° red\nAsk: Which way does each footprint point, and what color?"),
         };
         private bool _screeningActive = false;
         private int _screeningPage = 0;

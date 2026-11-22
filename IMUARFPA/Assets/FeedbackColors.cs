@@ -19,8 +19,14 @@ using UnityEngine;
 // This does not affect colorblind-safety: the Wong (2011) blue/orange pair remains
 // equally distinguishable under red-green colour-vision deficiency regardless of which
 // one is assigned to which outcome.
+//
+// BACK TO GREEN/RED 2026-11-20 (pilot feedback): blue/orange carries no built-in meaning and
+// participants kept mixing up which one meant on-target; green = on target, red = off target
+// needs no learning. Colour-vision deficiency is handled by the visual screening instead:
+// its colour pages ask the participant to name each colour, so someone who can't tell red
+// from green fails the screening before the first condition.
 public static class FeedbackColors
 {
-    public static readonly Color OnTarget = new Color32(230, 159, 0, 255);
-    public static readonly Color OffTarget = new Color32(0, 114, 178, 255);
+    public static readonly Color OnTarget = Color.green;
+    public static readonly Color OffTarget = Color.red;
 }

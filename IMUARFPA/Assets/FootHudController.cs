@@ -251,7 +251,7 @@ public class FootHudController : MonoBehaviour
         if (_condition == "EF")
         {
             // stone target angle is fixed (set once from state.targetL/R); per-step feedback is a
-            // brief scale-up pulse on the stone itself, tinted blue/orange on hit/miss — matches
+            // brief scale-up pulse on the stone itself, tinted green/red on hit/miss — matches
             // IF's FeedbackColors palette.
             if (!msg.fpaLIsNaN) PulseStone(stoneLeft, stoneLeftImage, msg.onTargetL, nameof(ResetStoneLeftScale));
             if (!msg.fpaRIsNaN) PulseStone(stoneRight, stoneRightImage, msg.onTargetR, nameof(ResetStoneRightScale));
@@ -310,7 +310,7 @@ public class FootHudController : MonoBehaviour
     }
 
     // Operator-driven visual screening: shows one page of every stone/footprint state a participant will
-    // meet in the experiment (angle × neutral/blue/orange), so the operator can confirm they can tell them
+    // meet in the experiment (angle × neutral/green/red), so the operator can confirm they can tell them
     // apart. Rendered exactly like the real feedback (same pulse, same sticky color, right foot negated);
     // the PC owns the page list. Ends on the next "state" message (see OnStateChange).
     public void OnScreeningPage(ServerMessage msg)

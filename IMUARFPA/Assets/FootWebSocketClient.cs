@@ -426,7 +426,7 @@ public class ServerMessage
     public string screenKind;     // "EF" (stepping stones) | "IF" (footprints)
     public float  screenAngleL;   // stone target / footprint error angle, left (deg)
     public float  screenAngleR;   // right (deg)
-    public string screenColorL;   // "neutral" | "on" (OnTarget blue) | "off" (OffTarget orange)
+    public string screenColorL;   // "neutral" | "on" (OnTarget green) | "off" (OffTarget red)
     public string screenColorR;
 
     // stepProgress — baseline/retention step-count bar

@@ -121,7 +121,7 @@ rotation/color also revert, or persist, differs by condition/render mode (see be
   shared by all blocks (see `PROJECT_CONTEXT.md`). On each `fpa` message,
   `FootHudController.PulseStone()` scales the stone itself up to `PulseScale` (1.05x) in
   place — never rotated or hidden — and tints it `FeedbackColors.OnTarget`/`OffTarget`
-  (blue/orange, matching IF's palette) by `msg.onTargetL`/`msg.onTargetR`;
+  (green/red, matching IF's palette) by `msg.onTargetL`/`msg.onTargetR`;
   `ResetStoneLeftScale()`/`ResetStoneRightScale()` revert **scale only** after `FootOutDisplaySec`
   — the tint is sticky (same "last result" behavior as IF's `lastResult` mode): it stays on the
   last step's on/off-target color until the next `fpa` overwrites it. Color goes back to the
@@ -212,7 +212,7 @@ weighed before using `"live"` outside pilot testing.
 
 **Visual screening** (`screening` message → `FootHudController.OnScreeningPage`): before a new
 participant's first condition, the PC operator steps through every stone/footprint state (angle ×
-neutral/blue/orange) and marks Pass/Fail; the AR client is a dumb renderer — the page list lives
+neutral/green/red) and marks Pass/Fail; the AR client is a dumb renderer — the page list lives
 on the PC (`ScreeningPages`). Fields: `screenKind` (`"EF"` shows `stoneRoot`, `"IF"` shows
 `footprintRoot`), `screenAngleL/R` (wire convention: positive = toe-out for both feet; the right
 foot is negated when rotating, same as fpa/live), `screenColorL/R` (`neutral` | `on` | `off`).
@@ -224,8 +224,10 @@ previous state by re-broadcasting it when the operator finishes or cancels. Side
 previous state was `training`, `ShowGraphicGroup()` runs again (stones/footprints return to
 neutral and the focus reminder replays).
 
-**Colors** (`Assets/FeedbackColors.cs`): on-target/off-target used to be `Color.green`/
-`Color.red`; both conditions pull from this one shared static class instead —
+**Colors** (`Assets/FeedbackColors.cs`): **since 2026-11-20 back to `OnTarget` = `Color.green`,
+`OffTarget` = `Color.red`** — in pilots blue/orange was too easy to mix up (no built-in
+meaning); colour-vision deficiency is caught by the visual screening's colour-naming pages instead.
+History: both conditions pull from this one shared static class; 2026-10 to 2026-11-20 it was
 `OnTarget` = orange `RGB(230,159,0)`, `OffTarget` = blue `RGB(0,114,178)` (Wong 2011,
 *Nature Methods*, colorblind-safe palette; **mapping swapped 2026-10-23** — see the comment
 block at the top of `FeedbackColors.cs` — orange was originally `OffTarget` and blue was
